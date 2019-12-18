@@ -1,4 +1,3 @@
-from typing import Any
 
 import numpy as np
 import h5py as h5
@@ -12,6 +11,8 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 import torch.optim as optim
 from livelossplot import PlotLosses
+from torch.utils.tensorboard import SummaryWriter
+import torchsummary
 
 subtract_truth = True
 shuffle_observers = True
@@ -148,92 +149,178 @@ print(f'Label is {checklbnp[randnum]}')
 
 # Ranknet setup
 channels_cnn = 16
-kernel_size = 5
-stride_size = 2
+kernel_size = 3
+stride_size = 1
 image_size = 256
-padding_size = np.int(np.floor((image_size*(stride_size-1)-stride_size+kernel_size)/2))
+padding_size = 1
+
+
+class ResBlock(nn.Module):
+    def __init__(self, channels_in, channels_out, kernel, stride=1):
+        super(ResBlock, self).__init__()
+        self.conv1 = nn.Conv2d(channels_in, channels_out, kernel_size=kernel, stride=stride, padding=1, bias=True)
+        self.bn1 = nn.BatchNorm2d(channels_out)
+
+        self.conv2 = nn.Conv2d(channels_out, channels_out, kernel_size=kernel, stride=1, padding=1, bias=True)
+        self.bn2 = nn.BatchNorm2d(channels_out)
+
+        # shortcut, do conv2d with 1*1 kernel to reshape when channels_in != out
+        self.shortcut = nn.Sequential()
+        if channels_out != channels_in or stride != 1:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(channels_in, channels_out, kernel_size=(1,1), stride=stride, padding=0, bias=False),
+                nn.BatchNorm2d(channels_out)
+            )
+
+    def forward(self, c):
+        out = F.relu(self.bn1(self.conv1(c)))
+        out = self.bn2(self.conv2(out))
+        # print(f'shape of out is {out.shape}')
+        out += self.shortcut(c)
+        short = self.shortcut(c)
+        # print(f'shape of shortcut {short.shape}')
+        # print(f'shape of out+shortcut is {out.shape}')
+        out = F.relu(out)
+        # print(f'shape of final out is {out.shape}')
+        return out
+
+
+
 class Ranknet(nn.Module):
 
-    def __init__(self, channels, kernel, stride, padding):
+    def __init__(self):
         super(Ranknet,self).__init__()
-        self.conv1 = nn.Conv2d(2, channels,kernel,stride=stride, padding=[padding_size,padding_size], bias=True)
-        self.conv2 = nn.Conv2d(channels_cnn, 2*channels_cnn, kernel_size, stride=stride, padding=[padding_size,padding_size], bias=True)
+        # first conv, fixed out channels = channel_cnn, kernel of 3*3
+        self.conv1 = nn.Conv2d(2, channels_cnn, kernel_size=kernel_size,stride=1,padding=1, bias=True)
+        self.bn1 = nn.BatchNorm2d(channels_cnn)
+
+        # stages
+        self.stage1 = self._stage(16, 16, 3, stride=1)
+        self.stage2 = self._stage(16, 32, 3, stride=2)
+        self.stage3 = self._stage(32, 64, 3, stride=2)
+
+        # FC
+        self.convfull = nn.Conv2d(64,1,kernel_size=(16,16))
+
+    def _stage(self, channels_in, channels_out, kernel, stride):
+        return nn.Sequential(
+            ResBlock(channels_in, channels_out, kernel, stride=stride),
+            ResBlock(channels_out, channels_out, kernel, stride=1)
+        )
+
+    def forward(self, c):
+        out = F.relu(self.bn1(self.conv1(c)))
+        # print(f'shape after initial conv3by3 {out.shape}')
+        out = self.stage1(out)
+        # print(f'shape after 1st stage {out.shape}')     # [16, 16, 256, 256]
+        out = self.stage2(out)
+        # print(f'shape after 2nd stage {out.shape}')
+        out = self.stage3(out)
+        # print(f'shape after 3rd stage {out.shape}')
+        out = nn.AvgPool2d(4)(out)
+        # print(f'shape after average pool {out.shape}')
+
+        out = self.convfull(out)
+        # print(f'shape after pseudo fc {out.shape}')
+        return out
+
+    # def num_flat_features(self,c):
+    #     size = c.size()[1:]  # all dimensions except the batch dimension
+    #     num_features = 1
+    #     for s in size:
+    #         num_features *= s
+    #     return num_features
+ranknet = Ranknet()
+torchsummary.summary(ranknet, (2,256,256), device="cpu")
+
+class Classifier(nn.Module):
+
+    def __init__(self):
+        super(Classifier,self).__init__()
+        self.rank = Ranknet()
+        self.fc1 = nn.Linear(1,8)
+        self.fc2 = nn.Linear(8,3)
         self.drop = nn.Dropout(p=0.5)
-        self.fc = nn.Linear(231200, 1)
 
-        self.fc1 = nn.Linear(1, 8)
-        self.fc2 = nn.Linear(8, 3)
+    def forward(self, image1,image2):
+        score1 = self.rank(image1)
+        score2 = self.rank(image2)
+        # print(score2.shape)
+        score1 = score1.view(score1.shape[0], -1)
+        score2 = score2.view(score2.shape[0], -1)
+        # print(f'shape of score2 after reshape {score2.shape}')
+        d = score1 - score2
+        # print(d.shape)
+        d = torch.tanh(self.fc1(d))
+        d = self.drop(d)
+        d = F.softmax(self.fc2(d))
+        return d
 
-    def forward(self, c1, c2):
-        c1 = F.max_pool2d(F.relu(self.conv1(c1)),3)
-        c1 = self.drop(c1)
-        c1 = F.avg_pool2d(F.leaky_relu(self.conv2(c1),negative_slope=0.03),2)
-        c1 = self.drop(c1)
-        c1 = c1.view(-1, self.num_flat_features(c1))   # flatten
-        c1 = self.fc(c1)
-
-        c2 = F.max_pool2d(F.relu(self.conv1(c2)), 3)
-        c2 = self.drop(c2)
-        c2 = F.avg_pool2d(F.leaky_relu(self.conv2(c2), negative_slope=0.03), 2)
-        c2 = self.drop(c2)
-        c2 = c2.view(-1, self.num_flat_features(c2))  # flatten
-        c2 = self.fc(c2)
-
-        diff = c1 - c2
-        diff = F.tanh(self.fc1(diff))
-        diff = self.drop(diff)
-        diff = F.softmax(self.fc2(diff))
-
-        return diff
-
-    def num_flat_features(self,c):
-        size = c.size()[1:]  # all dimensions except the batch dimension
-        num_features = 1
-        for s in size:
-            num_features *= s
-        return num_features
+classifier = Classifier()
 
 
-ranknet = Ranknet(channels_cnn,kernel_size,stride_size,padding_size)
-print(ranknet)
-
-for param in ranknet.parameters():
-    print(type(param.data), param.size())
-
-# class Classifier(nn.Module):
-#
-#     def __init__(self):
-#         super(Classifier,self).__init__()
-#         self.fc1 = nn.Linear(1,8)
-#         self.fc2 = nn.Linear(8,3)
-#         self.drop = nn.Dropout(p=0.5)
-#
-#     def forward(self, d):
-#         d = F.tanh(self.fc1(d))
-#         d = self.drop(d)
-#         d = F.softmax(self.fc2(d))
-#         return d
-#
-# classifier = Classifier()
-# print(classifier)
-
-
-optimizer = optim.SGD(ranknet.parameters(), lr=0.001, momentum=0.9)
+optimizer = optim.SGD(classifier.parameters(), lr=0.001, momentum=0.9)
 loss_func = nn.CrossEntropyLoss()
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print(device)
-ranknet.cuda()
+classifier.cuda()
 
-# liveloss = PlotLosses()
+
+
+# Tensorboard
+# writer = SummaryWriter('runs/rank_small')
+# get some random training images
+# Grabbed above, checkim1, checkim2, checklb
+
+# # create grid of images
+# img_grid = torchvision.utils.make_grid(images)
+#
+# # show images
+# matplotlib_imshow(img_grid, one_channel=True)
+#
+# # write to tensorboard
+# writer.add_image('four_fashion_mnist_images', img_grid)
+
+# visualize the model
+# writer.add_graph(ranknet, checkim1, checkim2)
+# writer.close()
+
+class RunningAverage:
+    def __init__(self):  # initialization
+        self.count = 0
+        self.sum = 0
+
+    def reset(self):
+        self.count = 0
+        self.sum = 0
+
+    def update(self, value, n=1):
+        self.count += n
+        self.sum += value * n
+
+    def avg(self):
+        return self.sum / self.count
+
+
+liveloss = PlotLosses()
 
 # Training
-for epoch in range(10):
+for epoch in range(100):
 
-    loss_realtime = 0.0
+    logs = {}
+    # Setup counter to keep track of loss
+    train_avg = RunningAverage()
+    eval_avg = RunningAverage()
+
+
+    running_loss = 0.0
 
     # training
-    ranknet.train()
+    classifier.train()
+
+    step = 0
+    total_steps = len(trainingset)
 
     for i, data in enumerate(loader_T, 0):
         # get the inputs
@@ -241,30 +328,63 @@ for epoch in range(10):
         im1, im2 = im1.cuda(), im2.cuda()
         labels = labels.to(device, dtype=torch.long)
 
-        # zero the parameter gradients
-        optimizer.zero_grad()
+        # forward
+        delta = classifier(im1, im2)
 
-        # forward + backward + optimize
-        delta = ranknet(im1, im2)
+        # loss
         loss = loss_func(delta, labels)
+        train_avg.update(loss.item(), n=BATCH_SIZE)  # here is loss
+
+        if step % 10 == 0:
+            print('Step %d of %d : %f' % (step, total_steps, train_avg.avg()))
+
+        # zero the parameter gradients, backward and update
+        optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
+        step += 1
+
+
+
+        running_loss += loss.item()
+        # if i % 10 == 9:  # every 10 mini-batches...
+        #
+        #     # ...log the running loss
+        #     writer.add_scalar('training loss',
+        #                       running_loss / 10,
+        #                       epoch * len(loader_T) + i)
+        #
+        #     # ...log a Matplotlib Figure showing the model's predictions on a
+        #     # random mini-batch
 
 
     # validation
-    ranknet.eval()
+    classifier.eval()
+    step = 0
     for i, data in enumerate(loader_V, 0):
         # get the inputs
         im1, im2, labels = data
-        im1, im2, labels = im1.cuda(), im2.cuda(), labels.cuda()
+        im1, im2, = im1.cuda(), im2.cuda()
+        labels = labels.to(device, dtype=torch.long)
 
-        delta = ranknet(im1, im2)
+        # forward
+        delta = classifier(im1, im2)
+
+        # loss
         loss = loss_func(delta, labels)
+        eval_avg.update(loss.item(), n=BATCH_SIZE)
 
         print(f'validation loss is {loss}')
 
 
+    logs['loss'] = train_avg.avg()
+    logs['val_loss'] = eval_avg.avg()
+
+    liveloss.update(logs)
+    liveloss.draw()
+
+    print('Epoch = %d : Loss Eval = %f , Loss Train = %f' % (epoch, eval_avg.avg(), train_avg.avg()))
 
 
 
