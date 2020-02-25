@@ -469,7 +469,8 @@ def generate_pairs():
 
                     image_corrupted = get_corrupted(ksp, s, num_coils=tot_coils, device=device)  # has been normalized to its max
                     # Find scaling that minimizes MSE(corrupted, ori)
-                    scale = np.sum(image_sense * np.conj(image_sense).T) / np.sum(image_corrupted * np.conj(image_sense).T)
+                    scale =  np.sum(np.conj(image_corrupted).T @ image_sense) / np.sum(
+                                np.conj(image_corrupted).T @ image_corrupted)
                     # print(f'scale for file # {index_file + 1}, slice # {s}, recon # {recon} is {scale} ')
                     # logger.info(f'scale is {scale}')
                     image_corrupted *= scale
@@ -496,11 +497,11 @@ def generate_pairs():
                         mse = np.mean(diff ** 2)
                         logger.info(f'mse = {mse}')
                         counter_mse = 1
-                        while mse > 0.004:
+                        while mse > 0.003:
                             logger.info(f'mse too large, regenerate')
                             image_corrupted = get_corrupted(ksp, s, num_coils=tot_coils, device=device)
-                            scale = np.sum(image_sense * np.conj(image_sense).T) / np.sum(
-                                image_corrupted * np.conj(image_sense).T)
+                            scale = np.sum(np.conj(image_corrupted).T @ image_sense) / np.sum(
+                                np.conj(image_corrupted).T @ image_corrupted)
                             image_corrupted *= scale
                             diff = image_corrupted - image_corrupted1
                             mse = np.mean(diff ** 2)
