@@ -4,7 +4,8 @@ from matplotlib import pyplot as plt
 from pathlib import Path
 from PIL import Image
 import logging
-from skimage.measure import compare_ssim
+from skimage.metrics import structural_similarity
+from skimage.measure import compare_nrmse
 
 import sigpy as sp
 import sigpy.mri as mri
@@ -13,6 +14,7 @@ import fnmatch
 import os
 import torch
 import pywt
+import time
 
 from fastMRI.data import transforms as T
 
@@ -75,6 +77,7 @@ def trans_motion(input, dir_motion, maxshift, sigma_shift, prob):
         # The whole thing move a fixed amount. Not doing per line random amount like above
         logger.info(f'probability of motion is 1/{prob}')
         if np.random.randint(prob) == 0:
+
             logger.info(f'Yes, Motion')
             num_x, num_y = input.shape[1:]
             startdir = np.random.randint(0,1)   # Always start in PE (column)
@@ -103,6 +106,7 @@ def trans_motion(input, dir_motion, maxshift, sigma_shift, prob):
                 central_rangeL = num_y/2 - num_y/2*.05
                 central_rangeR = num_y/2 + num_y/2*.05
                 if start > central_rangeR:
+
                     logger.info(f'motion starts from column # {start} to the end')
                     for ii in range(num_x):
                         for jj in range(start,num_y):
@@ -110,6 +114,7 @@ def trans_motion(input, dir_motion, maxshift, sigma_shift, prob):
                                 -1j * 2 * np.pi * (shift_bulk0 * (1 / num_y) * (jj - num_y / 2) + shift_bulk1 *
                                                    (1 / num_x) * (ii - num_x / 2)))
                 elif start < central_rangeL:
+
                     logger.info(f'motion starts from column #0 to {start}')
                     for ii in range(num_x):
                         for jj in range(0,start):
@@ -117,6 +122,7 @@ def trans_motion(input, dir_motion, maxshift, sigma_shift, prob):
                                 -1j * 2 * np.pi * (-shift_bulk0 * (1 / num_y) * (jj - num_y / 2) - shift_bulk1 *
                                                    (1 / num_x) * (ii - num_x / 2)))
                 else:
+
                     logger.info(f'motion starts too close to the central region, abort')
         else:
             pass
@@ -196,13 +202,14 @@ def add_gaussian_noise(input, prob, median_real=None, median_imag=None, level=1,
     return noisy
 
 
-def add_incoherent_noise(kspace=None, prob=None, central=0.4, mode=1):
+def add_incoherent_noise(kspace=None, prob=None, central=0.4, mode=1, num_corrupted=0, dump=0.5):
     # feed in ksp(coil, h, w)
     # baseline is uniform random of 1 and 0
     # percent: percentage of ones and (1-1/prob) zeros
     # mode: 0 is to drop random ksp points, 1 is to drop random ksp columns (PE)
     # central - (1-central) will never be discarded
 
+    global percent
     logger = logging.getLogger('add_incoherent_noise')
 
     kspace_width = kspace.shape[2]
@@ -212,7 +219,11 @@ def add_incoherent_noise(kspace=None, prob=None, central=0.4, mode=1):
     if np.random.randint(prob) == 0:
         logger.info('Incoherent noise added')
         if mode == 1:
-            percent = np.random.uniform(0.5,1)
+            if num_corrupted == 0:
+                percent = np.random.uniform(dump,1)
+            else:
+                # for the second corrupted image, do the same the percent as the first one. input dump=percent1.
+                percent = dump
             logger.info(f'mode={mode}, discard {(1-percent)*100}% PEs')
             randuni_col = np.random.choice([0,1], size=kspace[0, 0,:].shape, p=[1-percent, percent])
 
@@ -222,15 +233,23 @@ def add_incoherent_noise(kspace=None, prob=None, central=0.4, mode=1):
                 kspace[c, :, :] = kspace[c, :, :] * randuni_colm
 
         else:
-            percent = np.random.uniform(0.7,1)      # more moderate when discarding points
+            if num_corrupted == 0:
+                dump0 = dump + 0.2
+                percent = np.random.uniform(dump0,1)     #default is (0.7, 1), more moderate when discarding points
+            else:
+                # for the second corrupted image, do the same the percent as the first one. input dump=percent1.
+                percent = dump
+                print(f'percent for mode 0 is {percent}')
             logger.info(f'mode={mode}, discard {(1 - percent)*100}% points')
             randuni_m = np.random.choice([0, 1], size=kspace[0, :, :].shape, p=[1-percent, percent])
 
             for c in range(len(kspace[:,0,0])):
                 kspace[c, :, :] = kspace[c, :, :] * randuni_m
     else:
+        mode = 0
+        percent = 0.99
         logger.info('No incoherent noise added')
-    return kspace
+    return kspace, percent, mode
 
 
 def get_smaps(kspace_gpu, device, maxiter=50):
@@ -257,20 +276,22 @@ def get_truth(kspace, sl, device, lamda):
     # send to cpu and normalize
     image_truth = sp.to_device(image_truth, sp.cpu_device)
     image_truth = np.flipud(image_truth)
-    image_truth = np.abs(image_truth) / np.max(np.abs(image_truth))
+    image_truth /= np.max(np.abs(image_truth))
 
+    image_truth = image_truth.astype(np.complex128)
     return image_truth
 
 
-def get_corrupted(kspace, sl, num_coils, device, acc_ulim=30, kedge_len=30, gaussian_ulim=20, gaussian_prob=2,
-                  dir_motion=2, maxshift=30, sigma_shift=10, motion_prob=1, incoherent_prob=2):
+def get_corrupted(kspace, sl, num_coils, num_corrupted, device, acc=0, acc_ulim=20,
+                  kedge_len=30, gaussian_ulim=18, gaussian_prob=2, dir_motion=2, maxshift=20, sigma_shift=6,
+                  motion_prob=1, incoherent_prob=2, dump=0.5, mode_incoherent=1):
     logger = logging.getLogger('get_corrupted')
 
     # get smaps from original ksp
     ksp_full = kspace[sl]
     ksp_full_gpu = sp.to_device(ksp_full, device=device)  # (coil, h, w)
     smaps = get_smaps(ksp_full_gpu, device=device, maxiter=50)
-
+    smaps = sp.to_device(smaps, device=device)
     xv, yv = np.meshgrid(np.linspace(-1, 1, kspace.shape[2]), np.linspace(-1, 1, kspace.shape[3]), sparse=False,
                          indexing='ij')
     radius = np.sqrt(np.square(xv) + np.square(yv))
@@ -281,10 +302,14 @@ def get_corrupted(kspace, sl, num_coils, device, acc_ulim=30, kedge_len=30, gaus
     sampling_density = np.ones(kspace[sl, 0, :, :].shape) * variable_density + (1 - variable_density) / (0.01 + radius)
     mask *= sampling_density
 
-    acc = np.random.randint(0, acc_ulim)
-    logger.info(f'acceleration is {acc} percent')
-    thresh = np.percentile(mask, acc)
+    if num_corrupted == 0:
+        acc = np.random.randint(0, acc_ulim)
+        logger.info(f'acceleration is {acc} percent')
+    else:
+        acc = acc
+        logger.info(f'acceleration is {acc} percent')
 
+    thresh = np.percentile(mask, acc)
     mask = np.asarray(np.greater(mask, thresh), dtype=np.float)
 
     # Blurring in kspace
@@ -309,19 +334,30 @@ def get_corrupted(kspace, sl, num_coils, device, acc_ulim=30, kedge_len=30, gaus
     sigma_est_imag = np.median(np.median(np.abs(kedge_imag), axis=1), axis=1)
 
     # Add Gaussian noise to each coil in kspace
-    gaussian_level = np.random.randint(0, gaussian_ulim)
+    if num_corrupted == 0:
+        gaussian_level = np.random.randint(0, gaussian_ulim)
+    else:
+        gaussian_level = gaussian_ulim      # need to put gaussian_level(recon=0) as gaussian_ulim for later tries
+
     ksp2 = add_gaussian_noise(ksp2, gaussian_prob, median_real=sigma_est_real, median_imag=sigma_est_imag,
                               level=gaussian_level, mode=1, mean=0)
 
     # Translational motion in kspace
+
     ksp2 = trans_motion(ksp2, dir_motion, maxshift, sigma_shift, motion_prob)
 
+
+
+
     # Add incoherent noise
-    mode = np.ndarray.item(np.random.choice([0, 1], size=1, p=[.8, .2]))  # leaning towards dropping points
-    ksp2 = add_incoherent_noise(ksp2, prob=incoherent_prob, central=np.random.uniform(0.2, 0.4), mode=mode)
+    if num_corrupted == 0:
+        mode = np.ndarray.item(np.random.choice([0, 1], size=1, p=[.8, .2]))  # leaning towards dropping points
+    else:
+        mode = mode_incoherent
+    ksp2, percent, mode = add_incoherent_noise(ksp2, prob=incoherent_prob, central=np.random.uniform(0.2, 0.4), mode=mode, num_corrupted=num_corrupted, dump=dump)
     ksp2_gpu = sp.to_device(ksp2, device=device)
 
-    # RECON. 0 for sos, 1 for PILS, 2 for L2 SENSE, 3 for l1 TV, 4 for l1 wavelet
+    # RECON. 0 for sos, 1 for PILS, 2 for L2 SENSE, 3 for l1 wavelet, 4 for tv
     recon_type = np.random.randint(5)
 
     mu_iter, sigma_iter = 20, 3
@@ -334,7 +370,6 @@ def get_corrupted(kspace, sl, num_coils, device, acc_ulim=30, kedge_len=30, gaus
         image = image.numpy()
         image = image[:, :, :, 0] + 1j * image[:, :, :, 1]  # torch.Size([20, 640, 320])
         image = np.sqrt(np.sum(image ** 2, axis=0))  # torch.Size([640, 320])
-
 
     elif recon_type == 1:
         logger.info('PILS')
@@ -358,10 +393,10 @@ def get_corrupted(kspace, sl, num_coils, device, acc_ulim=30, kedge_len=30, gaus
         image = sp.to_device(image, sp.cpu_device)
 
     elif recon_type == 4:
+        maxiterL1TV = 2 * maxiter
         lamda = np.random.uniform(1e-7, 1e-5)
         logger.info(f'L1TV with {maxiter} iterations, lambda={lamda}')
-        image = mri.app.TotalVariationRecon(ksp2_gpu, smaps, lamda=lamda, device=device,
-                                            max_iter=2 * maxiter).run()
+        image = mri.app.TotalVariationRecon(ksp2_gpu, smaps, lamda=lamda, device=device, max_iter=maxiterL1TV).run()
         image = sp.to_device(image, sp.cpu_device)
 
     # Add Gaussian noise
@@ -381,10 +416,9 @@ def get_corrupted(kspace, sl, num_coils, device, acc_ulim=30, kedge_len=30, gaus
     # Wavelet Compression as in Compressed Sensing
     image_sq = wave_thresh(image_sq, 0.9 + 0.1 * np.random.rand())
     # Normalize
-    image_sq = np.abs(image_sq) / np.max(np.abs(image_sq))
+    image_sq /= np.max(np.abs(image_sq))
 
-    return image_sq
-
+    return image_sq, acc, gaussian_level, percent, mode    # percent and mode are incoherent noise
 
 def generate_pairs():
     train_folder = Path("D:/NYUbrain/brain_multicoil_train/multicoil_train")
@@ -402,6 +436,13 @@ def generate_pairs():
     count = 1
 
     logger = logging.getLogger('generate_pairs')
+
+    # Export to hdf5
+    out_name = os.path.join('TRAINING_IMAGES_v5.h5')
+    try:
+        os.remove(out_name)
+    except OSError:
+        pass
 
     for index_file, file in enumerate(files):
         logger.info(f'loading {file}')
@@ -451,82 +492,118 @@ def generate_pairs():
                 s = int(s)
 
                 # Get Truth
-                image_sense = get_truth(ksp, s, device=device, lamda=0.005)    # has been normalized to its max
+                image_sense = get_truth(ksp, s, device=device, lamda=0.005)    # has been normalized to its max, still complex
 
                 # save
-                im = Image.fromarray(255 * image_sense)
+                im = Image.fromarray(255 * np.abs(image_sense))
                 im = im.convert("L")
                 name = 'NYU_%07d_TRUTH.png' % count
-                name = os.path.join('Rank_NYU', 'ImagePairs_png_v4', name)
+                name = os.path.join('Rank_NYU', 'ImagePairs_png_v5', name)
                 im.save(name)
 
                 print(f'saving slice {s} of file # {index_file + 1} to count {count}')
                 logger.info('...')
                 logger.info(f'saving slice {s} to count {count}')
 
+                with h5py.File(out_name, 'a') as hf:
+                    name = 'EXAMPLE_%07d_TRUTH' % count
+                    hf.create_dataset(name, data=image_sense)
+
                 # Get Corrupted
                 for recon in range(0, 2):
 
-                    image_corrupted = get_corrupted(ksp, s, num_coils=tot_coils, device=device)  # has been normalized to its max
-                    # Find scaling that minimizes MSE(corrupted, ori)
-                    scale =  np.sum(np.conj(image_corrupted).T @ image_sense) / np.sum(
-                                np.conj(image_corrupted).T @ image_corrupted)
-                    # print(f'scale for file # {index_file + 1}, slice # {s}, recon # {recon} is {scale} ')
-                    # logger.info(f'scale is {scale}')
-                    image_corrupted *= scale
-
-
-                    # diff_map = norm_image_sense - norm_image_sq
-                    # mse = np.mean(diff_map ** 2)
-                    # mse between corrupted and original can happen to be too close
-
                     if recon == 0:
-                        image_corrupted1 = image_corrupted
+
+                        image_corrupted1, acc1, gaussian_level1, percent1, mode1 = get_corrupted(ksp, s, num_corrupted=recon, num_coils=tot_coils, device=device)  # has been normalized to its max
+                        logger.info(f'gaussian_level is {gaussian_level1} for both')
+                        # Find scaling that minimizes MSE(corrupted, ori)
+                        scale = np.sum(np.conj(image_corrupted1).T @ image_sense) / np.sum(
+                            np.conj(image_corrupted1).T @ image_corrupted1)
+                        # print(f'scale for file # {index_file + 1}, slice # {s}, recon # {recon} is {scale} ')
+                        # logger.info(f'scale is {scale}')
+                        image_corrupted1 *= scale
+
+                        # mse1 = compare_nrmse(image_sense, image_corrupted1, norm_type='euclidean')
+                        ssim1 = structural_similarity(np.abs(image_corrupted1), np.abs(image_sense))
+                        # logger.info(f'mse between corrupted1 and truth = {mse1}')
+                        logger.info(f'SSIM between corrupted1 and truth = {ssim1}')
 
                         name = 'NYU_%07d_IMAGE_%04d.png' % (count, recon)
-                        name = os.path.join('Rank_NYU', 'ImagePairs_png_v4', name)
-                        im = Image.fromarray(255 * image_corrupted1)
+                        name = os.path.join('Rank_NYU', 'ImagePairs_png_v5', name)
+                        im = Image.fromarray(255 * np.abs(image_corrupted1))
                         im = im.convert("L")
                         im.save(name)
                         logger.info(f'saving to png {name}')
                         logger.info('...')
 
+                        with h5py.File(out_name, mode='a') as hf:
+                            name = 'EXAMPLE_%07d_IMAGE_%04d' % (count, recon)
+                            hf.create_dataset(name, data=image_corrupted1)
+
                     else:
-                        # diff between two corrupted
-                        diff = image_corrupted - image_corrupted1
-                        mse = np.mean(diff ** 2)
-                        logger.info(f'mse = {mse}')
-                        counter_mse = 1
-                        while mse > 0.003:
-                            logger.info(f'mse too large, regenerate')
-                            image_corrupted = get_corrupted(ksp, s, num_coils=tot_coils, device=device)
+                        image_corrupted, acc, gaussian_level, percent, mode = get_corrupted(ksp, s, num_corrupted=recon, num_coils=tot_coils, device=device, acc=acc1, gaussian_ulim=gaussian_level1, dump=percent1, mode_incoherent=mode1)  # has been normalized to its max
+                        logger.info(f'Incoherent noise mode is {mode}. dump {1-percent} PE for addding incoherent noise')
+                        # Find scaling that minimizes MSE(corrupted, ori)
+                        scale = np.sum(np.conj(image_corrupted).T @ image_sense) / np.sum(
+                            np.conj(image_corrupted).T @ image_corrupted)
+                        # print(f'scale for file # {index_file + 1}, slice # {s}, recon # {recon} is {scale} ')
+                        # logger.info(f'scale is {scale}')
+                        image_corrupted *= scale
+
+                        # mse2 = compare_nrmse(image_sense, image_corrupted, norm_type='euclidean')
+
+                        ssim2 = structural_similarity(np.abs(image_corrupted), np.abs(image_sense))
+                        diff_ssim12 = np.abs(ssim2 - ssim1)
+                        # logger.info(f'mse between corrupted2 and truth = {mse2}')
+                        logger.info(f'SSIM between corrupted2 and truth = {ssim2}')
+                        logger.info(f'SSIM between corrupted1 and 2 = {diff_ssim12}')
+                        counter_regenerate = 1
+
+                        # while np.abs(mse2-mse1) > 0.07 or np.abs(ssim2-ssim1) > 0.07:
+
+                        while diff_ssim12 > 0.09:
+                            logger.info(f'ssim too large, regenerate')
+                            image_corrupted, acc, gaussian_level, percent, mode = get_corrupted(ksp, s, num_corrupted=recon, num_coils=tot_coils,
+                                                                 device=device,
+                                                                 acc=acc1, gaussian_ulim=gaussian_level1, dump=percent1,
+                                                                                                mode_incoherent=mode1)  # has been normalized to its max
                             scale = np.sum(np.conj(image_corrupted).T @ image_sense) / np.sum(
                                 np.conj(image_corrupted).T @ image_corrupted)
                             image_corrupted *= scale
-                            diff = image_corrupted - image_corrupted1
-                            mse = np.mean(diff ** 2)
 
-                            counter_mse += 1
-                            if counter_mse > 5:
-                                logger.info(f'Too many tries, settle on this one. mse = {mse}')
+                            # mse2 = compare_nrmse(image_sense, image_corrupted, norm_type='euclidean')
+                            ssim2 = structural_similarity(np.abs(image_corrupted), np.abs(image_sense))
+                            diff_ssim12 = np.abs(ssim2 - ssim1)
+
+                            counter_regenerate += 1
+                            if counter_regenerate > 12:
+                                logger.info(f'Too many tries, settle on this one. ssim12 = {np.abs(ssim2-ssim1)}')
                                 name = 'NYU_%07d_IMAGE_%04d.png' % (count, recon)
-                                name = os.path.join('Rank_NYU', 'ImagePairs_png_v4', name)
-                                im = Image.fromarray(255 * image_corrupted)
+                                name = os.path.join('Rank_NYU', 'ImagePairs_png_v5', name)
+                                im = Image.fromarray(255 * np.abs(image_corrupted))
                                 im = im.convert("L")
                                 im.save(name)
                                 logger.info(f'saving to png {name}')
                                 logger.info('...')
 
+                                with h5py.File(out_name, mode='a') as hf:
+                                    name = 'EXAMPLE_%07d_IMAGE_%04d' % (count, recon)
+                                    hf.create_dataset(name, data=image_corrupted)
+
                                 break
                         else:
-                            logger.info(f'mse = {mse}')
+                            logger.info(f'SSIM between corrupted1 and 2 = {diff_ssim12}')
                             name = 'NYU_%07d_IMAGE_%04d.png' % (count, recon)
-                            name = os.path.join('Rank_NYU', 'ImagePairs_png_v4', name)
-                            im = Image.fromarray(255 * image_corrupted)
+                            name = os.path.join('Rank_NYU', 'ImagePairs_png_v5', name)
+                            im = Image.fromarray(255 * np.abs(image_corrupted))
                             im = im.convert("L")
                             im.save(name)
                             logger.info(f'saving to png {name}')
                             logger.info('...')
+
+                            with h5py.File(out_name, mode='a') as hf:
+                                name = 'EXAMPLE_%07d_IMAGE_%04d' % (count, recon)
+                                hf.create_dataset(name, data=image_corrupted)
 
                 if 1 == 0:
                     plt.figure()
@@ -541,7 +618,7 @@ def generate_pairs():
 
                 count += 1
 
-            # if index_file > 5:
+            # if index_file > 0:
             #     break
 
 
@@ -549,4 +626,10 @@ if __name__ == "__main__":
 
     logging.basicConfig(filename='CreateImagePairs_NYU.log', filemode='w', level=logging.INFO)
     logger = logging.getLogger('main')
+
+    start_time = time.time()
     generate_pairs()
+
+    total_time = (time.time() - start_time)/60
+
+    print("--- %s min ---" % total_time)
