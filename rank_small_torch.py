@@ -1,4 +1,7 @@
-
+import tkinter as tk
+from tkinter import filedialog
+import fnmatch
+import os
 import numpy as np
 import h5py as h5
 import matplotlib.pyplot as plt
@@ -10,15 +13,44 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 import torch.optim as optim
-# from livelossplot import PlotLosses
-# from torch.utils.tensorboard import SummaryWriter
-# import torchsummary
+#from livelossplot import PlotLosses
+#from torch.utils.tensorboard import SummaryWriter
+import torchsummary
+
+
+def zero_padding(input, oshapex, oshapey):
+    # pad x
+    padxL = int(np.floor((oshapex - input.shape[0])/2))
+    padxR = int(oshapex - input.shape[0] - padxL)
+
+    # pad y
+    padyU = int(np.floor((oshapey - input.shape[1])/2))
+    padyD = int(oshapey - input.shape[1] - padyU)
+
+    input = np.pad(input, ((padxL, padxR),(padyU, padyD)), 'constant', constant_values=0)
+    return input
+
+
+def imshow(im):
+    npim = im.numpy()
+    npim = np.squeeze(npim)
+    abs = np.sqrt(npim[:,:,0]**2 + npim[:,:,1]**2)
+    plt.imshow(abs,cmap='gray')
+    plt.show()
+
 
 subtract_truth = True
 shuffle_observers = True
 
 # Ranks
-names = ('ranks_CT_const.csv', 'ranks_CT_const2.csv')
+names = []
+root = tk.Tk()
+filepath_csv = tk.filedialog.askdirectory(title='Choose where the csv file is')
+files_csv = os.listdir(filepath_csv)
+for file in files_csv:
+    if fnmatch.fnmatch(file, '*.csv'):
+        names.append(os.path.join(filepath_csv, file))
+
 # Load the ranks
 ranks = []
 for fname in names:
@@ -34,26 +66,32 @@ if shuffle_observers:
     np.random.shuffle(ranks)
 
 # Examples
+maxMatSize = 396    # largest matrix size seems to be 396
 NEXAMPLES = ranks.shape[0]
-X_1 = np.zeros((NEXAMPLES,256,256),dtype=np.complex64)
-X_2 = np.zeros((NEXAMPLES,256,256),dtype=np.complex64)
-X_T = np.zeros((NEXAMPLES,256,256),dtype=np.complex64)
+X_1 = np.zeros((NEXAMPLES, maxMatSize, maxMatSize),dtype=np.complex64)   # saved as complex128 though
+X_2 = np.zeros((NEXAMPLES, maxMatSize, maxMatSize),dtype=np.complex64)
+X_T = np.zeros((NEXAMPLES, maxMatSize, maxMatSize),dtype=np.complex64)
 Labels = np.zeros(NEXAMPLES, dtype=np.int32)
 
-hf = h5.File(name='TRAINING_IMAGES_V1.h5', mode='r')
+root = tk.Tk()
+filepath_images = tk.filedialog.askdirectory(title='Choose where the h5 is')
+for file in os.listdir(filepath_images):
+    if fnmatch.fnmatch(file, '*.h5'):
+        file_images = os.path.join(filepath_images, file)
+hf = h5.File(name=file_images, mode='r')
 
 # Make a real database of images
 for i in range(0, ranks.shape[0]):
     # print('Example %d, Image %d ( %d %d)' % (i, ranks[i, 2], ranks[i, 0], ranks[i, 1]))
 
-    name = 'EXAMPLE_%06d_TRUTH' % (ranks[i,2])
-    X_T[i, :, :] = np.array(hf[name])
+    name = 'EXAMPLE_%07d_TRUTH' % (ranks[i,2])
+    X_T[i, :, :] = zero_padding(np.array(hf[name]), maxMatSize, maxMatSize)
 
-    name = 'EXAMPLE_%06d_IMAGE_%04d' % (ranks[i, 2], 0)
-    X_1[i, :, :] = np.array(hf[name])
+    name = 'EXAMPLE_%07d_IMAGE_%04d' % (ranks[i, 2], 0)
+    X_1[i, :, :] = zero_padding(np.array(hf[name]), maxMatSize, maxMatSize)
 
-    name = 'EXAMPLE_%06d_IMAGE_%04d' % (ranks[i, 2], 1)
-    X_2[i, :, :] = np.array(hf[name])
+    name = 'EXAMPLE_%07d_IMAGE_%04d' % (ranks[i, 2], 1)
+    X_2[i, :, :] = zero_padding(np.array(hf[name]), maxMatSize, maxMatSize)
 
     # Label based on ranks from ranker
     if ranks[i,0] == 2:
@@ -89,9 +127,8 @@ X_1_cnnT = np.transpose(X_1_cnnT,[0,3,1,2])
 X_2_cnnT = np.transpose(X_2_cnnT,[0,3,1,2])
 X_1_cnnV = np.transpose(X_1_cnnV,[0,3,1,2])
 X_2_cnnV = np.transpose(X_2_cnnV,[0,3,1,2])
-print(X_1_cnnT.shape)
-
-# Transform
+print(f'Training set size {X_1_cnnT.shape}')
+print(f'Validation set size {X_1_cnnV.shape}')
 
 
 # Data generator
@@ -133,13 +170,6 @@ checkim1 = checkim1.permute(0,2,3,1)
 checkim2 = checkim2.permute(0,2,3,1)
 checklbnp = checklb.numpy()
 
-def imshow(im):
-    npim = im.numpy()
-    npim = np.squeeze(npim)
-    abs = np.sqrt(npim[:,:,0]**2 + npim[:,:,1]**2)
-    plt.imshow(abs,cmap='gray')
-    plt.show()
-
 randnum = np.random.randint(16)
 imshow(checkim1[randnum,:,:,:])
 imshow(checkim2[randnum,:,:,:])
@@ -151,7 +181,7 @@ print(f'Label is {checklbnp[randnum]}')
 channels_cnn = 16
 kernel_size = 3
 stride_size = 1
-image_size = 256
+image_size = maxMatSize
 padding_size = 1
 
 
@@ -231,7 +261,7 @@ class Ranknet(nn.Module):
     #         num_features *= s
     #     return num_features
 ranknet = Ranknet()
-torchsummary.summary(ranknet, (2,256,256), device="cpu")
+torchsummary.summary(ranknet, (2,maxMatSize, maxMatSize), device="cpu")
 
 class Classifier(nn.Module):
 
@@ -303,10 +333,10 @@ class RunningAverage:
         return self.sum / self.count
 
 
-liveloss = PlotLosses()
+# liveloss = PlotLosses()
 
 # Training
-for epoch in range(100):
+for epoch in range(10):
 
     logs = {}
     # Setup counter to keep track of loss
@@ -348,15 +378,6 @@ for epoch in range(100):
 
 
         running_loss += loss.item()
-        # if i % 10 == 9:  # every 10 mini-batches...
-        #
-        #     # ...log the running loss
-        #     writer.add_scalar('training loss',
-        #                       running_loss / 10,
-        #                       epoch * len(loader_T) + i)
-        #
-        #     # ...log a Matplotlib Figure showing the model's predictions on a
-        #     # random mini-batch
 
 
     # validation
@@ -377,12 +398,13 @@ for epoch in range(100):
 
         print(f'validation loss is {loss}')
 
+    print(f'training average loss is {train_avg.avg()}')
+    print(f'training average loss is {eval_avg.avg()}')
+    # logs['loss'] = train_avg.avg()
+    # logs['val_loss'] = eval_avg.avg()
 
-    logs['loss'] = train_avg.avg()
-    logs['val_loss'] = eval_avg.avg()
-
-    liveloss.update(logs)
-    liveloss.draw()
+    # liveloss.update(logs)
+    # liveloss.draw()
 
     print('Epoch = %d : Loss Eval = %f , Loss Train = %f' % (epoch, eval_avg.avg(), train_avg.avg()))
 

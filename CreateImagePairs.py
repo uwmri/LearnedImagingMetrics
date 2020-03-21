@@ -82,10 +82,11 @@ def trans_motion(input, dir_motion, maxshift, sigma_shift, prob):
             num_x, num_y = input.shape[1:]
             startdir = np.random.randint(0,1)   # Always start in PE (column)
 
-            shift_bulk0 = (2*np.random.randint(0,2)-1) * np.random.normal(maxshift, sigma_shift)        # shift in x
-            shift_bulk1 = (2*np.random.randint(0,2)-1) * np.random.normal(maxshift, sigma_shift)        # shift in y
-            # shift_bulk0 = 0
-            # shift_bulk1 = 30
+            shift_bulk0 = (2 * np.random.randint(0, 2) - 1) * np.random.randint(1, maxshift)  # shift in x
+            shift_bulk1 = (2 * np.random.randint(0, 2) - 1) * np.random.randint(1, maxshift)  # shift in y
+            # shift_bulk0 = (2*np.random.randint(0,2)-1) * np.random.normal(maxshift, sigma_shift)        # shift in x
+            # shift_bulk1 = (2*np.random.randint(0,2)-1) * np.random.normal(maxshift, sigma_shift)        # shift in y
+
 
             logger.info(f'shift in x is {shift_bulk0} pixels')
             logger.info(f'shift in y is {shift_bulk1} pixels')
@@ -282,9 +283,9 @@ def get_truth(kspace, sl, device, lamda):
     return image_truth
 
 
-def get_corrupted(kspace, sl, num_coils, num_corrupted, device, acc=0, acc_ulim=20,
-                  kedge_len=30, gaussian_ulim=18, gaussian_prob=2, dir_motion=2, maxshift=20, sigma_shift=6,
-                  motion_prob=1, incoherent_prob=2, dump=0.5, mode_incoherent=1):
+def get_corrupted(kspace, sl, num_coils, num_corrupted, device, acc=0, acc_ulim=15,
+                  kedge_len=30, gaussian_ulim=12, gaussian_prob=2, dir_motion=2, maxshift=20, sigma_shift=6,
+                  motion_prob=3, incoherent_prob=2, dump=0.7, mode_incoherent=1):
     logger = logging.getLogger('get_corrupted')
 
     # get smaps from original ksp
@@ -358,9 +359,10 @@ def get_corrupted(kspace, sl, num_coils, num_corrupted, device, acc=0, acc_ulim=
     ksp2_gpu = sp.to_device(ksp2, device=device)
 
     # RECON. 0 for sos, 1 for PILS, 2 for L2 SENSE, 3 for l1 wavelet, 4 for tv
-    recon_type = np.random.randint(5)
+    recon_type = 0
+    # recon_type = np.random.randint(5)
 
-    mu_iter, sigma_iter = 20, 3
+    mu_iter, sigma_iter = 30, 3
     maxiter = np.int(np.ceil(np.abs(np.random.normal(mu_iter, sigma_iter, 1))))
 
     if recon_type == 0:
@@ -368,8 +370,11 @@ def get_corrupted(kspace, sl, num_coils, num_corrupted, device, acc=0, acc_ulim=
         ksp2_tensor = T.to_tensor(ksp2)  # T requires array to be tensor
         image = T.ifft2(ksp2_tensor)  # torch.Size([20, 640, 320, 2])
         image = image.numpy()
-        image = image[:, :, :, 0] + 1j * image[:, :, :, 1]  # torch.Size([20, 640, 320])
-        image = np.sqrt(np.sum(image ** 2, axis=0))  # torch.Size([640, 320])
+        image = image[:, :, :, 0] + 1j * image[:, :, :, 1]  # (coil, h, w)
+        #abs
+        image = np.abs(image)
+        image = image.astype('complex128')
+        image = np.sqrt(np.sum(image ** 2, axis=0))  # (h, w)
 
     elif recon_type == 1:
         logger.info('PILS')
@@ -498,7 +503,7 @@ def generate_pairs():
                 im = Image.fromarray(255 * np.abs(image_sense))
                 im = im.convert("L")
                 name = 'NYU_%07d_TRUTH.png' % count
-                name = os.path.join('Rank_NYU', 'ImagePairs_png_v5', name)
+                name = os.path.join('Rank_NYU', 'ImagePairs_png_v6', name)
                 im.save(name)
 
                 print(f'saving slice {s} of file # {index_file + 1} to count {count}')
@@ -517,8 +522,8 @@ def generate_pairs():
                         image_corrupted1, acc1, gaussian_level1, percent1, mode1 = get_corrupted(ksp, s, num_corrupted=recon, num_coils=tot_coils, device=device)  # has been normalized to its max
                         logger.info(f'gaussian_level is {gaussian_level1} for both')
                         # Find scaling that minimizes MSE(corrupted, ori)
-                        scale = np.sum(np.conj(image_corrupted1).T @ image_sense) / np.sum(
-                            np.conj(image_corrupted1).T @ image_corrupted1)
+                        scale = np.sum(np.conj(image_corrupted1).T * image_sense) / np.sum(
+                            np.conj(image_corrupted1).T * image_corrupted1)
                         # print(f'scale for file # {index_file + 1}, slice # {s}, recon # {recon} is {scale} ')
                         # logger.info(f'scale is {scale}')
                         image_corrupted1 *= scale
@@ -529,7 +534,7 @@ def generate_pairs():
                         logger.info(f'SSIM between corrupted1 and truth = {ssim1}')
 
                         name = 'NYU_%07d_IMAGE_%04d.png' % (count, recon)
-                        name = os.path.join('Rank_NYU', 'ImagePairs_png_v5', name)
+                        name = os.path.join('Rank_NYU', 'ImagePairs_png_v6', name)
                         im = Image.fromarray(255 * np.abs(image_corrupted1))
                         im = im.convert("L")
                         im.save(name)
@@ -544,8 +549,8 @@ def generate_pairs():
                         image_corrupted, acc, gaussian_level, percent, mode = get_corrupted(ksp, s, num_corrupted=recon, num_coils=tot_coils, device=device, acc=acc1, gaussian_ulim=gaussian_level1, dump=percent1, mode_incoherent=mode1)  # has been normalized to its max
                         logger.info(f'Incoherent noise mode is {mode}. dump {1-percent} PE for addding incoherent noise')
                         # Find scaling that minimizes MSE(corrupted, ori)
-                        scale = np.sum(np.conj(image_corrupted).T @ image_sense) / np.sum(
-                            np.conj(image_corrupted).T @ image_corrupted)
+                        scale = np.sum(np.conj(image_corrupted).T * image_sense) / np.sum(
+                            np.conj(image_corrupted).T * image_corrupted)
                         # print(f'scale for file # {index_file + 1}, slice # {s}, recon # {recon} is {scale} ')
                         # logger.info(f'scale is {scale}')
                         image_corrupted *= scale
@@ -567,8 +572,8 @@ def generate_pairs():
                                                                  device=device,
                                                                  acc=acc1, gaussian_ulim=gaussian_level1, dump=percent1,
                                                                                                 mode_incoherent=mode1)  # has been normalized to its max
-                            scale = np.sum(np.conj(image_corrupted).T @ image_sense) / np.sum(
-                                np.conj(image_corrupted).T @ image_corrupted)
+                            scale = np.sum(np.conj(image_corrupted).T * image_sense) / np.sum(
+                                np.conj(image_corrupted).T * image_corrupted)
                             image_corrupted *= scale
 
                             # mse2 = compare_nrmse(image_sense, image_corrupted, norm_type='euclidean')
@@ -579,7 +584,7 @@ def generate_pairs():
                             if counter_regenerate > 12:
                                 logger.info(f'Too many tries, settle on this one. ssim12 = {np.abs(ssim2-ssim1)}')
                                 name = 'NYU_%07d_IMAGE_%04d.png' % (count, recon)
-                                name = os.path.join('Rank_NYU', 'ImagePairs_png_v5', name)
+                                name = os.path.join('Rank_NYU', 'ImagePairs_png_v6', name)
                                 im = Image.fromarray(255 * np.abs(image_corrupted))
                                 im = im.convert("L")
                                 im.save(name)
@@ -594,7 +599,7 @@ def generate_pairs():
                         else:
                             logger.info(f'SSIM between corrupted1 and 2 = {diff_ssim12}')
                             name = 'NYU_%07d_IMAGE_%04d.png' % (count, recon)
-                            name = os.path.join('Rank_NYU', 'ImagePairs_png_v5', name)
+                            name = os.path.join('Rank_NYU', 'ImagePairs_png_v6', name)
                             im = Image.fromarray(255 * np.abs(image_corrupted))
                             im = im.convert("L")
                             im.save(name)
@@ -618,8 +623,8 @@ def generate_pairs():
 
                 count += 1
 
-            # if index_file > 0:
-            #     break
+            if index_file > 4:
+                break
 
 
 if __name__ == "__main__":
