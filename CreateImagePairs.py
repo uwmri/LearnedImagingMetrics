@@ -240,7 +240,7 @@ def add_incoherent_noise(kspace=None, prob=None, central=0.4, mode=1, num_corrup
             else:
                 # for the second corrupted image, do the same the percent as the first one. input dump=percent1.
                 percent = dump
-                print(f'percent for mode 0 is {percent}')
+                # print(f'percent for mode 0 is {percent}')
             logger.info(f'mode={mode}, discard {(1 - percent)*100}% points')
             randuni_m = np.random.choice([0, 1], size=kspace[0, :, :].shape, p=[1-percent, percent])
 
@@ -267,12 +267,13 @@ def get_truth(kspace, sl, device, lamda):
     smaps = get_smaps(ksp_gpu, device=device, maxiter=50)
     image_truth = mri.app.SenseRecon(ksp_gpu, smaps, lamda=lamda, device=device,
                                      max_iter=20).run()
-    # crop and flip up down
+    # crop, zero-padding and flip up down
     width = image_truth.shape[1]
     if width < 320:
         image_truth = image_truth[160:480, :]
     else:
         image_truth = image_truth[.5 * width:1.5 * width, :]
+
 
     # send to cpu and normalize
     image_truth = sp.to_device(image_truth, sp.cpu_device)
@@ -323,7 +324,8 @@ def get_corrupted(kspace, sl, num_coils, num_corrupted, device, acc=0, acc_ulim=
         ksp2[c, :, :] = ksp2[c, :, :] * mask  # ksp2 = (coil, h,w)
 
     # Using edge of ksp as sigma_estimated
-    idx_1nz = next((i for i, x in enumerate(ksp2[0, 0, :]) if x), None)  # index of first non-zero value
+    # 395 is the center row after zero padding. Hard code for now
+    idx_1nz = next((i for i, x in enumerate(ksp2[0, 395, :]) if x), None)  # index of first non-zero value
     idx_enz = kspace.shape[3] - idx_1nz + 1  # index of last non-zero value
 
     kedgel = ksp2[:, :, idx_1nz:idx_1nz + kedge_len]
@@ -359,8 +361,8 @@ def get_corrupted(kspace, sl, num_coils, num_corrupted, device, acc=0, acc_ulim=
     ksp2_gpu = sp.to_device(ksp2, device=device)
 
     # RECON. 0 for sos, 1 for PILS, 2 for L2 SENSE, 3 for l1 wavelet, 4 for tv
-    recon_type = 0
-    # recon_type = np.random.randint(5)
+    # recon_type = 0
+    recon_type = np.random.randint(5)
 
     mu_iter, sigma_iter = 30, 3
     maxiter = np.int(np.ceil(np.abs(np.random.normal(mu_iter, sigma_iter, 1))))
@@ -460,6 +462,14 @@ def generate_pairs():
             hf = h5py.File(file)
 
             ksp = hf['kspace'][()]
+
+            # Hard code zero padding kspace
+            Nxmax = 396
+            Nymax = 768
+            padyU = int(.5 * (Nymax - ksp.shape[2]))
+            padxU = int(.5 * (Nxmax - ksp.shape[3]))
+
+            ksp = np.pad(ksp, ((0,0), (0,0), (padyU, Nymax - ksp.shape[2] - padyU), (padxU, Nxmax-ksp.shape[3]-padxU)), 'constant', constant_values=0+0j)
 
             # Number of slices to grab per h5 file
             num_slices = 4
@@ -623,7 +633,7 @@ def generate_pairs():
 
                 count += 1
 
-            if index_file > 4:
+            if index_file > 30:
                 break
 
 
