@@ -16,14 +16,19 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 import torch.optim as optim
 import torchsummary
-
 from torch.utils.tensorboard import SummaryWriter
-# from tensorboardX import SummaryWriter
+
+from ax.service.managed_loop import optimize
+
+from efficientnet_pytorch import EfficientNet
 
 from model_helper import *
 
 subtract_truth = True
 shuffle_observers = True
+MOBILE = False
+EFF = False
+BO = True
 
 # Ranks
 names = []
@@ -108,6 +113,27 @@ X_1 = np.transpose(X_1, [0, 3, 1, 2])
 X_2 = np.transpose(X_2, [0, 3, 1, 2])
 print(X_1.shape)
 
+# MobileNet requires values [0,1] and normalized
+if MOBILE:
+    x1max = X_1.max(axis=(2, 3))
+    x1min = X_1.min(axis=(2, 3))
+    x2max = X_2.max(axis=(2, 3))
+    x2min = X_2.min(axis=(2, 3))
+
+    mean = [0.485, 0.456, 0.406]
+    std = [0.229, 0.224, 0.225]
+
+    for i in range(X_1.shape[0]):
+        for ch in range(X_1.shape[1]):
+            X_1[i,ch,...] = (X_1[i,ch,...]-x1min[i,ch])/(x1max[i,ch]-x1min[i,ch])
+            X_2[i, ch, ...] = (X_2[i, ch, ...] - x2min[i, ch]) / (x2max[i, ch] - x2min[i, ch])
+
+            X_1[i, ch, ...] = (X_1[i, ch, ...] - mean[ch]) / std[ch]
+            X_2[i, ch, ...] = (X_2[i, ch, ...] - mean[ch]) / std[ch]
+
+        if i % 1e2 == 0:
+            print(f'Normalizing pairs {i + 1}')
+
 ntrain = int(0.9 * NRANKS)
 id = ranks[:,2] - 1
 idT = id[:ntrain]
@@ -116,28 +142,15 @@ idV = id[ntrain:]
 Labels_cnnT = Labels[:ntrain]
 Labels_cnnV = Labels[ntrain:]
 
-# X_1_cnnT = X_1[idx[:ntrain],...]
-# X_2_cnnT = X_2[idx[:ntrain], ...]
-# X_1_cnnV = X_1[idx[ntrain:], ...]
-# X_2_cnnV = X_2[idx[ntrain:], ...]
-#
-# # torch tensor should be minibatch * channel * H*W
-# X_1_cnnT = np.transpose(X_1_cnnT, [0, 3, 1, 2])
-# X_2_cnnT = np.transpose(X_2_cnnT, [0, 3, 1, 2])
-# X_1_cnnV = np.transpose(X_1_cnnV, [0, 3, 1, 2])
-# X_2_cnnV = np.transpose(X_2_cnnV, [0, 3, 1, 2])
-# print(f'Training set size {X_1_cnnT.shape}')
-# print(f'Validation set size {X_1_cnnV.shape}')
 
 # Data generator
 BATCH_SIZE = 16
-# trainingset = DataGenerator(X_1_cnnT, X_2_cnnT, Labels_cnnT)
-trainingset = DataGenerator(X_1, X_2, Labels_cnnT, idT)
+trainingset = DataGenerator(X_1, X_2, Labels_cnnT, idT, flip_prob=.2, trans_prob=0.2, rot_prob=0.2)
 loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=True)
 
-# validationset = DataGenerator(X_1_cnnV, X_2_cnnV, Labels_cnnV)
-validationset = DataGenerator(X_1, X_2, Labels_cnnV, idV)
+validationset = DataGenerator(X_1, X_2, Labels_cnnV, idV, flip_prob=0, trans_prob=0, rot_prob=0)
 loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE * 2, shuffle=True)
+
 
 # check loader, show a batch
 check = iter(loader_T)
@@ -150,29 +163,73 @@ randnum = np.random.randint(16)
 imshow(checkim1[randnum, :, :, :])
 imshow(checkim2[randnum, :, :, :])
 print(f'Label is {checklbnp[randnum]}')
+# print(f'Label is {checktrans[randnum]}')
+# print(f'Label is {checkcrop[randnum]}')
 
 # Ranknet
-ranknet = ResNet2(BasicBlock, [1,1,1,1])  # Less than ResNet18
-# torchsummary.summary(ranknet, (2, maxMatSize, maxMatSize), device="cpu")
-
-classifier = Classifier()
-optimizer = optim.SGD(classifier.parameters(), lr=0.001, momentum=0.9)
-loss_func = nn.CrossEntropyLoss()
-
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print(device)
+
+if MOBILE:
+    ranknet = MobileNetV2_2chan() # Less than ResNet18
+elif EFF:
+    ranknet = EfficientNet.from_name('efficientnet-b0', num_classes=1)
+else:
+    ranknet = ResNet2(BasicBlock, [2,2,2,2])  # Less than ResNet18
+
+torchsummary.summary(ranknet, (2, maxMatSize, maxMatSize), device="cpu")
+
+classifier = Classifier()
+
+# Bayesian
+def train_evaluate(parameterization):
+
+    net = Classifier()
+    net = train_mod(net=net, train_loader=loader_T, parameters=parameterization, dtype=torch.float, device=device,
+                    trainOnMSE=False)
+    return evaluate_mod(
+        net=net,
+        data_loader=loader_V,
+        dtype=torch.float,
+        device=device,
+        trainOnMSE=False
+    )
+
+
+if BO:
+    best_parameters, values, experiment, model = optimize(
+        parameters=[
+            {"name": "lr", "type": "range", "bounds": [1e-6, 0.4], "log_scale": True},
+            {"name": "momentum", "type": "range", "bounds": [0.0, 1.0]},
+        ],
+        evaluation_function=train_evaluate,
+        objective_name='accuracy',
+    )
+
+    optimizer = optim.SGD(classifier.parameters(), lr=best_parameters['lr'], momentum=best_parameters['momentum'])
+
+    print(best_parameters)
+
+else:
+    optimizer = optim.SGD(classifier.parameters(), lr=0.001, momentum=0.9)
+
+loss_func = nn.CrossEntropyLoss()
+
 classifier.cuda();
 
 # Training
-Ntrial = 2
+Ntrial = 14
 # writer = SummaryWriter(f'runs/rank/trial_{Ntrial}')
 writer_train = SummaryWriter(f'runs/rank/train_{Ntrial}')
 writer_val = SummaryWriter(f'runs/rank/val_{Ntrial}')
 
-Nepoch = 100
+Nepoch = 200
 lossT = np.zeros(Nepoch)
 lossV = np.zeros(Nepoch)
 accV = np.zeros(Nepoch)
+
+trainOnMSE = False
+
 for epoch in range(Nepoch):
 
     # Setup counter to keep track of loss
@@ -198,10 +255,8 @@ for epoch in range(Nepoch):
         im1, im2 = im1.cuda(), im2.cuda()
         labels = labels.to(device, dtype=torch.long)
 
-
-
-        # forward
-        delta = classifier(im1, im2)
+        # classifier
+        delta = classifier(im1, im2, trainOnMSE)
 
         # loss
         loss = loss_func(delta, labels)
@@ -244,7 +299,7 @@ for epoch in range(Nepoch):
             labels = labels.to(device, dtype=torch.long)
 
             # forward
-            delta = classifier(im1, im2)
+            delta = classifier(im1, im2, trainOnMSE)
 
             # loss
             loss = loss_func(delta, labels)
@@ -288,7 +343,7 @@ state = {
     'state_dict': classifier.state_dict(),
     'optimizer': optimizer.state_dict()
 }
-torch.save(state, 'RankClassifier2.pt')
+torch.save(state, 'RankClassifier14.pt')
 
 # Save
 
@@ -303,3 +358,5 @@ torch.save(state, 'RankClassifier2.pt')
 # plt.figure()
 # plt.plot(test_input,test_output)
 # plt.show()
+
+
