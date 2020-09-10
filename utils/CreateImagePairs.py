@@ -1,33 +1,13 @@
-import h5py
-import numpy as np
-from matplotlib import pyplot as plt
-from pathlib import Path
-from PIL import Image
 import logging
 from skimage.metrics import structural_similarity
-from skimage.measure import compare_nrmse
 
-import sigpy as sp
 import sigpy.mri as mri
-import sigpy.plot as pl
-import fnmatch
-import os
-import torch
 import pywt
 import time
 
 from fastMRI.data import transforms as T
+from utils.utils import *
 
-
-
-def find(pattern, path):
-    result = []
-    for root, dirs, files in os.walk(path):
-        for name in files:
-            if fnmatch.fnmatch(name, pattern):
-                if os.path.islink(name) == False:
-                    result.append(os.path.join(root, name))
-    return result
 
 def soft_thresh(input, thresh):
     sort_input = np.sort(np.abs(input.flatten()))
@@ -260,26 +240,36 @@ def add_incoherent_noise(kspace=None, prob=None, central=0.4, mode=1, num_corrup
     return kspace, percent, mode
 
 
-def get_smaps(kspace_gpu, device, maxiter=50):
+def get_smaps(kspace_gpu, device, maxiter=30, method='espirit'):
     # Input kspace is (coil, h, w)
-    mps = sp.mri.app.EspiritCalib(kspace_gpu, calib_width=24, thresh=0.005, kernel_width=7, crop=0.8,
-                                    max_iter=maxiter,
-                                    device=device, show_pbar=True).run()
+    # Output is complex64, <CUDA Device 0>, (coil, h, w)
+
+    if method == 'espirit':
+        mps = sp.mri.app.EspiritCalib(kspace_gpu, calib_width=24, thresh=0.005, kernel_width=7, crop=0.8,
+                                        max_iter=maxiter,
+                                        device=device, show_pbar=True).run()
+    else:
+        mps = sp.mri.app.JsenseRecon(kspace_gpu, ksp_calib_width=24, mps_ker_width=16, lamda=0.001,
+                                        max_iter=maxiter, max_inner_iter=10,
+                                        device=device, show_pbar=True).run()
+
+            # ishape is (coil, ksp_calib_width, ksp_calib_width)
+            # oshape is (coil, ksp_calib_width, ksp_calib_width)
     return mps
 
 
 def get_truth(kspace, sl, device, lamda, smaps=None, forRecon=False):
-    # Input kspace is (sl, coil, h, w)
+    # Input kspace should be fully sampled, (sl, coil, h, w)
     # Input smaps is for each slice, (coil, h, w)
     kspace_sl = kspace[sl]
     ksp_gpu = sp.to_device(kspace_sl, device=device)  # (coil, h, w)
 
     if smaps is None:
         smaps = get_smaps(ksp_gpu, device=device, maxiter=50)
-    image_truth = mri.app.SenseRecon(ksp_gpu, smaps, lamda=lamda, device=device,
-                                     max_iter=20).run()
 
     if not forRecon:
+        image_truth = mri.app.SenseRecon(ksp_gpu, smaps, lamda=lamda, device=device,
+                                         max_iter=20).run()
         # crop, zero-padding and flip up down
         width = image_truth.shape[1]
         if width < 320:
@@ -287,13 +277,21 @@ def get_truth(kspace, sl, device, lamda, smaps=None, forRecon=False):
         else:
             image_truth = image_truth[.5 * width:1.5 * width, :]
 
+        image_truth = np.flipud(image_truth)
 
-    # send to cpu and normalize
-    image_truth = sp.to_device(image_truth, sp.cpu_device)
-    image_truth = np.flipud(image_truth)
-    image_truth /= np.max(np.abs(image_truth))
+        # send to cpu and normalize
+        image_truth = sp.to_device(image_truth, sp.cpu_device)
+        image_truth /= np.max(np.abs(image_truth))
 
-    image_truth = image_truth.astype(np.complex128)
+        image_truth = image_truth.astype(np.complex64)
+
+    else:
+        E = sp.mri.linop.Sense(smaps, coil_batch_size=1, ishape=(1,)+smaps.shape[-2:])
+        Eh = E.H
+
+        image_truth = Eh.apply(ksp_gpu)
+        image_truth = sp.to_device(image_truth, sp.cpu_device)
+
     return image_truth
 
 
@@ -378,7 +376,7 @@ def get_corrupted(kspace, sl, num_coils, num_corrupted, device, acc=0, acc_ulim=
     ksp2_gpu = sp.to_device(ksp2, device=device)
 
     # RECON. 0 for sos, 1 for PILS, 2 for L2 SENSE, 3 for l1 wavelet, 4 for tv
-    # recon_type = 0
+    #recon_type = 0
     recon_type = np.random.randint(5)
 
     mu_iter, sigma_iter = 30, 3
@@ -443,6 +441,7 @@ def get_corrupted(kspace, sl, num_coils, num_corrupted, device, acc=0, acc_ulim=
     image_sq /= np.max(np.abs(image_sq))
 
     return image_sq, acc, gaussian_level, percent, mode, smaps    # percent and mode are incoherent noise
+
 
 def generate_pairs():
     train_folder = Path("D:/NYUbrain/brain_multicoil_train/multicoil_train")

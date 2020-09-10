@@ -1,34 +1,26 @@
 import tkinter as tk
 from tkinter import filedialog
-import fnmatch
-import os
-import numpy as np
 import h5py as h5
-import matplotlib.pyplot as plt
 import csv
 
-import torch
-import torchvision
-import torchvision.transforms as transforms
-from torchvision.models.resnet import BasicBlock, Bottleneck, conv1x1, conv3x3
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.utils.data import DataLoader, Dataset
-import torch.optim as optim
+from torchvision.models import mobilenet_v2
 import torchsummary
 from torch.utils.tensorboard import SummaryWriter
+from torch.utils.data import DataLoader
 
 from ax.service.managed_loop import optimize
 
-from efficientnet_pytorch import EfficientNet
-
-from model_helper import *
+from utils.model_helper import *
+from utils.utils_DL import *
 
 subtract_truth = True
 shuffle_observers = True
 MOBILE = False
 EFF = False
 BO = True
+ResumeTrain = True
+
+
 
 # Ranks
 names = []
@@ -39,7 +31,7 @@ os.chdir(filepath_csv)
 
 files_csv = os.listdir(filepath_csv)
 for file in files_csv:
-    if fnmatch.fnmatch(file, '*.csv'):
+    if fnmatch.fnmatch(file, '*consensus.csv'):
         names.append(os.path.join(filepath_csv, file))
 
 # Load the ranks
@@ -52,11 +44,11 @@ for fname in names:
             ranks.append(row)
 ranks = np.array(ranks, dtype=np.int)
 
-# Human consistency on duplicated pairs
-_, countR = np.unique(ranks, axis=0, return_counts=True)
-_, count = np.unique(ranks[:,2], axis=0, return_counts=True)
-print(f'{ranks.shape[0]-len(count)} Duplicated pairs, {ranks.shape[0]} total pairs')
-print(f'For duplicated pairs, {(ranks.shape[0]-len(countR))/(ranks.shape[0]-len(count))*100} % have the same ranking')
+# # Human consistency on duplicated pairs
+# _, countR = np.unique(ranks, axis=0, return_counts=True)
+# _, count = np.unique(ranks[:,2], axis=0, return_counts=True)
+# print(f'{ranks.shape[0]-len(count)} Duplicated pairs, {ranks.shape[0]} total pairs')
+# print(f'For duplicated pairs, {(ranks.shape[0]-len(countR))/(ranks.shape[0]-len(count))*100} % have the same ranking')
 
 # Shuffle the ranks while the data size is small
 if shuffle_observers:
@@ -145,10 +137,10 @@ Labels_cnnV = Labels[ntrain:]
 
 # Data generator
 BATCH_SIZE = 16
-trainingset = DataGenerator(X_1, X_2, Labels_cnnT, idT, flip_prob=.2, trans_prob=0.2, rot_prob=0.2)
+trainingset = DataGenerator_rank(X_1, X_2, Labels_cnnT, idT, flip_prob=.2, trans_prob=0.2, rot_prob=0.2)
 loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=True)
 
-validationset = DataGenerator(X_1, X_2, Labels_cnnV, idV, flip_prob=0, trans_prob=0, rot_prob=0)
+validationset = DataGenerator_rank(X_1, X_2, Labels_cnnV, idV, flip_prob=0, trans_prob=0, rot_prob=0)
 loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE * 2, shuffle=True)
 
 
@@ -171,17 +163,17 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print(device)
 
 if MOBILE:
-    ranknet = MobileNetV2_2chan() # Less than ResNet18
+    ranknet = mobilenet_v2(pretrained=False, num_classes=1) # Less than ResNet18
 elif EFF:
     ranknet = EfficientNet.from_name('efficientnet-b0', num_classes=1)
 else:
     ranknet = ResNet2(BasicBlock, [2,2,2,2])  # Less than ResNet18
 
-torchsummary.summary(ranknet, (2, maxMatSize, maxMatSize), device="cpu")
+torchsummary.summary(ranknet, (3, maxMatSize, maxMatSize), device="cpu")
 
-classifier = Classifier()
 
 # Bayesian
+# optimize classification accuracy on the validation set as a function of the learning rate and momentum
 def train_evaluate(parameterization):
 
     net = Classifier()
@@ -196,34 +188,51 @@ def train_evaluate(parameterization):
     )
 
 
-if BO:
-    best_parameters, values, experiment, model = optimize(
-        parameters=[
-            {"name": "lr", "type": "range", "bounds": [1e-6, 0.4], "log_scale": True},
-            {"name": "momentum", "type": "range", "bounds": [0.0, 1.0]},
-        ],
-        evaluation_function=train_evaluate,
-        objective_name='accuracy',
-    )
+if ResumeTrain:
+    # load RankNet
+    root = tk.Tk()
+    root.withdraw()
+    filepath_rankModel = tk.filedialog.askdirectory(title='Choose where the saved metric model is')
+    file_rankModel = os.path.join(filepath_rankModel, "RankClassifier15.pt")
+    classifier = Classifier()
 
-    optimizer = optim.SGD(classifier.parameters(), lr=best_parameters['lr'], momentum=best_parameters['momentum'])
-
-    print(best_parameters)
+    state = torch.load(file_rankModel)
+    classifier.load_state_dict(state['state_dict'], strict=True)
+    optimizer = optim.SGD(classifier.parameters(), lr=0.05045, momentum=0.0)
+    optimizer.load_state_dict(state['optimizer'])
 
 else:
-    optimizer = optim.SGD(classifier.parameters(), lr=0.001, momentum=0.9)
+    classifier = Classifier()
+
+    if BO:
+        best_parameters, values, experiment, model = optimize(
+            parameters=[
+                {"name": "lr", "type": "range", "bounds": [1e-6, 0.4], "log_scale": True},
+                {"name": "momentum", "type": "range", "bounds": [0.0, 1.0]},
+            ],
+            evaluation_function=train_evaluate,
+            objective_name='accuracy',
+        )
+
+        optimizer = optim.SGD(classifier.parameters(), lr=best_parameters['lr'], momentum=best_parameters['momentum'])
+
+        print(best_parameters)
+
+    else:
+        optimizer = optim.SGD(classifier.parameters(), lr=0.001, momentum=0.9)
+
 
 loss_func = nn.CrossEntropyLoss()
 
 classifier.cuda();
 
 # Training
-Ntrial = 14
+Ntrial = 15.2
 # writer = SummaryWriter(f'runs/rank/trial_{Ntrial}')
 writer_train = SummaryWriter(f'runs/rank/train_{Ntrial}')
 writer_val = SummaryWriter(f'runs/rank/val_{Ntrial}')
 
-Nepoch = 200
+Nepoch = 100
 lossT = np.zeros(Nepoch)
 lossV = np.zeros(Nepoch)
 accV = np.zeros(Nepoch)
@@ -341,9 +350,10 @@ for epoch in range(Nepoch):
 
 state = {
     'state_dict': classifier.state_dict(),
-    'optimizer': optimizer.state_dict()
+    'optimizer': optimizer.state_dict(),
+    'epoch': epoch
 }
-torch.save(state, 'RankClassifier14.pt')
+torch.save(state, 'RankClassifier15-2.pt')
 
 # Save
 

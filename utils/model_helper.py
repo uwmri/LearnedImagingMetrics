@@ -1,61 +1,20 @@
-import os
-import numpy as np
-import h5py as h5
-import matplotlib.pyplot as plt
-import csv
-from PIL import Image
 from scipy import ndimage
-from itertools import accumulate
-from typing import Dict, List, Optional, Tuple
 
 import torch
-import torch.optim as optim
-import torchvision
-import torchvision.transforms as transforms
-from torchvision.models.resnet import BasicBlock, Bottleneck, conv1x1, conv3x3
+from torchvision.models.resnet import BasicBlock, Bottleneck, conv1x1
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, Dataset, Subset
+from torch.utils.data import Dataset
 from torchvision.models.mobilenet import _make_divisible, ConvBNReLU, InvertedResidual
 
 from efficientnet_pytorch import EfficientNet
 
-def zero_pad2D(input, oshapex, oshapey):
-    # zero pad to 396*396 and stack to (n,res,res, 2)
-
-    # pad x
-    padxL = int(np.floor((oshapex - input.shape[0])/2))
-    padxR = int(oshapex - input.shape[0] - padxL)
-
-    # pad y
-    padyU = int(np.floor((oshapey - input.shape[1])/2))
-    padyD = int(oshapey - input.shape[1] - padyU)
-
-    input = np.pad(input, ((padxL, padxR),(padyU, padyD)), 'constant', constant_values=0)
-
-    return np.stack((np.real(input),np.imag(input)), axis=-1)
-
-
-def zero_pad4D(ksp_raw, Nxmax=396, Nymax=768):
-    """ zero-pad kspace to the same size (sl, coil, 768, 396)"""
-
-    pady = int(.5 * (Nymax - ksp_raw.shape[2]))
-    padx = int(.5 * (Nxmax - ksp_raw.shape[3]))
-
-    ksp_zp = np.pad(ksp_raw, ((0, 0), (0, 0), (pady, Nymax - ksp_raw.shape[2] - pady),
-                                 (padx, Nxmax - ksp_raw.shape[3] - padx)), 'constant', constant_values=0 + 0j)
-    return ksp_zp
-
-
-def imshow(im):
-    npim = im.numpy()
-    npim = np.squeeze(npim)
-    abs = np.sqrt(npim[:,:,0]**2 + npim[:,:,1]**2)
-    plt.imshow(abs,cmap='gray')
-    plt.show()
+from utils.utils import *
 
 
 class ResNet2(nn.Module):
+
+    # ResNet for 2 channel.
 
     def __init__(self, block, layers, num_classes=1, zero_init_residual=False,
                  groups=1, width_per_group=64, replace_stride_with_dilation=None,
@@ -250,7 +209,7 @@ class MobileNetV2_2chan(nn.Module):
         return self._forward_impl(x)
 
 
-class DataGenerator(Dataset):
+class DataGenerator_rank(Dataset):
     def __init__(self, X_1, X_2, Y, ID, flip_prob, trans_prob, rot_prob,  roll_magL=1, roll_magH=15,
                  crop_sizeL=1, crop_sizeH=15):
 
@@ -310,6 +269,10 @@ class DataGenerator(Dataset):
             x1 = torch.roll(x1, (roll_magLR,roll_magUD),(1,2))
             x2 = torch.roll(x1, (roll_magLR,roll_magUD),(1,2))
 
+        # make images 3 channel.
+        zeros = torch.zeros(((1,) + x1.shape[1:]), dtype=x1.dtype)
+        x1 = torch.cat((x1, zeros), dim=0)
+        x2 = torch.cat((x2, zeros), dim=0)
 
         y = self.Y[idx]
 
@@ -322,8 +285,8 @@ class Classifier(nn.Module):
     def __init__(self):
         super(Classifier,self).__init__()
         # self.rank = ResNet2(BasicBlock, [1,1,1,1])
-        # self.rank = MobileNetV2_2chan()
-        self.rank = EfficientNet.from_name('efficientnet-b0', num_classes=1)
+        # self.rank = mobilenet_v2(pretrained=False, num_classes=1)
+        self.rank = EfficientNet.from_pretrained('efficientnet-b0', num_classes=1)
         self.fc1 = nn.Linear(1,8)
         self.fc2 = nn.Linear(8,3)
         self.drop = nn.Dropout(p=0.5)
@@ -352,143 +315,7 @@ class Classifier(nn.Module):
         return d
 
 
-class RunningAverage:
-    def __init__(self):  # initialization
-        self.count = 0
-        self.sum = 0
-
-    def reset(self):
-        self.count = 0
-        self.sum = 0
-
-    def update(self, value, n=1):
-        self.count += n
-        self.sum += value * n
-
-    def avg(self):
-        return self.sum / self.count
 
 
-def acc_calc(output, labels, BatchSize=16):
-    '''
-    Returns accuracy of a mini-batch
-
-    '''
-
-    _, preds = torch.max(output, 1)
-
-    return (preds == labels).sum().item()/BatchSize
 
 
-class RunningAcc:
-    def __init__(self):  # initialization
-        self.count = 0
-        self.sum = 0
-
-    def reset(self):
-        self.count = 0
-        self.sum = 0
-
-    def update(self, value, n=1):
-        self.count += n
-        self.sum += value
-
-    def avg(self):
-        return self.sum / self.count
-
-
-def train_mod(
-    net: torch.nn.Module,
-    train_loader: DataLoader,
-    parameters: Dict[str, float],
-    dtype: torch.dtype,
-    device: torch.device,
-    trainOnMSE: bool
-
-) -> nn.Module:
-    """
-    Train CNN on provided data set.
-
-    Args:
-        net: initialized neural network
-        train_loader: DataLoader containing training set
-        parameters: dictionary containing parameters to be passed to the optimizer.
-            - lr: default (0.001)
-            - momentum: default (0.0)
-            - weight_decay: default (0.0)
-            - num_epochs: default (1)
-        dtype: torch dtype
-        device: torch device
-    Returns:
-        nn.Module: trained CNN.
-    """
-    # Initialize network
-    net.to(dtype=dtype, device=device)  # pyre-ignore [28]
-    net.train()
-    # Define loss and optimizer
-    criterion = nn.CrossEntropyLoss()
-    optimizer = optim.SGD(
-        net.parameters(),
-        lr=parameters.get("lr", 0.001),
-        momentum=parameters.get("momentum", 0.0),
-        weight_decay=parameters.get("weight_decay", 0.0),
-    )
-    scheduler = optim.lr_scheduler.StepLR(
-        optimizer,
-        step_size=int(parameters.get("step_size", 30)),
-        gamma=parameters.get("gamma", 1.0),  # default is no learning rate decay
-    )
-    num_epochs = parameters.get("num_epochs", 1)
-
-    # Train Network
-    for _ in range(num_epochs):
-        for data in train_loader:
-
-            # get the inputs
-            im1, im2, labels = data
-            im1, im2 = im1.cuda(), im2.cuda()
-            labels = labels.to(device, dtype=torch.long)
-
-            # zero the parameter gradients
-            optimizer.zero_grad()
-
-            # forward + backward + optimize
-            outputs = net(im1, im2, trainOnMSE)
-            loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
-            scheduler.step()
-    return net
-
-
-def evaluate_mod(
-    net: nn.Module, data_loader: DataLoader, dtype: torch.dtype, device: torch.device, trainOnMSE: bool
-) -> float:
-    """
-    Compute classification accuracy on provided dataset.
-
-    Args:
-        net: trained model
-        data_loader: DataLoader containing the evaluation set
-        dtype: torch dtype
-        device: torch device
-    Returns:
-        float: classification accuracy
-    """
-    net.eval()
-    correct = 0
-    total = 0
-    with torch.no_grad():
-        for data in data_loader:
-            im1, im2, labels = data
-            im1, im2, = im1.cuda(), im2.cuda()
-            labels = labels.to(device, dtype=torch.long)
-
-            outputs = net(im1, im2, trainOnMSE)
-
-            # use Acc as metrics
-            _, predicted = torch.max(outputs.data, 1)
-            total += labels.size(0)
-            correct += (predicted == labels).sum().item()
-
-    return correct / total
