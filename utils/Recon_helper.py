@@ -4,6 +4,7 @@ import torchvision
 import torchsummary
 from utils.model_helper import *
 from utils.CreateImagePairs import get_smaps, add_gaussian_noise
+from utils.unet_componets import *
 
 
 class DataGenerator_recon(Dataset):
@@ -549,8 +550,32 @@ class ClassifierD_l(nn.Module):
 
 
 class Unet(nn.Module):
+    def __init__(self):
+        super(Unet, self).__init__()
+        self.conv_in = DoubleConv(2,64)
+        self.down1 = Down(64,128)
+        self.down2 = Down(128,256)
+        self.down3 = Down(256,512)
+        self.down4 = Down(512,1024)
 
+        self.up1 = Up(1024, 512)
+        self.up2 = Up(512,256)
+        self.up3 = Up(256,128)
+        self.up4 = Up(128,64)
+        self.conv_out = nn.Conv2d(64,2,kernel_size=1)
 
+    def forward(self,x):
+        x1 = self.conv_in(x)
+        x2 = self.down1(x1)
+        x3 = self.down2(x2)
+        x4 = self.down3(x3)
+        x5 = self.down4(x4)
+        x = self.up1(x5, x4)
+        x = self.up2(x, x3)
+        x = self.up3(x, x2)
+        x = self.up4(x, x1)
+        x = self.conv_out(x)
+        return x
 
 
 class ScaleLayer(nn.Module):
