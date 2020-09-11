@@ -51,7 +51,7 @@ loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=True)
 validationset = DataGeneratorDenoise(filepath_val, scans_val, file_val)
 loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=True)
 
-denoiser = Unet()
+denoiser = CNN_shortcut()
 denoiser.cuda()
 BO = False
 
@@ -89,7 +89,7 @@ else:
 
 
 # training
-Ntrial = 2
+Ntrial = 3
 writer_train = SummaryWriter(f'runs/denoise/train_{Ntrial}')
 writer_val = SummaryWriter(f'runs/denoise/val_{Ntrial}')
 

@@ -120,7 +120,7 @@ else:
 
 
 # training
-Ntrial = 2
+Ntrial = 1
 writer_train = SummaryWriter(f'runs/recon/train_{Ntrial}')
 writer_val = SummaryWriter(f'runs/recon/val_{Ntrial}')
 
@@ -133,12 +133,12 @@ elif WHICH_LOSS == 'patchGAN':
     patchGAN = NLayerDiscriminator(input_nc=2)
     patchGAN.cuda()
 
-Nepoch = 10
+Nepoch = 30
 lossT = np.zeros(Nepoch)
 lossV = np.zeros(Nepoch)
 
 # save some images during training
-out_name = os.path.join('sneakpeek_training_nodenoiser_mse_1e4.h5')
+out_name = os.path.join('sneakpeek_training_cnnshortdenoiser_mse_1e4.h5')
 try:
     os.remove(out_name)
 except OSError:
@@ -204,16 +204,18 @@ for epoch in range(Nepoch):
         loss.backward()
         optimizer.step()
 
-        if i == 10:
+        if i == 18:
             truthplt = torch.abs(torch.squeeze(chan2_complex(im.cpu())))
-            plt.imshow(truthplt[2], cmap='gray')
-            plt.title('Truth')
-            plt.show()
 
             temp = imEst
             temp = temp.detach().cpu()
             imEstplt = torch.abs(torch.squeeze(chan2_complex(temp)))
             writer_train.add_image('training', imEstplt[2], 0, dataformats='HW')
+
+            plt.subplot(121)
+            plt.imshow(truthplt[2], cmap='gray')
+            plt.title('Truth')
+            plt.subplot(122)
             plt.imshow(imEstplt[2], cmap='gray')
             plt.title(f'Epoch = {epoch}, loss = {loss}')
             plt.show()
@@ -269,7 +271,7 @@ for epoch in range(Nepoch):
             loss = learnedloss_fcn(imEst, im, score)
         eval_avg.update(loss.item(), n=BATCH_SIZE)
 
-        if i == 1:
+        if i == 2:
             break
 
 

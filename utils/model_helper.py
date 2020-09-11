@@ -18,8 +18,9 @@ class ResNet2(nn.Module):
 
     def __init__(self, block, layers, num_classes=1, zero_init_residual=False,
                  groups=1, width_per_group=64, replace_stride_with_dilation=None,
-                 norm_layer=None):
+                 norm_layer=None, for_denoise=False):
         super(ResNet2, self).__init__()
+        self.for_denoise = for_denoise
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
         self._norm_layer = norm_layer
@@ -98,17 +99,24 @@ class ResNet2(nn.Module):
         x = self.bn1(x)
         x = self.relu(x)
         x = self.maxpool(x)
-
+        print(x.shape)
         x = self.layer1(x)
+        print(x.shape)
         x = self.layer2(x)
+        print(x.shape)
         x = self.layer3(x)
+        print(x.shape)
         x = self.layer4(x)
-
+        print((x.shape))
         x = self.avgpool(x)
-        x = torch.flatten(x, 1)
-        x = self.fc(x)
+        print(x.shape)
+        if self.for_denoise:
+            return x
+        else:
+            x = torch.flatten(x, 1)
+            x = self.fc(x)
 
-        return x
+            return x
 
 # # lost precision while converting between array and pil?
 # transform = transforms.Compose([

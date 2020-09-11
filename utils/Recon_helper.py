@@ -351,9 +351,8 @@ class DnCNN(nn.Module):
         self.layers = nn.Sequential(*layers)
 
     def forward(self, inputs):
-        y = inputs.clone()
-        residual = self.layers(y)
-        return y - residual
+        residual = self.layers(inputs)
+        return inputs - residual
 
 
 class DnCNN_dilated(nn.Module):
@@ -373,9 +372,56 @@ class DnCNN_dilated(nn.Module):
         self.layers = nn.Sequential(*layers)
 
     def forward(self, inputs):
-        y = inputs.clone()
-        residual = self.layers(y)
-        return y - residual
+        y = inputs
+        residual = self.layers(inputs)
+        y += residual
+        return y
+
+
+class conv_bn(nn.Module):
+    '''conv ->bn + shortcut -> relu'''
+    def __init__(self, Nkernels=64, BN=True):
+        super(conv_bn, self).__init__()
+        self.conv = nn.Conv2d(Nkernels, Nkernels, kernel_size=3, padding=1)
+        self.norm = nn.BatchNorm2d(Nkernels)
+        self.relu = nn.ReLU(inplace=True)
+        self.BN = BN
+
+    def forward(self,x):
+        identity = x
+        x = self.conv(x)
+        if self.BN:
+            x = self.norm(x)
+
+        x += identity
+        x = self.relu(x)
+        return x
+
+class CNN_shortcut(nn.Module):
+
+    def __init__(self, Nkernels=64):
+        super(CNN_shortcut, self).__init__()
+        self.conv_in = nn.Sequential(nn.Conv2d(2, Nkernels, kernel_size=3, stride=1, padding=1),
+                                nn.ReLU(inplace=True))
+        self.block1 = conv_bn(Nkernels=64, BN=True)
+        self.block2 = conv_bn(Nkernels=64, BN=True)
+        self.block3 = conv_bn(Nkernels=64, BN=True)
+        self.block4 = conv_bn(Nkernels=64, BN=True)
+        self.conv_out = nn.Conv2d(Nkernels, 2, kernel_size=3, padding=1)
+
+    def forward(self, x):
+        identity = x
+
+        # residual
+        x = self.conv_in(x)
+        x = self.block1(x)
+        x = self.block2(x)
+        # x = self.block3(x)
+        # x = self.block4(x)
+        x = self.conv_out(x)
+
+        denoised = identity + x
+        return denoised
 
 
 class Projector(nn.Module):
@@ -578,6 +624,8 @@ class Unet(nn.Module):
         return x
 
 
+
+
 class ScaleLayer(nn.Module):
 
    def __init__(self, init_value=1e-3):
@@ -600,7 +648,7 @@ class MoDL(nn.Module):
         self.inner_iter = inner_iter
         self.scale_layers = nn.Parameter(torch.ones([inner_iter]), requires_grad=True)
         self.lam = nn.Parameter(torch.ones([inner_iter]), requires_grad=True)
-        self.denoiser = DnCNN_dilated()
+        self.denoiser = CNN_shortcut()
         #self.denoiser = Projector(ENC=False)
 
     def forward(self, x, encoding_op, decoding_op):

@@ -167,7 +167,7 @@ if MOBILE:
 elif EFF:
     ranknet = EfficientNet.from_name('efficientnet-b0', num_classes=1)
 else:
-    ranknet = ResNet2(BasicBlock, [2,2,2,2])  # Less than ResNet18
+    ranknet = ResNet2(BasicBlock, [2,2,2,2], for_denoise=False)  # Less than ResNet18
 
 torchsummary.summary(ranknet, (3, maxMatSize, maxMatSize), device="cpu")
 
