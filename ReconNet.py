@@ -24,11 +24,19 @@ from utils.utils_DL import *
 mempool = cupy.get_default_memory_pool()
 pinned_mempool = cupy.get_default_pinned_memory_pool()
 
-device = sp.Device(0)
+spdevice = sp.Device(0)
 
 
 # load RankNet
-filepath_rankModel = Path('D:\git\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020')
+DGX = True
+if DGX:
+    filepath_rankModel = Path('/raid/DGXUserDataRaid/cxt004/NYUbrain')
+    filepath_train = Path('/raid/DGXUserDataRaid/cxt004/NYUbrain')
+    filepath_val = Path('/raid/DGXUserDataRaid/cxt004/NYUbrain')
+else:
+    filepath_rankModel = Path('D:\git\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020')
+    filepath_train = Path("D:/NYUbrain/brain_multicoil_train")
+    filepath_val = Path("D:/NYUbrain/brain_multicoil_val")
 file_rankModel = os.path.join(filepath_rankModel, "RankClassifier16.pt")
 os.chdir(filepath_rankModel)
 
@@ -44,8 +52,7 @@ score.cuda()
 # root = tk.Tk()
 # root.withdraw()
 # filepath_raw = tk.filedialog.askdirectory(title='Choose where the raw file is')
-filepath_train = Path("D:/NYUbrain/brain_multicoil_train")
-filepath_val = Path("D:/NYUbrain/brain_multicoil_val")
+
 
 scans_train = 'train_20coil.txt'
 scans_val = 'val_20coil.txt'
@@ -61,8 +68,8 @@ yres = 396
 acc = 4
 
 # fixed sampling mask
-#mask = mri.poisson((xres, yres), accel=acc, crop_corner=True, return_density=False, dtype='float32')
-mask = np.ones((xres, yres), dtype=np.float32)
+mask = mri.poisson((xres, yres), accel=acc, crop_corner=True, return_density=False, dtype='float32')
+#mask = np.ones((xres, yres), dtype=np.float32)
 
 # Data generator
 BATCH_SIZE = 1
@@ -86,28 +93,26 @@ ReconModel.cuda()
 
 # for BO
 BO = False
-cudadevice = torch.device('cuda')
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 def train_evaluate_recon(parameterization):
 
     net = ReconModel
-    net = train_mod(net=net, train_loader=loader_T, parameters=parameterization, dtype=torch.float, device=cudadevice,
-                    trainOnMSE=False)
+    net = train_modRecon(net=net, train_loader=loader_T, parameters=parameterization, dtype=torch.float, device=device)
     return evaluate_mod(
         net=net,
         data_loader=loader_V,
         dtype=torch.float,
-        device=cudadevice,
-        trainOnMSE=False
+        device=device
     )
 
 
 if BO:
     best_parameters, values, experiment, model = optimize(
         parameters=[
-            {"name": "lr", "type": "range", "bounds": [0.001, 100.0], "log_scale": True},
+            {"name": "lr", "type": "range", "bounds": [1e-4, 1], "log_scale": True},
         ],
         evaluation_function=train_evaluate_recon,
-        objective_name='accuracy',
+        objective_name='mse',
     )
 
     optimizer = optim.Adam(ReconModel.parameters(), lr=best_parameters['lr'])
@@ -116,7 +121,7 @@ if BO:
 
 else:
     # optimizer = optim.SGD(ReconModel.parameters(), lr=0.001, momentum=0.9)
-    optimizer = optim.Adam(ReconModel.parameters(), lr=10)
+    optimizer = optim.Adam(ReconModel.parameters(), lr=1e-3)
 
 
 # training
@@ -138,7 +143,7 @@ lossT = np.zeros(Nepoch)
 lossV = np.zeros(Nepoch)
 
 # save some images during training
-out_name = os.path.join('sneakpeek_training_cnnshortdenoiser_mse_1e4.h5')
+out_name = os.path.join('sneakpeek_training_CNNshort_mse_norm-truth-max-ksp.h5')
 try:
     os.remove(out_name)
 except OSError:
@@ -154,14 +159,14 @@ for epoch in range(Nepoch):
 
     for i, data in enumerate(loader_T, 0):
 
-        kspaceU, im, smaps = data        # smaps_sl is tensor [1, slice, coil, 768, 396]
-        im *= 1e4                     # im, tensor, [1, slice, 396, 396, 2]
+        smaps, im, kspaceU = data        # smaps_sl is tensor [1, slice, coil, 768, 396]
+        # im *= 1e4                     # im, tensor, [1, slice, 396, 396, 2]
         im = torch.squeeze(im)
         kspaceU = torch.squeeze(kspaceU)
         im, kspaceU = im.cuda(), kspaceU.cuda() # kspaceU, tensor, [1, slice, coil, 768, 396, 2],
 
         smaps = chan2_complex(np.squeeze(smaps.numpy()))        # (slice, coil, 768, 396)
-        smaps = sp.to_device(smaps, device=device)
+        smaps = sp.to_device(smaps, device=spdevice)
         Nslices = smaps.shape[0]
 
         A = sp.linop.Diag(
@@ -173,12 +178,11 @@ for epoch in range(Nepoch):
         SENSEH = SENSE.H
 
         # AhA = Ah * A
-        # max_eigen = sp.app.MaxEig(AhA, dtype=smaps_sl.dtype, device=device, max_iter=30).run()
+        # max_eigen = sp.app.MaxEig(AhA, dtype=smaps_sl.dtype, device=spdevice, max_iter=30).run()
 
         SENSE_torch = sp.to_pytorch_function(SENSE, input_iscomplex=True, output_iscomplex=True)
         SENSEH_torch = sp.to_pytorch_function(SENSEH, input_iscomplex=True, output_iscomplex=True)
-        perturbed = SENSEH_torch.apply(kspaceU)
-        perturbed = perturbed.permute(0, -1, 1, 2)
+
 
         # forward
         imEst = ReconModel(kspaceU,  SENSE_torch, SENSEH_torch)     # torch.Size([slice, 396, 396, 2])
@@ -197,25 +201,32 @@ for epoch in range(Nepoch):
         else:
             loss = learnedloss_fcn(imEst, im, score)
 
-        train_avg.update(loss.item(), n=BATCH_SIZE)
-
         # Backpropagation
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
-        if i == 18:
+        train_avg.update(loss.item(), n=BATCH_SIZE)
+        print(f'Loss for batch {i} = {loss.item()}')
+
+        if i == 9:
             truthplt = torch.abs(torch.squeeze(chan2_complex(im.cpu())))
+            perturbed = SENSEH_torch.apply(kspaceU)
+            print(f'noisy shape {perturbed.shape}')
+            noisyplt = torch.abs(torch.squeeze(chan2_complex(perturbed.cpu())))
 
             temp = imEst
             temp = temp.detach().cpu()
             imEstplt = torch.abs(torch.squeeze(chan2_complex(temp)))
             writer_train.add_image('training', imEstplt[2], 0, dataformats='HW')
 
-            plt.subplot(121)
+            plt.subplot(131)
             plt.imshow(truthplt[2], cmap='gray')
             plt.title('Truth')
-            plt.subplot(122)
+            plt.subplot(132)
+            plt.imshow(noisyplt[2], cmap='gray')
+            plt.title('FT')
+            plt.subplot(133)
             plt.imshow(imEstplt[2], cmap='gray')
             plt.title(f'Epoch = {epoch}, loss = {loss}')
             plt.show()
@@ -234,14 +245,14 @@ for epoch in range(Nepoch):
     # with torch.no_grad():
     ReconModel.eval()
     for i, data in enumerate(loader_V, 0):
-        kspaceU, im, smaps = data
-        im *= 1e4
+        smaps, im, kspaceU = data
+        #im *= 1e4
         im = torch.squeeze(im)
         kspaceU = torch.squeeze(kspaceU)
         im, kspaceU = im.cuda(), kspaceU.cuda()
 
         smaps = chan2_complex(np.squeeze(smaps.numpy()))  # (slice, coil, 768, 396)
-        smaps = sp.to_device(smaps, device=device)
+        smaps = sp.to_device(smaps, device=spdevice)
         Nslices = smaps.shape[0]
 
         A = sp.linop.Diag(
@@ -253,7 +264,7 @@ for epoch in range(Nepoch):
         SENSEH = SENSE.H
 
         # AhA = Ah * A
-        # max_eigen = sp.app.MaxEig(AhA, dtype=smaps_sl.dtype, device=device, max_iter=30).run()
+        # max_eigen = sp.app.MaxEig(AhA, dtype=smaps_sl.dtype, device=spdevice, max_iter=30).run()
 
         SENSE_torch = sp.to_pytorch_function(SENSE, input_iscomplex=True, output_iscomplex=True)
         SENSEH_torch = sp.to_pytorch_function(SENSEH, input_iscomplex=True, output_iscomplex=True)
@@ -271,7 +282,7 @@ for epoch in range(Nepoch):
             loss = learnedloss_fcn(imEst, im, score)
         eval_avg.update(loss.item(), n=BATCH_SIZE)
 
-        if i == 2:
+        if i == 1:
             break
 
 

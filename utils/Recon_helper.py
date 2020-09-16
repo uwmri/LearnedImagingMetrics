@@ -1,5 +1,10 @@
 import pickle
+from typing import Dict
+import sigpy as sp
 import torch
+import torch.optim as optim
+import torch.nn as nn
+from torch.utils.data import DataLoader
 import torchvision
 import torchsummary
 from utils.model_helper import *
@@ -78,26 +83,55 @@ class DataGeneratorRecon(Dataset):
 
     def __getitem__(self, idx):
 
-        kspace = self.hf[self.scans[idx]]['kspace']
-        kspace = kspace[:]                      # array
-        kspace = zero_pad4D(kspace)             # array (sl, coil, 768, 396)
-
-        mask = np.broadcast_to(self.mask_sl,self.mask_sl.shape)
-        kspace *= mask
-
-        kspace = complex_2chan(kspace)  # (coil, h, w, 2)
-        kspace = torch.from_numpy(kspace)
-
-
         smaps = self.hf[self.scans[idx]]['smaps']
-        smaps = complex_2chan(smaps)        # (coil, h, w, 2)
+        smaps = complex_2chan(smaps)        # (slice,coil, h, w, 2)
+        Nslice = smaps.shape[0]
+        Ncoil = smaps.shape[1]
 
         truth = self.hf[self.scans[idx]]['truths']
         truth = truth[:]
+
+        # # normalize truth's abs
+        # truth = np.reshape(truth, (-1, 396, 396))
+        # max_truth = np.amax(np.abs(truth), axis=(1, 2))
+        # max_truth = np.tile(max_truth[:, np.newaxis, np.newaxis], (1, 396, 396))
+        # min_truth = np.amin(np.abs(truth), axis=(1, 2))
+        # min_truth = np.tile(min_truth[:, np.newaxis, np.newaxis], (1, 396, 396))
+        # truth = (truth - min_truth) / (max_truth - min_truth)
+        # truth = np.reshape(truth, (Nslice, 396, 396))
+
         truth = complex_2chan(truth)
+
+        # normalize truth to 0 and 1
+        truth = np.reshape(truth, (-1, 396, 396))
+        max_truth = np.amax(truth, axis=(1, 2))
+        scale_truth_max = np.tile(max_truth[:, np.newaxis, np.newaxis], (1, 396, 396))
+        min_truth = np.amin(truth, axis=(1, 2))
+        scale_truth_min = np.tile(min_truth[:, np.newaxis, np.newaxis], (1, 396, 396))
+        truth /= (scale_truth_max - scale_truth_min)
+        truth = np.reshape(truth, (Nslice, 396, 396, 2))
         truth = torch.from_numpy(truth)
 
-        return kspace, truth, smaps
+        kspace = self.hf[self.scans[idx]]['kspace']
+        kspace = kspace[:]  # array
+        kspace = zero_pad4D(kspace)  # array (sl, coil, 768, 396)
+        # print(f'kspace shape is {kspace.shape}')
+        mask = np.broadcast_to(self.mask_sl, self.mask_sl.shape)
+        # print(f'mask shape is {mask.shape}')
+        kspace *= mask
+
+        kspace = complex_2chan(kspace)  # (slice, coil, h, w, 2)
+
+        # normalize kspace to 0 and 1 separately for real and imag
+        kspace = np.reshape(kspace,(-1,768,396))
+        scale_kspace_max = np.tile(max_truth[:, np.newaxis, np.newaxis], (Ncoil, 768, 396))
+        scale_kspace_min = np.tile(min_truth[:, np.newaxis, np.newaxis], (Ncoil, 768, 396))
+
+        kspace /= (scale_kspace_max - scale_kspace_min)
+        kspace = np.reshape(kspace,(Nslice, Ncoil, 768,396,2))
+        kspace = torch.from_numpy(kspace)
+
+        return smaps, truth, kspace
 
 
 class DataGeneratorDenoise(Dataset):
@@ -399,14 +433,14 @@ class conv_bn(nn.Module):
 
 class CNN_shortcut(nn.Module):
 
-    def __init__(self, Nkernels=64):
+    def __init__(self, Nkernels=10):
         super(CNN_shortcut, self).__init__()
         self.conv_in = nn.Sequential(nn.Conv2d(2, Nkernels, kernel_size=3, stride=1, padding=1),
                                 nn.ReLU(inplace=True))
-        self.block1 = conv_bn(Nkernels=64, BN=True)
-        self.block2 = conv_bn(Nkernels=64, BN=True)
-        self.block3 = conv_bn(Nkernels=64, BN=True)
-        self.block4 = conv_bn(Nkernels=64, BN=True)
+        self.block1 = conv_bn(Nkernels=Nkernels, BN=False)
+        self.block2 = conv_bn(Nkernels=Nkernels, BN=True)
+        self.block3 = conv_bn(Nkernels=Nkernels, BN=True)
+        self.block4 = conv_bn(Nkernels=Nkernels, BN=True)
         self.conv_out = nn.Conv2d(Nkernels, 2, kernel_size=3, padding=1)
 
     def forward(self, x):
@@ -415,7 +449,7 @@ class CNN_shortcut(nn.Module):
         # residual
         x = self.conv_in(x)
         x = self.block1(x)
-        x = self.block2(x)
+        # x = self.block2(x)
         # x = self.block3(x)
         # x = self.block4(x)
         x = self.conv_out(x)
@@ -642,12 +676,13 @@ class MoDL(nn.Module):
     # TODO: projector has dimension issue. 768*396 -> 764*396 ->764*396...
     # TODO: How to save the encoder and projector during training MoDL for loss calc
     # def __init__(self, inner_iter=10):
-    def __init__(self, scale_init=1e-3, inner_iter=1):
+    def __init__(self, scale_init=1e-3, inner_iter=3):
         super(MoDL, self).__init__()
 
         self.inner_iter = inner_iter
         self.scale_layers = nn.Parameter(torch.ones([inner_iter]), requires_grad=True)
         self.lam = nn.Parameter(torch.ones([inner_iter]), requires_grad=True)
+        #self.denoiser = Unet()
         self.denoiser = CNN_shortcut()
         #self.denoiser = Projector(ENC=False)
 
@@ -658,23 +693,11 @@ class MoDL(nn.Module):
         # image = torch.zeros([1, 768, 396, 2], dtype=torch.float32)
         # image = image.cuda()
 
-        zeros = torch.zeros(((1,) + image.shape[:-1]), dtype=image.dtype)  # torch.Size([1, slice, 768, 396])
-        zeros = zeros.permute(1,0,2,3)
-        zeros = zeros.cuda()
+        # zeros = torch.zeros(((1,) + image.shape[:-1]), dtype=image.dtype)  # torch.Size([1, slice, 768, 396])
+        # zeros = zeros.permute(1,0,2,3)
+        # zeros = zeros.cuda()
 
         for i in range(self.inner_iter):
-
-            image = image.permute(0, -1, 1, 2)
-            # # make images 3 channel.
-            # image = torch.cat((image, zeros), dim=1)        # torch.Size([slice, 3, 768, 396])
-
-            # denoised
-
-            image = self.denoiser(image)
-
-            # # back to 2 channel
-            image = image.permute(0, 2, 3, 1)
-            # image = image[:, :, :, :-1]
 
             # Steepest descent
             # Ex
@@ -688,6 +711,16 @@ class MoDL(nn.Module):
             # print(f'lambda is {self.lam[i]}')
             image = image - self.scale_layers[i]*(decoding_op.apply(kspace))
 
+            image = image.permute(0, -1, 1, 2)
+            # # make images 3 channel.
+            # image = torch.cat((image, zeros), dim=1)        # torch.Size([slice, 3, 768, 396])
+
+            # denoised
+            image = self.denoiser(image)
+
+            # # back to 2 channel
+            image = image.permute(0, 2, 3, 1)
+            # image = image[:, :, :, :-1]
 
         # crop to square here to match ranknet
         idxL = int((image.shape[1] - image.shape[2]) / 2)
@@ -777,3 +810,139 @@ class MoDL_CG(nn.Module):
         #print('Done')
         return image
 
+
+# for Bayesian (MSE)
+def train_modRecon(
+    net: torch.nn.Module,
+    train_loader: DataLoader,
+    parameters: Dict[str, float],
+    dtype: torch.dtype,
+    device: torch.device
+
+) -> nn.Module:
+    """
+    Train CNN on provided data set.
+
+    Args:
+        net: initialized neural network
+        train_loader: DataLoader containing training set
+        parameters: dictionary containing parameters to be passed to the optimizer.
+            - lr: default (0.001)
+            - momentum: default (0.0)
+            - weight_decay: default (0.0)
+            - num_epochs: default (1)
+        dtype: torch dtype
+        device: torch device
+    Returns:
+        nn.Module: trained CNN.
+    """
+    # Initialize network
+    net.to(dtype=dtype, device=device)  # pyre-ignore [28]
+    net.train()
+    # Define optimizer
+    optimizer = optim.Adam(
+        net.parameters(),
+        lr=parameters.get("lr", 0.001)
+    )
+    scheduler = optim.lr_scheduler.StepLR(
+        optimizer,
+        step_size=int(parameters.get("step_size", 30)),
+        gamma=parameters.get("gamma", 1.0),  # default is no learning rate decay
+    )
+    num_epochs = parameters.get("num_epochs", 1)
+
+    # Train Network
+    for _ in range(num_epochs):
+        for i, data in train_loader:
+
+            # get the inputs
+            smaps, im, kspaceU = data
+            im = torch.squeeze(im)
+            kspaceU = torch.squeeze(kspaceU)
+            im, kspaceU = im.cuda(), kspaceU.cuda()  # kspaceU, tensor, [1, slice, coil, 768, 396, 2],
+
+            smaps = chan2_complex(np.squeeze(smaps.numpy()))  # (slice, coil, 768, 396)
+            smaps = sp.to_device(smaps, device=sp.Device(0))
+            Nslices = smaps.shape[0]
+            Ncoils=20
+            xres=768
+            yres=396
+
+            A = sp.linop.Diag(
+                [sp.mri.linop.Sense(smaps[s, :, :, :], coil_batch_size=1, ishape=(1, xres, yres)) for s in
+                 range(Nslices)])
+            Rs1 = sp.linop.Reshape(oshape=A.ishape, ishape=(Nslices, xres, yres))
+            Rs2 = sp.linop.Reshape(oshape=(Nslices, Ncoils, xres, yres), ishape=A.oshape)
+
+            SENSE = Rs2 * A * Rs1
+            SENSEH = SENSE.H
+
+            SENSE_torch = sp.to_pytorch_function(SENSE, input_iscomplex=True, output_iscomplex=True)
+            SENSEH_torch = sp.to_pytorch_function(SENSEH, input_iscomplex=True, output_iscomplex=True)
+
+            # zero the parameter gradients
+            optimizer.zero_grad()
+
+            # forward + backward + optimize
+            outputs = net(kspaceU,  SENSE_torch, SENSEH_torch)
+
+            loss = mseloss_fcn(outputs, im)
+            loss.backward()
+            optimizer.step()
+            scheduler.step()
+
+            if i==9:
+                break
+
+    return net
+
+
+def evaluate_modRecon(
+    net: nn.Module, data_loader: DataLoader, dtype: torch.dtype, device: torch.device
+) -> float:
+    """
+    Compute classification accuracy on provided dataset.
+
+    Args:
+        net: trained model
+        data_loader: DataLoader containing the evaluation set
+        dtype: torch dtype
+        device: torch device
+    Returns:
+        float: classification accuracy
+    """
+    net.eval()
+    with torch.no_grad():
+        for i, data in data_loader:
+            smaps, im, kspaceU = data
+            im = torch.squeeze(im)
+            kspaceU = torch.squeeze(kspaceU)
+            im, kspaceU = im.cuda(), kspaceU.cuda()  # kspaceU, tensor, [1, slice, coil, 768, 396, 2],
+
+            smaps = chan2_complex(np.squeeze(smaps.numpy()))  # (slice, coil, 768, 396)
+            smaps = sp.to_device(smaps, device=sp.Device(0))
+            Nslices = smaps.shape[0]
+            Ncoils = 20
+            xres = 768
+            yres = 396
+
+            A = sp.linop.Diag(
+                [sp.mri.linop.Sense(smaps[s, :, :, :], coil_batch_size=1, ishape=(1, xres, yres)) for s in
+                 range(Nslices)])
+            Rs1 = sp.linop.Reshape(oshape=A.ishape, ishape=(Nslices, xres, yres))
+            Rs2 = sp.linop.Reshape(oshape=(Nslices, Ncoils, xres, yres), ishape=A.oshape)
+
+            SENSE = Rs2 * A * Rs1
+            SENSEH = SENSE.H
+
+            SENSE_torch = sp.to_pytorch_function(SENSE, input_iscomplex=True, output_iscomplex=True)
+            SENSEH_torch = sp.to_pytorch_function(SENSEH, input_iscomplex=True, output_iscomplex=True)
+
+            outputs = net(kspaceU,  SENSE_torch, SENSEH_torch)
+
+            loss = mseloss_fcn(outputs, im)
+
+            if i==1:
+                break
+
+    return loss.numpy()
