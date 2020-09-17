@@ -83,13 +83,20 @@ class DataGeneratorRecon(Dataset):
 
     def __getitem__(self, idx):
 
-        smaps = self.hf[self.scans[idx]]['smaps']
-        smaps = complex_2chan(smaps)        # (slice,coil, h, w, 2)
+        import time
+
+        t = time.time()
+        smaps = np.squeeze(self.hf[self.scans[idx]]['smaps'])
+        #smaps = complex_2chan(smaps)        # (slice,coil, h, w, 2)
         Nslice = smaps.shape[0]
         Ncoil = smaps.shape[1]
+        #print(f'Get smap ={time.time()-t}, {smaps.dtype} {smaps.shape}')
 
-        truth = self.hf[self.scans[idx]]['truths']
+        #t = time.time()
+        truth = np.array(self.hf[self.scans[idx]]['truths'])
+        truth = torch.from_numpy(truth)
         truth = truth[:]
+        truth = complex_2chan(truth)
 
         # # normalize truth's abs
         # truth = np.reshape(truth, (-1, 396, 396))
@@ -100,19 +107,26 @@ class DataGeneratorRecon(Dataset):
         # truth = (truth - min_truth) / (max_truth - min_truth)
         # truth = np.reshape(truth, (Nslice, 396, 396))
 
-        truth = complex_2chan(truth)
 
         # normalize truth to 0 and 1
-        truth = np.reshape(truth, (-1, 396, 396))
-        max_truth = np.amax(truth, axis=(1, 2))
-        scale_truth_max = np.tile(max_truth[:, np.newaxis, np.newaxis], (1, 396, 396))
-        min_truth = np.amin(truth, axis=(1, 2))
-        scale_truth_min = np.tile(min_truth[:, np.newaxis, np.newaxis], (1, 396, 396))
-        truth /= (scale_truth_max - scale_truth_min)
-        truth = np.reshape(truth, (Nslice, 396, 396, 2))
-        truth = torch.from_numpy(truth)
+        # truth = torch.reshape(truth, (-1, 396, 396))
+        max_truth, _ = torch.max(truth, dim=1, keepdim=True)
+        max_truth, _ = torch.max(max_truth, dim=2, keepdim=True)
+        max_truth, _ = torch.max(max_truth, dim=3, keepdim=True)
+        truth /= max_truth
+        #print(f'Get truth {time.time() - t} {truth.dtype} {truth.shape}')
 
-        kspace = self.hf[self.scans[idx]]['kspace']
+        #max_truth = np.amax(truth, axis=(1, 2))
+        #scale_truth_max = np.tile(max_truth[:, np.newaxis, np.newaxis], (1, 396, 396))
+        #min_truth = np.amin(truth, axis=(1, 2))
+        #scale_truth_min = np.tile(min_truth[:, np.newaxis, np.newaxis], (1, 396, 396))
+        #truth /= (scale_truth_max - scale_truth_min)
+        #truth = np.reshape(truth, (Nslice, 396, 396, 2))
+        #truth = torch.from_numpy(truth)
+
+        #t = time.time()
+        max_truth = torch.unsqueeze(max_truth,-1)
+        kspace = np.array(self.hf[self.scans[idx]]['kspace'])
         kspace = kspace[:]  # array
         kspace = zero_pad4D(kspace)  # array (sl, coil, 768, 396)
         # print(f'kspace shape is {kspace.shape}')
@@ -121,16 +135,17 @@ class DataGeneratorRecon(Dataset):
         kspace *= mask
 
         kspace = complex_2chan(kspace)  # (slice, coil, h, w, 2)
+        kspace /= max_truth
 
         # normalize kspace to 0 and 1 separately for real and imag
-        kspace = np.reshape(kspace,(-1,768,396))
-        scale_kspace_max = np.tile(max_truth[:, np.newaxis, np.newaxis], (Ncoil, 768, 396))
-        scale_kspace_min = np.tile(min_truth[:, np.newaxis, np.newaxis], (Ncoil, 768, 396))
+        #kspace = np.reshape(kspace,(-1,768,396))
+        #scale_kspace_max = np.tile(max_truth[:, np.newaxis, np.newaxis], (Ncoil, 768, 396))
+        #scale_kspace_min = np.tile(min_truth[:, np.newaxis, np.newaxis], (Ncoil, 768, 396))
 
-        kspace /= (scale_kspace_max - scale_kspace_min)
-        kspace = np.reshape(kspace,(Nslice, Ncoil, 768,396,2))
-        kspace = torch.from_numpy(kspace)
-
+        #kspace /= (scale_kspace_max - scale_kspace_min)
+        #kspace = np.reshape(kspace,(Nslice, Ncoil, 768,396,2))
+        #kspace = torch.from_numpy(kspace)
+        #print(f'Get kspace {time.time()-t} {kspace.dtype} {kspace.shape}')
         return smaps, truth, kspace
 
 
