@@ -14,7 +14,9 @@ from ax.service.managed_loop import optimize
 
 import sigpy as sp
 import sigpy.mri as mri
+
 # from fastMRI.data import transforms as T
+
 
 from utils.Recon_helper import *
 from utils.CreateImagePairs import find, get_smaps, get_truth
@@ -37,6 +39,11 @@ else:
     filepath_rankModel = Path('D:\git\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020')
     filepath_train = Path("D:/NYUbrain/brain_multicoil_train")
     filepath_val = Path("D:/NYUbrain/brain_multicoil_val")
+
+    filepath_rankModel = Path('E:\ImagePairs_Pack_04032020')
+    filepath_train = Path("E:/")
+    filepath_val = Path("E:/")
+
 file_rankModel = os.path.join(filepath_rankModel, "RankClassifier16.pt")
 os.chdir(filepath_rankModel)
 
@@ -151,6 +158,7 @@ try:
 except OSError:
     pass
 
+import time
 for epoch in range(Nepoch):
 
     # Setup counter to keep track of loss
@@ -158,11 +166,13 @@ for epoch in range(Nepoch):
     eval_avg = RunningAverage()
 
     ReconModel.train()
+    tt = time.time()
 
     smaps, im, kspaceU = prefetcherT.next()
     i = 0
 
     while kspaceU is not None:
+        t = time.time()
         i += 1
         smaps, im, kspaceU = prefetcherT.next()
         # smaps is torch tensor on cpu [1, slice, coil, 768, 396]
@@ -178,10 +188,14 @@ for epoch in range(Nepoch):
         # im, kspaceU = im.cuda(), kspaceU.cuda() # kspaceU, tensor, [1, slice, coil, 768, 396, 2],
 
 
-        smaps = chan2_complex(np.squeeze(smaps.numpy()))        # (slice, coil, 768, 396)
-        smaps = sp.to_device(smaps, device=spdevice)
-        Nslices = smaps.shape[0]
 
+        smaps = sp.to_device(smaps, device=spdevice)
+        smaps = spdevice.xp.squeeze(smaps)
+        #smaps = chan2_complex(spdevice.xp.squeeze(smaps))  # (slice, coil, 768, 396)
+        Nslices = smaps.shape[0]
+        #print(f'Load batch {time.time()-t}, {Nslices} {smaps.shape}')
+
+        t = time.time()
         A = sp.linop.Diag(
             [sp.mri.linop.Sense(smaps[s, :, :, :], coil_batch_size=1, ishape=(1, xres, yres)) for s in range(Nslices)])
         Rs1 = sp.linop.Reshape(oshape=A.ishape, ishape=(Nslices, xres, yres))
@@ -196,11 +210,12 @@ for epoch in range(Nepoch):
         SENSE_torch = sp.to_pytorch_function(SENSE, input_iscomplex=True, output_iscomplex=True)
         SENSEH_torch = sp.to_pytorch_function(SENSEH, input_iscomplex=True, output_iscomplex=True)
 
-
         # forward
         imEst = ReconModel(kspaceU,  SENSE_torch, SENSEH_torch)     # torch.Size([slice, 396, 396, 2])
+        #print(f'Forward pass {time.time() - t}')
 
         # loss
+        #t = time.time()
         if WHICH_LOSS == 'mse':
             # if OneNet:
             #     loss = loss_fcn_onenet(perturbed, imEst, im, projector, encoder, ClassifierD(Nslices=imEst.shape[0])
@@ -213,11 +228,14 @@ for epoch in range(Nepoch):
             loss = loss_GAN(imEst, im, patchGAN)
         else:
             loss = learnedloss_fcn(imEst, im, score)
+        #print(f'Attach loss {time.time() - t}')
 
         # Backpropagation
+        t = time.time()
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+        #print(f'Backprop {time.time() - t}')
 
         train_avg.update(loss.item(), n=BATCH_SIZE)
         print(f'Loss for batch {i} = {loss.item()}')
@@ -253,6 +271,8 @@ for epoch in range(Nepoch):
 
             break
 
+        print(f'Total time = {time.time() - tt}')
+        #exit()
 
     # Validation
     # with torch.no_grad():
@@ -265,8 +285,9 @@ for epoch in range(Nepoch):
         i += 1
         smaps, im, kspaceU = prefetcherV.next()
 
-        smaps = chan2_complex(np.squeeze(smaps.numpy()))  # (slice, coil, 768, 396)
+        #smaps = chan2_complex(np.squeeze(smaps.numpy()))  # (slice, coil, 768, 396)
         smaps = sp.to_device(smaps, device=spdevice)
+        smaps = spdevice.xp.squeeze(smaps)
         Nslices = smaps.shape[0]
 
         A = sp.linop.Diag(

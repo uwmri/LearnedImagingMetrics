@@ -5,7 +5,7 @@ from pathlib import Path
 from PIL import Image
 import fnmatch
 import os
-
+import torch
 import sigpy as sp
 import sigpy.mri as mri
 import sigpy.plot as pl
@@ -67,11 +67,18 @@ def complex_2chan(input):
     # input is cuda array, complex64
     # output is cuda array, float32, (,2)
 
-    input = sp.to_device(input, sp.cpu_device)
+    if torch.is_tensor(input):
+        output = torch.zeros(input.shape + (2,), dtype=torch.float32)
+        output[..., 0] = torch.real(input)
+        output[..., 1] = torch.imag(input)
+        return output
 
-    output = np.zeros(input.shape+(2,), dtype=np.float32)
-    output[..., 0] = np.real(input)
-    output[..., 1] = np.imag(input)
+    xp = sp.get_device(input).xp
+    #input = sp.to_device(input, sp.cpu_device)
+
+    output = xp.zeros(input.shape+(2,), dtype=np.float32)
+    output[..., 0] = xp.real(input)
+    output[..., 1] = xp.imag(input)
 
     return output
 
