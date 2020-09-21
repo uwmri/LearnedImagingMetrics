@@ -12,53 +12,6 @@ from utils.CreateImagePairs import get_smaps, add_gaussian_noise
 from utils.unet_componets import *
 
 
-class DataGenerator_recon(Dataset):
-    def __init__(self,IMG, KSP, KSP_Full):
-        '''
-        :param IMG: truth image
-        :param KSP: undersampled kspace
-        :param KSP_Full: full kspace for smaps
-
-        output: undersampled kspace (rectangular), truth image (square), smaps (square)
-        '''
-        self.KSP = KSP      # Input kspace needs to be (coil, h, w)
-        self.KSP_Full = KSP_Full
-        self.IMG = IMG
-        self.len = KSP.shape[0]
-        self.height = KSP.shape[-3]
-        self.width = KSP.shape[-2]
-        self.smaps = np.zeros((KSP_Full.shape[0:2]+(self.height, self.width,)+(2,)), dtype=np.float32)
-
-        #print(self.smaps.shape)
-
-        for i in range(KSP_Full.shape[0]):
-            ksp = KSP_Full[i,:,:,:,0] + 1j*KSP_Full[i,:,:,:,1]
-            kspacesl = sp.to_device(ksp, device=sp.Device(0))       # (20,768, 396)
-
-            mps = get_smaps(kspacesl, device=sp.Device(0), maxiter=50, method='jsense')      # complex64
-            #print(mps.shape)
-
-            # temp = np.zeros(mps.shape+(2,),dtype=np.float32)
-            # temp[...,0] = np.real(mps)
-            # temp[..., 1] = np.imag(mps)
-
-            # mps_crop = mps[:,int(self.width*.5):int(self.width*1.5),:]
-            self.smaps[i] = complex_2chan(mps)  # because pytorch generator doesn't like complex
-
-    def __len__(self):
-        return self.len
-
-    def __getitem__(self, idx):
-        kspace = torch.from_numpy(self.KSP[idx,...])
-        image = torch.from_numpy(self.IMG[idx,...])
-
-        smapssl = self.smaps[idx, ...]      # (coil, h, w, 2)
-
-        # if self.transform:
-
-        return kspace, image, smapssl
-
-
 class DataGeneratorRecon(Dataset):
     def __init__(self,path_root, scan_list, h5file, mask_sl):
         '''
@@ -167,6 +120,44 @@ class DataGeneratorDenoise(Dataset):
         noisy = noisy.permute(0,-1,1,2)
 
         return truth, noisy
+
+
+class DataPrefetcher():
+    def __init__(self, loader):
+        self.loader = iter(loader)
+        self.stream = torch.cuda.Stream()
+        self.preload()
+
+    def preload(self):
+        try:
+            self.next_smaps, self.next_im, self.next_kspaceU = next(self.loader)
+        except StopIteration:
+            self.next_smaps = None
+            self.next_im = None
+            self.next_kspaceU = None
+            return
+        with torch.cuda.stream(self.stream):
+            self.next_kspaceU = torch.squeeze(self.next_kspaceU)
+            self.next_im = torch.squeeze(self.next_im)
+            self.next_kspaceU = self.next_kspaceU.cuda(non_blocking=True)
+            self.next_im = self.next_im.cuda(non_blocking=True)
+
+
+    def next(self):
+        torch.cuda.current_stream().wait_stream(self.stream)
+        smaps = self.next_smaps
+        im = self.next_im
+        kspaceU = self.next_kspaceU
+
+        if smaps is not None:
+            smaps.record_stream(torch.cuda.current_stream())
+        if im is not None:
+            im.record_stream(torch.cuda.current_stream())
+        if kspaceU is not None:
+            kspaceU.record_stream(torch.cuda.current_stream())
+
+        self.preload()
+        return smaps, im, kspaceU
 
 # plot a training/val set
 def sneakpeek(dataset, Ncoils=20):

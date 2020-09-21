@@ -14,7 +14,7 @@ from ax.service.managed_loop import optimize
 
 import sigpy as sp
 import sigpy.mri as mri
-from fastMRI.data import transforms as T
+# from fastMRI.data import transforms as T
 
 from utils.Recon_helper import *
 from utils.CreateImagePairs import find, get_smaps, get_truth
@@ -28,7 +28,7 @@ spdevice = sp.Device(0)
 
 
 # load RankNet
-DGX = True
+DGX = False
 if DGX:
     filepath_rankModel = Path('/raid/DGXUserDataRaid/cxt004/NYUbrain')
     filepath_train = Path('/raid/DGXUserDataRaid/cxt004/NYUbrain')
@@ -75,9 +75,11 @@ mask = mri.poisson((xres, yres), accel=acc, crop_corner=True, return_density=Fal
 BATCH_SIZE = 1
 trainingset = DataGeneratorRecon(filepath_train, scans_train, file_train, mask)
 loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=True)
+prefetcherT = DataPrefetcher(loader_T)
 
 validationset = DataGeneratorRecon(filepath_val, scans_val, file_val, mask)
 loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=True)
+prefetcherV = DataPrefetcher(loader_V)
 
 # # check a training dataset
 # sneakpeek(trainingset)
@@ -121,11 +123,11 @@ if BO:
 
 else:
     # optimizer = optim.SGD(ReconModel.parameters(), lr=0.001, momentum=0.9)
-    optimizer = optim.Adam(ReconModel.parameters(), lr=1e-3)
+    optimizer = optim.Adam(ReconModel.parameters(), lr=1e-2)
 
 
 # training
-Ntrial = 1
+Ntrial = 2
 writer_train = SummaryWriter(f'runs/recon/train_{Ntrial}')
 writer_val = SummaryWriter(f'runs/recon/val_{Ntrial}')
 
@@ -157,13 +159,24 @@ for epoch in range(Nepoch):
 
     ReconModel.train()
 
-    for i, data in enumerate(loader_T, 0):
+    smaps, im, kspaceU = prefetcherT.next()
+    i = 0
 
-        smaps, im, kspaceU = data        # smaps_sl is tensor [1, slice, coil, 768, 396]
+    while kspaceU is not None:
+        i += 1
+        smaps, im, kspaceU = prefetcherT.next()
+        # smaps is torch tensor on cpu [1, slice, coil, 768, 396]
+        # im is on cuda, ([16, 396, 396, 2])
+        # kspaceU is on cuda ([16, 20, 768, 396, 2])
+
+    # for i, data in enumerate(loader_T, 0):
+    #
+    #     smaps, im, kspaceU = data        # smaps_sl is tensor [1, slice, coil, 768, 396]
         # im *= 1e4                     # im, tensor, [1, slice, 396, 396, 2]
-        im = torch.squeeze(im)
-        kspaceU = torch.squeeze(kspaceU)
-        im, kspaceU = im.cuda(), kspaceU.cuda() # kspaceU, tensor, [1, slice, coil, 768, 396, 2],
+        # im = torch.squeeze(im)
+        # kspaceU = torch.squeeze(kspaceU)
+        # im, kspaceU = im.cuda(), kspaceU.cuda() # kspaceU, tensor, [1, slice, coil, 768, 396, 2],
+
 
         smaps = chan2_complex(np.squeeze(smaps.numpy()))        # (slice, coil, 768, 396)
         smaps = sp.to_device(smaps, device=spdevice)
@@ -244,12 +257,13 @@ for epoch in range(Nepoch):
     # Validation
     # with torch.no_grad():
     ReconModel.eval()
-    for i, data in enumerate(loader_V, 0):
-        smaps, im, kspaceU = data
-        #im *= 1e4
-        im = torch.squeeze(im)
-        kspaceU = torch.squeeze(kspaceU)
-        im, kspaceU = im.cuda(), kspaceU.cuda()
+
+    smaps, im, kspaceU = prefetcherV.next()
+    i = 0
+
+    while kspaceU is not None:
+        i += 1
+        smaps, im, kspaceU = prefetcherV.next()
 
         smaps = chan2_complex(np.squeeze(smaps.numpy()))  # (slice, coil, 768, 396)
         smaps = sp.to_device(smaps, device=spdevice)
