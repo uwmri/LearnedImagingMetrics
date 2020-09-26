@@ -4,6 +4,7 @@ import pickle
 import matplotlib.pyplot as plt
 import csv
 import logging
+import time
 
 import torch
 import torchvision
@@ -36,13 +37,13 @@ if DGX:
     filepath_train = Path('/raid/DGXUserDataRaid/cxt004/NYUbrain')
     filepath_val = Path('/raid/DGXUserDataRaid/cxt004/NYUbrain')
 else:
-    filepath_rankModel = Path('D:\git\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020')
-    filepath_train = Path("D:/NYUbrain/brain_multicoil_train")
-    filepath_val = Path("D:/NYUbrain/brain_multicoil_val")
+    filepath_rankModel = Path('I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020')
+    filepath_train = Path("I:/NYUbrain")
+    filepath_val = Path("I:/NYUbrain")
 
-    filepath_rankModel = Path('E:\ImagePairs_Pack_04032020')
-    filepath_train = Path("E:/")
-    filepath_val = Path("E:/")
+    # filepath_rankModel = Path('E:\ImagePairs_Pack_04032020')
+    # filepath_train = Path("E:/")
+    # filepath_val = Path("E:/")
 
 file_rankModel = os.path.join(filepath_rankModel, "RankClassifier16.pt")
 os.chdir(filepath_rankModel)
@@ -54,11 +55,6 @@ classifier.load_state_dict(state['state_dict'], strict=True)
 classifier.eval()
 score = classifier.rank
 score.cuda()
-
-# Get kspace data. (sl, coil, 2, kx, ky)
-# root = tk.Tk()
-# root.withdraw()
-# filepath_raw = tk.filedialog.askdirectory(title='Choose where the raw file is')
 
 
 scans_train = 'train_20coil.txt'
@@ -72,7 +68,7 @@ file_val = 'ksp_truths_smaps_val.h5'
 Ncoils = 20
 xres = 768
 yres = 396
-acc = 4
+acc = 8
 
 # fixed sampling mask
 mask = mri.poisson((xres, yres), accel=acc, crop_corner=True, return_density=False, dtype='float32')
@@ -80,13 +76,13 @@ mask = mri.poisson((xres, yres), accel=acc, crop_corner=True, return_density=Fal
 
 # Data generator
 BATCH_SIZE = 1
-trainingset = DataGeneratorRecon(filepath_train, scans_train, file_train, mask)
+trainingset = DataGeneratorRecon(filepath_train, scans_train, file_train, mask, ifLEARNED=False)
 loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=True)
-prefetcherT = DataPrefetcher(loader_T)
 
-validationset = DataGeneratorRecon(filepath_val, scans_val, file_val, mask)
-loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=True)
-prefetcherV = DataPrefetcher(loader_V)
+
+validationset = DataGeneratorRecon(filepath_val, scans_val, file_val, mask, ifLEARNED=False)
+loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=False)
+
 
 # # check a training dataset
 # sneakpeek(trainingset)
@@ -115,6 +111,36 @@ def train_evaluate_recon(parameterization):
     )
 
 
+# training
+Ntrial = 2.6
+writer_train = SummaryWriter(f'runs/recon/train_{Ntrial}')
+writer_val = SummaryWriter(f'runs/recon/val_{Ntrial}')
+
+WHICH_LOSS = 'mse'
+LEARNED = False
+OneNet = False
+if WHICH_LOSS == 'perceptual':
+    loss_perceptual = PerceptualLoss_VGG16()
+    loss_perceptual.cuda()
+elif WHICH_LOSS == 'patchGAN':
+    patchGAN = NLayerDiscriminator(input_nc=2)
+    patchGAN.cuda()
+
+INNER_ITER = 10
+
+Nepoch = 50
+lossT = np.zeros(Nepoch)
+lossV = np.zeros(Nepoch)
+
+logging.basicConfig(filename=f'Recon_{Ntrial}.log', filemode='w', level=logging.INFO)
+
+# save some images during training
+out_name = os.path.join(f'sneakpeek_training{Ntrial}.h5')
+try:
+    os.remove(out_name)
+except OSError:
+    pass
+
 if BO:
     best_parameters, values, experiment, model = optimize(
         parameters=[
@@ -129,36 +155,19 @@ if BO:
     print(best_parameters)
 
 else:
+    LR = 1e-3
     # optimizer = optim.SGD(ReconModel.parameters(), lr=0.001, momentum=0.9)
-    optimizer = optim.Adam(ReconModel.parameters(), lr=1e-2)
+    optimizer = optim.Adam(ReconModel.parameters(), lr=LR)
+
+    logging.info(f'Adam, lr = {LR}')
+
+logging.info('Denoiser = CNN_short, with 1 blocks')
+logging.info(f'inner_iter = {INNER_ITER}')
+logging.info('9 cases training, 1 cases validation')
+logging.info(f'loss = {WHICH_LOSS}')
+logging.info(f'acc = {acc}')
 
 
-# training
-Ntrial = 2
-writer_train = SummaryWriter(f'runs/recon/train_{Ntrial}')
-writer_val = SummaryWriter(f'runs/recon/val_{Ntrial}')
-
-WHICH_LOSS = 'mse'
-OneNet = True
-if WHICH_LOSS == 'perceptual':
-    loss_perceptual = PerceptualLoss_VGG16()
-    loss_perceptual.cuda()
-elif WHICH_LOSS == 'patchGAN':
-    patchGAN = NLayerDiscriminator(input_nc=2)
-    patchGAN.cuda()
-
-Nepoch = 30
-lossT = np.zeros(Nepoch)
-lossV = np.zeros(Nepoch)
-
-# save some images during training
-out_name = os.path.join('sneakpeek_training_CNNshort_mse_norm-truth-max-ksp.h5')
-try:
-    os.remove(out_name)
-except OSError:
-    pass
-
-import time
 for epoch in range(Nepoch):
 
     # Setup counter to keep track of loss
@@ -168,30 +177,22 @@ for epoch in range(Nepoch):
     ReconModel.train()
     tt = time.time()
 
-    smaps, im, kspaceU = prefetcherT.next()
+    prefetcher = DataPrefetcher(loader_T)
+
+    smaps, im, kspaceU = prefetcher.next()
     i = 0
 
     while kspaceU is not None:
         t = time.time()
         i += 1
-        smaps, im, kspaceU = prefetcherT.next()
+
         # smaps is torch tensor on cpu [1, slice, coil, 768, 396]
         # im is on cuda, ([16, 396, 396, 2])
         # kspaceU is on cuda ([16, 20, 768, 396, 2])
 
-    # for i, data in enumerate(loader_T, 0):
-    #
-    #     smaps, im, kspaceU = data        # smaps_sl is tensor [1, slice, coil, 768, 396]
-        # im *= 1e4                     # im, tensor, [1, slice, 396, 396, 2]
-        # im = torch.squeeze(im)
-        # kspaceU = torch.squeeze(kspaceU)
-        # im, kspaceU = im.cuda(), kspaceU.cuda() # kspaceU, tensor, [1, slice, coil, 768, 396, 2],
-
-
-
         smaps = sp.to_device(smaps, device=spdevice)
-        smaps = spdevice.xp.squeeze(smaps)
-        #smaps = chan2_complex(spdevice.xp.squeeze(smaps))  # (slice, coil, 768, 396)
+        #smaps = spdevice.xp.squeeze(smaps)
+        smaps = chan2_complex(spdevice.xp.squeeze(smaps))  # (slice, coil, 768, 396)
         Nslices = smaps.shape[0]
         #print(f'Load batch {time.time()-t}, {Nslices} {smaps.shape}')
 
@@ -210,84 +211,66 @@ for epoch in range(Nepoch):
         SENSE_torch = sp.to_pytorch_function(SENSE, input_iscomplex=True, output_iscomplex=True)
         SENSEH_torch = sp.to_pytorch_function(SENSEH, input_iscomplex=True, output_iscomplex=True)
 
-        # forward
-        imEst = ReconModel(kspaceU,  SENSE_torch, SENSEH_torch)     # torch.Size([slice, 396, 396, 2])
-        #print(f'Forward pass {time.time() - t}')
+        imEst = 0 * SENSEH_torch.apply(kspaceU)
 
-        # loss
-        #t = time.time()
-        if WHICH_LOSS == 'mse':
-            # if OneNet:
-            #     loss = loss_fcn_onenet(perturbed, imEst, im, projector, encoder, ClassifierD(Nslices=imEst.shape[0])
-            #                            ,ClassifierD_l(Nslices=imEst.shape[0]), lam1=1, lam2=1, lam3=1, lam4=-1, lam5=-1)
-            # else:
-            loss = mseloss_fcn(imEst, im)
-        elif WHICH_LOSS == 'perceptual':
-            loss = loss_perceptual(imEst, im)
-        elif WHICH_LOSS == 'patchGAN':
-            loss = loss_GAN(imEst, im, patchGAN)
-        else:
-            loss = learnedloss_fcn(imEst, im, score)
-        #print(f'Attach loss {time.time() - t}')
-
-        # Backpropagation
+        #
         t = time.time()
         optimizer.zero_grad()
-        loss.backward()
+        for inner_iter in range(INNER_ITER):
+            imEst2 = ReconModel(kspaceU, SENSE_torch, SENSEH_torch, imEst, ifLEARNED=LEARNED)
+            if WHICH_LOSS == 'mse':
+                loss = mseloss_fcn(imEst2, im)
+            elif WHICH_LOSS == 'perceptual':
+                loss = loss_perceptual(imEst2, im)
+            elif WHICH_LOSS == 'patchGAN':
+                loss = loss_GAN(imEst2, im, patchGAN)
+            else:
+                loss = 0
+                for sl in range(imEst2.shape[0]):
+                    loss += learnedloss_fcn(imEst2[sl], im[sl], score)
+                    torch.cuda.empty_cache()
+                loss /= imEst2.shape[0]     # slices average loss
+                # undo cropping, imEst2 is square while ReconModel input imEst need to be rectangular
+                imEst2 = zero_pad_imEst(imEst2)
+                print(f'learned loss of batch {i} at inner_iter{inner_iter}, epoch{epoch} is {loss} ')
+
+            # loss = loss / 20.0
+
+            loss.backward(retain_graph=True)
+            imEst = imEst2
         optimizer.step()
-        #print(f'Backprop {time.time() - t}')
+
+        if epoch%10 == 0:
+            logging.info(f'Inner iteration took {time.time()-t}s')
 
         train_avg.update(loss.item(), n=BATCH_SIZE)
-        print(f'Loss for batch {i} = {loss.item()}')
+        logging.info(f'Training Loss for batch {i} = {loss.item()}')
 
         if i == 9:
-            truthplt = torch.abs(torch.squeeze(chan2_complex(im.cpu())))
-            perturbed = SENSEH_torch.apply(kspaceU)
-            print(f'noisy shape {perturbed.shape}')
-            noisyplt = torch.abs(torch.squeeze(chan2_complex(perturbed.cpu())))
-
-            temp = imEst
-            temp = temp.detach().cpu()
-            imEstplt = torch.abs(torch.squeeze(chan2_complex(temp)))
-            writer_train.add_image('training', imEstplt[2], 0, dataformats='HW')
-
-            plt.subplot(131)
-            plt.imshow(truthplt[2], cmap='gray')
-            plt.title('Truth')
-            plt.subplot(132)
-            plt.imshow(noisyplt[2], cmap='gray')
-            plt.title('FT')
-            plt.subplot(133)
-            plt.imshow(imEstplt[2], cmap='gray')
-            plt.title(f'Epoch = {epoch}, loss = {loss}')
-            plt.show()
-
-            with h5py.File(out_name, 'a') as hf:
-                hf.create_dataset(f"{epoch}_truth", data=torch.unsqueeze(truthplt[2], 0).numpy())
-                hf.create_dataset(f"{epoch}_recon", data=torch.unsqueeze(imEstplt[2],0).numpy())
-
-            print(f'max truth {truthplt[2].max()}')
-            print(f'max imEst {imEstplt[2].max()}')
-
             break
 
-        print(f'Total time = {time.time() - tt}')
+        del smaps,im, kspaceU, imEst2
+        mempool.free_all_blocks()
+        pinned_mempool.free_all_blocks()
+        torch.cuda.empty_cache()
+        # print(f'Total time = {time.time() - tt}')
         #exit()
+
+        smaps, im, kspaceU = prefetcher.next()
 
     # Validation
     # with torch.no_grad():
     ReconModel.eval()
+    prefetcher = DataPrefetcher(loader_V)
 
-    smaps, im, kspaceU = prefetcherV.next()
+    smaps, im, kspaceU = prefetcher.next()
     i = 0
-
     while kspaceU is not None:
         i += 1
-        smaps, im, kspaceU = prefetcherV.next()
 
         #smaps = chan2_complex(np.squeeze(smaps.numpy()))  # (slice, coil, 768, 396)
         smaps = sp.to_device(smaps, device=spdevice)
-        smaps = spdevice.xp.squeeze(smaps)
+        smaps = chan2_complex(spdevice.xp.squeeze(smaps))
         Nslices = smaps.shape[0]
 
         A = sp.linop.Diag(
@@ -304,27 +287,64 @@ for epoch in range(Nepoch):
         SENSE_torch = sp.to_pytorch_function(SENSE, input_iscomplex=True, output_iscomplex=True)
         SENSEH_torch = sp.to_pytorch_function(SENSEH, input_iscomplex=True, output_iscomplex=True)
 
-        # forward
-        imEst = ReconModel(kspaceU, SENSE_torch, SENSEH_torch)
+        # Initial guess
+        imEst = 0 * SENSEH_torch.apply(kspaceU)
 
-        if WHICH_LOSS == 'mse':
-            loss = mseloss_fcn(imEst, im)
-        elif WHICH_LOSS == 'perceptual':
-            loss = loss_perceptual(imEst, im)
-        elif WHICH_LOSS == 'patchGAN':
-            loss = loss_GAN(imEst, im, patchGAN)
-        else:
-            loss = learnedloss_fcn(imEst, im, score)
+        # forward
+        for inner_iter in range(INNER_ITER):
+            imEst2 = ReconModel(kspaceU, SENSE_torch, SENSEH_torch, imEst, ifLEARNED=LEARNED)
+
+            if WHICH_LOSS == 'mse':
+                loss = mseloss_fcn(imEst2, im)
+            elif WHICH_LOSS == 'perceptual':
+                loss = loss_perceptual(imEst2, im)
+            elif WHICH_LOSS == 'patchGAN':
+                loss = loss_GAN(imEst2, im, patchGAN)
+            else:
+                loss = 0
+                for sl in range(imEst2.shape[0]):
+                    loss += learnedloss_fcn(imEst2[sl], im[sl], score)
+                    torch.cuda.empty_cache()
+                loss /= imEst2.shape[0]  # slices average loss
+                # undo cropping, imEst2 is square while ReconModel input imEst need to be rectangular
+                imEst2 = zero_pad_imEst(imEst2)
+                print(f'learned loss of batch {i} at inner_iter{inner_iter}, epoch{epoch} is {loss} ')
+
+            # loss = loss / 20.0
+            imEst = imEst2
+
         eval_avg.update(loss.item(), n=BATCH_SIZE)
 
         if i == 1:
+            truthplt = torch.abs(torch.squeeze(chan2_complex(im.cpu())))
+            perturbed = SENSEH_torch.apply(kspaceU)
+            noisyplt = torch.abs(torch.squeeze(chan2_complex(perturbed.cpu())))
+
+            temp = imEst
+            temp = temp.detach().cpu()
+            imEstplt = torch.abs(torch.squeeze(chan2_complex(temp)))
+            writer_train.add_image('training', imEstplt[2], 0, dataformats='HW')
+
+            with h5py.File(out_name, 'a') as hf:
+                hf.create_dataset(f"{epoch}_truth", data=torch.unsqueeze(truthplt[2], 0).numpy())
+                hf.create_dataset(f"{epoch}_FT", data=torch.unsqueeze(noisyplt[2], 0).numpy())
+                hf.create_dataset(f"{epoch}_recon", data=torch.unsqueeze(imEstplt[2],0).numpy())
+
             break
 
+        del smaps, im, kspaceU, imEst2
+        mempool.free_all_blocks()
+        pinned_mempool.free_all_blocks()
+        torch.cuda.empty_cache()
 
+        smaps, im, kspaceU = prefetcher.next()
+
+    print(f'epoch {epoch} took {(time.time() - tt)/60} min')
+    torch.cuda.empty_cache()
     writer_val.add_scalar('Loss', eval_avg.avg(), epoch)
     writer_train.add_scalar('Loss', train_avg.avg(), epoch)
 
-    print('Epoch = %d : Loss Eval = %f , Loss Train = %f' % (epoch, eval_avg.avg(), train_avg.avg()))
+    logging.info('Epoch = %d : Loss Eval = %f , Loss Train = %f' % (epoch, eval_avg.avg(), train_avg.avg()))
     lossT[epoch] = train_avg.avg()
     lossV[epoch] = eval_avg.avg()
 

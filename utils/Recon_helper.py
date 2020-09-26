@@ -13,7 +13,7 @@ from utils.unet_componets import *
 
 
 class DataGeneratorRecon(Dataset):
-    def __init__(self,path_root, scan_list, h5file, mask_sl):
+    def __init__(self,path_root, scan_list, h5file, mask_sl, ifLEARNED):
         '''
         input: mask (768, 396) complex64
         output: all complex numpy array
@@ -31,6 +31,9 @@ class DataGeneratorRecon(Dataset):
         # iterate over scans
         self.len = len(self.hf)
 
+        # No zero padding of truth if using learned loss. Score model takes square images.
+        self.ifLEARNED = ifLEARNED
+
     def __len__(self):
         return self.len
 
@@ -40,16 +43,18 @@ class DataGeneratorRecon(Dataset):
 
         t = time.time()
         smaps = np.squeeze(self.hf[self.scans[idx]]['smaps'])
-        #smaps = complex_2chan(smaps)        # (slice,coil, h, w, 2)
-        Nslice = smaps.shape[0]
-        Ncoil = smaps.shape[1]
+        smaps = complex_2chan(smaps)        # (slice,coil, h, w, 2)
+        # Nslice = smaps.shape[0]
+        # Ncoil = smaps.shape[1]
         #print(f'Get smap ={time.time()-t}, {smaps.dtype} {smaps.shape}')
 
         #t = time.time()
         truth = np.array(self.hf[self.scans[idx]]['truths'])
-        truth = torch.from_numpy(truth)
         truth = truth[:]
         truth = complex_2chan(truth)
+        if not self.ifLEARNED:
+            truth = zero_pad_truth(truth)
+        truth = torch.from_numpy(truth)
 
         # # normalize truth's abs
         # truth = np.reshape(truth, (-1, 396, 396))
@@ -225,22 +230,20 @@ def loss_fcn_onenet(noisy, output, target, projector, encoder, discriminator, di
 
 # learned metrics loss
 def learnedloss_fcn(output, target, scoreModel):
-    output = output.permute(0,-1,1,2)
-    target = target.permute(0, -1, 1, 2)
+    output = output.permute(-1,0,1)
+    target = target.permute(-1, 0,1)
 
-    Nslice = output.shape[0]
+    output = torch.unsqueeze(output,0)
+    target = torch.unsqueeze(target,0)
+
+    Nslice = 1
     # add a zero channel since ranknet expect 3chan
     zeros = torch.zeros(((Nslice,1,) + output.shape[2:]), dtype=output.dtype)
     zeros = zeros.cuda()
     output = torch.cat((output, zeros), dim=1)
-    target = torch.cat((target, zeros), dim=1)      # (batch=Nslice, 3, 396, 396)
-
-    # output = output.squeeze()
-    # target = target.squeeze()   # (3, 396, 396)
+    target = torch.cat((target, zeros), dim=1)      # (batch=1, 3, 396, 396)
 
     delta = torch.mean((scoreModel((output - target)) - scoreModel(target)).abs_())
-    # loss_fcn = nn.CrossEntropyLoss()
-    # loss = loss_fcn(delta, labels)  # labels are 1 (same)
 
     return delta
 
@@ -444,7 +447,7 @@ class CNN_shortcut(nn.Module):
         self.conv_in = nn.Sequential(nn.Conv2d(2, Nkernels, kernel_size=3, stride=1, padding=1),
                                 nn.ReLU(inplace=True))
         self.block1 = conv_bn(Nkernels=Nkernels, BN=False)
-        self.block2 = conv_bn(Nkernels=Nkernels, BN=True)
+        self.block2 = conv_bn(Nkernels=Nkernels, BN=False)
         self.block3 = conv_bn(Nkernels=Nkernels, BN=True)
         self.block4 = conv_bn(Nkernels=Nkernels, BN=True)
         self.conv_out = nn.Conv2d(Nkernels, 2, kernel_size=3, padding=1)
@@ -682,7 +685,7 @@ class MoDL(nn.Module):
     # TODO: projector has dimension issue. 768*396 -> 764*396 ->764*396...
     # TODO: How to save the encoder and projector during training MoDL for loss calc
     # def __init__(self, inner_iter=10):
-    def __init__(self, scale_init=1e-3, inner_iter=3):
+    def __init__(self, scale_init=1e-3, inner_iter=1):
         super(MoDL, self).__init__()
 
         self.inner_iter = inner_iter
@@ -692,10 +695,10 @@ class MoDL(nn.Module):
         self.denoiser = CNN_shortcut()
         #self.denoiser = Projector(ENC=False)
 
-    def forward(self, x, encoding_op, decoding_op):
+    def forward(self, x, encoding_op, decoding_op, image, ifLEARNED):
 
         # Initial guess
-        image = decoding_op.apply(x)
+        # image = decoding_op.apply(x)
         # image = torch.zeros([1, 768, 396, 2], dtype=torch.float32)
         # image = image.cuda()
 
@@ -728,10 +731,11 @@ class MoDL(nn.Module):
             image = image.permute(0, 2, 3, 1)
             # image = image[:, :, :, :-1]
 
-        # crop to square here to match ranknet
-        idxL = int((image.shape[1] - image.shape[2]) / 2)
-        idxR = int(idxL + image.shape[2])
-        image = image[:, idxL:idxR, ...]
+        if ifLEARNED:
+            # crop to square here to match ranknet
+            idxL = int((image.shape[1] - image.shape[2]) / 2)
+            idxR = int(idxL + image.shape[2])
+            image = image[:, idxL:idxR, ...]
 
         return image
 
