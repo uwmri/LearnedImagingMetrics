@@ -37,9 +37,9 @@ if DGX:
     filepath_train = Path('/raid/DGXUserDataRaid/cxt004/NYUbrain')
     filepath_val = Path('/raid/DGXUserDataRaid/cxt004/NYUbrain')
 else:
-    filepath_rankModel = Path('I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020')
-    filepath_train = Path("I:/NYUbrain")
-    filepath_val = Path("I:/NYUbrain")
+    filepath_rankModel = Path('D:\git\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020')
+    filepath_train = Path("D:/NYUbrain/brain_multicoil_train")
+    filepath_val = Path("D:/NYUbrain/brain_multicoil_val")
 
     # filepath_rankModel = Path('E:\ImagePairs_Pack_04032020')
     # filepath_train = Path("E:/")
@@ -167,6 +167,7 @@ logging.info('9 cases training, 1 cases validation')
 logging.info(f'loss = {WHICH_LOSS}')
 logging.info(f'acc = {acc}')
 
+ifSingleSlice = True
 
 for epoch in range(Nepoch):
 
@@ -197,54 +198,90 @@ for epoch in range(Nepoch):
         #print(f'Load batch {time.time()-t}, {Nslices} {smaps.shape}')
 
         t = time.time()
-        A = sp.linop.Diag(
-            [sp.mri.linop.Sense(smaps[s, :, :, :], coil_batch_size=1, ishape=(1, xres, yres)) for s in range(Nslices)])
-        Rs1 = sp.linop.Reshape(oshape=A.ishape, ishape=(Nslices, xres, yres))
-        Rs2 = sp.linop.Reshape(oshape=(Nslices, Ncoils, xres, yres), ishape=A.oshape)
+        if ifSingleSlice:
+            for sl in range(smaps.shape[0]):
+                smaps_sl = smaps[sl]
+                im_sl = torch.unsqueeze(im[sl])
+                kspaceU_sl = torch.unsqueeze(kspaceU[sl])
 
-        SENSE = Rs2 * A * Rs1
-        SENSEH = SENSE.H
+                A = sp.mri.linop.Sense(smaps_sl, coil_batch_size=None, ishape=imSlShape, device=spdevice)
+                Ah = A.H
 
-        # AhA = Ah * A
-        # max_eigen = sp.app.MaxEig(AhA, dtype=smaps_sl.dtype, device=spdevice, max_iter=30).run()
+                A_torch = sp.to_pytorch_function(A, input_iscomplex=True, output_iscomplex=True)
+                Ah_torch = sp.to_pytorch_function(Ah, input_iscomplex=True, output_iscomplex=True)
 
-        SENSE_torch = sp.to_pytorch_function(SENSE, input_iscomplex=True, output_iscomplex=True)
-        SENSEH_torch = sp.to_pytorch_function(SENSEH, input_iscomplex=True, output_iscomplex=True)
+                imEst = 0 * SENSEH_torch.apply(kspaceU_sl)
 
-        imEst = 0 * SENSEH_torch.apply(kspaceU)
+                t = time.time()
+                optimizer.zero_grad()
+                for inner_iter in range(INNER_ITER):
+                    imEst2 = ReconModel(kspaceU_sl, SENSE_torch, SENSEH_torch, imEst, ifLEARNED=LEARNED)
+                    if WHICH_LOSS == 'mse':
+                        loss = mseloss_fcn(imEst2, im)
+                    elif WHICH_LOSS == 'perceptual':
+                        loss = loss_perceptual(imEst2, im)
+                    elif WHICH_LOSS == 'patchGAN':
+                        loss = loss_GAN(imEst2, im, patchGAN)
+                    else:
+                        loss = learnedloss_fcn(imEst2, im, score)
+                        # undo cropping, imEst2 is square while ReconModel input imEst need to be rectangular
+                        imEst2 = zero_pad_imEst(imEst2)
+                        print(f'learned loss of batch {i} at inner_iter{inner_iter}, epoch{epoch} is {loss} ')
+                    # loss = loss / 20.0
 
-        #
-        t = time.time()
-        optimizer.zero_grad()
-        for inner_iter in range(INNER_ITER):
-            imEst2 = ReconModel(kspaceU, SENSE_torch, SENSEH_torch, imEst, ifLEARNED=LEARNED)
-            if WHICH_LOSS == 'mse':
-                loss = mseloss_fcn(imEst2, im)
-            elif WHICH_LOSS == 'perceptual':
-                loss = loss_perceptual(imEst2, im)
-            elif WHICH_LOSS == 'patchGAN':
-                loss = loss_GAN(imEst2, im, patchGAN)
-            else:
-                loss = 0
-                for sl in range(imEst2.shape[0]):
-                    loss += learnedloss_fcn(imEst2[sl], im[sl], score)
-                    torch.cuda.empty_cache()
-                loss /= imEst2.shape[0]     # slices average loss
-                # undo cropping, imEst2 is square while ReconModel input imEst need to be rectangular
-                imEst2 = zero_pad_imEst(imEst2)
-                print(f'learned loss of batch {i} at inner_iter{inner_iter}, epoch{epoch} is {loss} ')
+                    loss.backward(retain_graph=True)
+                    imEst = imEst2
+                optimizer.step()
 
-            # loss = loss / 20.0
+        else:
+            A = sp.linop.Diag(
+                [sp.mri.linop.Sense(smaps[s, :, :, :], coil_batch_size=1, ishape=(1, xres, yres)) for s in range(Nslices)])
+            Rs1 = sp.linop.Reshape(oshape=A.ishape, ishape=(Nslices, xres, yres))
+            Rs2 = sp.linop.Reshape(oshape=(Nslices, Ncoils, xres, yres), ishape=A.oshape)
 
-            loss.backward(retain_graph=True)
-            imEst = imEst2
-        optimizer.step()
+            SENSE = Rs2 * A * Rs1
+            SENSEH = SENSE.H
 
-        if epoch%10 == 0:
-            logging.info(f'Inner iteration took {time.time()-t}s')
+            # AhA = Ah * A
+            # max_eigen = sp.app.MaxEig(AhA, dtype=smaps_sl.dtype, device=spdevice, max_iter=30).run()
 
-        train_avg.update(loss.item(), n=BATCH_SIZE)
-        logging.info(f'Training Loss for batch {i} = {loss.item()}')
+            SENSE_torch = sp.to_pytorch_function(SENSE, input_iscomplex=True, output_iscomplex=True)
+            SENSEH_torch = sp.to_pytorch_function(SENSEH, input_iscomplex=True, output_iscomplex=True)
+
+            imEst = 0 * SENSEH_torch.apply(kspaceU)
+
+            #
+            t = time.time()
+            optimizer.zero_grad()
+            for inner_iter in range(INNER_ITER):
+                imEst2 = ReconModel(kspaceU, SENSE_torch, SENSEH_torch, imEst, ifLEARNED=LEARNED)
+                if WHICH_LOSS == 'mse':
+                    loss = mseloss_fcn(imEst2, im)
+                elif WHICH_LOSS == 'perceptual':
+                    loss = loss_perceptual(imEst2, im)
+                elif WHICH_LOSS == 'patchGAN':
+                    loss = loss_GAN(imEst2, im, patchGAN)
+                else:
+                    loss = 0
+                    for sl in range(imEst2.shape[0]):
+                        loss += learnedloss_fcn(imEst2[sl], im[sl], score)
+                        torch.cuda.empty_cache()
+                    loss /= imEst2.shape[0]     # slices average loss
+                    # undo cropping, imEst2 is square while ReconModel input imEst need to be rectangular
+                    imEst2 = zero_pad_imEst(imEst2)
+                    print(f'learned loss of batch {i} at inner_iter{inner_iter}, epoch{epoch} is {loss} ')
+
+                # loss = loss / 20.0
+
+                loss.backward(retain_graph=True)
+                imEst = imEst2
+            optimizer.step()
+
+            if epoch%10 == 0:
+                logging.info(f'Inner iteration took {time.time()-t}s')
+
+            train_avg.update(loss.item(), n=BATCH_SIZE)
+            logging.info(f'Training Loss for batch {i} = {loss.item()}')
 
         if i == 9:
             break
@@ -273,47 +310,83 @@ for epoch in range(Nepoch):
         smaps = chan2_complex(spdevice.xp.squeeze(smaps))
         Nslices = smaps.shape[0]
 
-        A = sp.linop.Diag(
-            [sp.mri.linop.Sense(smaps[s, :, :, :], coil_batch_size=1, ishape=(1, xres, yres)) for s in range(Nslices)])
-        Rs1 = sp.linop.Reshape(oshape=A.ishape, ishape=(Nslices, xres, yres))
-        Rs2 = sp.linop.Reshape(oshape=(Nslices, Ncoils, xres, yres), ishape=A.oshape)
+        if ifSingleSlice:
+            for sl in range(smaps.shape[0]):
+                smaps_sl = smaps[sl]
+                im_sl = torch.unsqueeze(im[sl])
+                kspaceU_sl = torch.unsqueeze(kspaceU[sl])
 
-        SENSE = Rs2 * A * Rs1
-        SENSEH = SENSE.H
+                A = sp.mri.linop.Sense(smaps_sl, coil_batch_size=None, ishape=imSlShape, device=spdevice)
+                Ah = A.H
 
-        # AhA = Ah * A
-        # max_eigen = sp.app.MaxEig(AhA, dtype=smaps_sl.dtype, device=spdevice, max_iter=30).run()
+                A_torch = sp.to_pytorch_function(A, input_iscomplex=True, output_iscomplex=True)
+                Ah_torch = sp.to_pytorch_function(Ah, input_iscomplex=True, output_iscomplex=True)
 
-        SENSE_torch = sp.to_pytorch_function(SENSE, input_iscomplex=True, output_iscomplex=True)
-        SENSEH_torch = sp.to_pytorch_function(SENSEH, input_iscomplex=True, output_iscomplex=True)
+                imEst = 0 * SENSEH_torch.apply(kspaceU_sl)
 
-        # Initial guess
-        imEst = 0 * SENSEH_torch.apply(kspaceU)
+                t = time.time()
+                optimizer.zero_grad()
+                for inner_iter in range(INNER_ITER):
+                    imEst2 = ReconModel(kspaceU_sl, SENSE_torch, SENSEH_torch, imEst, ifLEARNED=LEARNED)
+                    if WHICH_LOSS == 'mse':
+                        loss = mseloss_fcn(imEst2, im)
+                    elif WHICH_LOSS == 'perceptual':
+                        loss = loss_perceptual(imEst2, im)
+                    elif WHICH_LOSS == 'patchGAN':
+                        loss = loss_GAN(imEst2, im, patchGAN)
+                    else:
+                        loss = learnedloss_fcn(imEst2, im, score)
+                        # undo cropping, imEst2 is square while ReconModel input imEst need to be rectangular
+                        imEst2 = zero_pad_imEst(imEst2)
+                        print(f'learned loss of batch {i} at inner_iter{inner_iter}, epoch{epoch} is {loss} ')
+                    # loss = loss / 20.0
+                    imEst = imEst2
+                eval_avg.update(loss.item(), n=BATCH_SIZE)
 
-        # forward
-        for inner_iter in range(INNER_ITER):
-            imEst2 = ReconModel(kspaceU, SENSE_torch, SENSEH_torch, imEst, ifLEARNED=LEARNED)
 
-            if WHICH_LOSS == 'mse':
-                loss = mseloss_fcn(imEst2, im)
-            elif WHICH_LOSS == 'perceptual':
-                loss = loss_perceptual(imEst2, im)
-            elif WHICH_LOSS == 'patchGAN':
-                loss = loss_GAN(imEst2, im, patchGAN)
-            else:
-                loss = 0
-                for sl in range(imEst2.shape[0]):
-                    loss += learnedloss_fcn(imEst2[sl], im[sl], score)
-                    torch.cuda.empty_cache()
-                loss /= imEst2.shape[0]  # slices average loss
-                # undo cropping, imEst2 is square while ReconModel input imEst need to be rectangular
-                imEst2 = zero_pad_imEst(imEst2)
-                print(f'learned loss of batch {i} at inner_iter{inner_iter}, epoch{epoch} is {loss} ')
 
-            # loss = loss / 20.0
-            imEst = imEst2
+        else:
+            A = sp.linop.Diag(
+                [sp.mri.linop.Sense(smaps[s, :, :, :], coil_batch_size=1, ishape=(1, xres, yres)) for s in range(Nslices)])
+            Rs1 = sp.linop.Reshape(oshape=A.ishape, ishape=(Nslices, xres, yres))
+            Rs2 = sp.linop.Reshape(oshape=(Nslices, Ncoils, xres, yres), ishape=A.oshape)
 
-        eval_avg.update(loss.item(), n=BATCH_SIZE)
+            SENSE = Rs2 * A * Rs1
+            SENSEH = SENSE.H
+
+            # AhA = Ah * A
+            # max_eigen = sp.app.MaxEig(AhA, dtype=smaps_sl.dtype, device=spdevice, max_iter=30).run()
+
+            SENSE_torch = sp.to_pytorch_function(SENSE, input_iscomplex=True, output_iscomplex=True)
+            SENSEH_torch = sp.to_pytorch_function(SENSEH, input_iscomplex=True, output_iscomplex=True)
+
+            # Initial guess
+            imEst = 0 * SENSEH_torch.apply(kspaceU)
+
+            # forward
+            for inner_iter in range(INNER_ITER):
+                imEst2 = ReconModel(kspaceU, SENSE_torch, SENSEH_torch, imEst, ifLEARNED=LEARNED)
+
+                if WHICH_LOSS == 'mse':
+                    loss = mseloss_fcn(imEst2, im)
+                elif WHICH_LOSS == 'perceptual':
+                    loss = loss_perceptual(imEst2, im)
+                elif WHICH_LOSS == 'patchGAN':
+                    loss = loss_GAN(imEst2, im, patchGAN)
+                else:
+                    loss = 0
+                    for sl in range(imEst2.shape[0]):
+                        loss += learnedloss_fcn(imEst2[sl], im[sl], score)
+                        torch.cuda.empty_cache()
+                    loss /= imEst2.shape[0]  # slices average loss
+                    # undo cropping, imEst2 is square while ReconModel input imEst need to be rectangular
+                    imEst2 = zero_pad_imEst(imEst2)
+                    print(f'learned loss of batch {i} at inner_iter{inner_iter}, epoch{epoch} is {loss} ')
+
+                # loss = loss / 20.0
+                imEst = imEst2
+
+            eval_avg.update(loss.item(), n=BATCH_SIZE)
 
         if i == 1:
             truthplt = torch.abs(torch.squeeze(chan2_complex(im.cpu())))

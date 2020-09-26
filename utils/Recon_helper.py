@@ -243,7 +243,8 @@ def learnedloss_fcn(output, target, scoreModel):
     output = torch.cat((output, zeros), dim=1)
     target = torch.cat((target, zeros), dim=1)      # (batch=1, 3, 396, 396)
 
-    delta = torch.mean((scoreModel((output - target)) - scoreModel(target)).abs_())
+    with torch.no_grad():
+        delta = torch.mean((scoreModel((output - target)) - scoreModel(target)).abs_())
 
     return delta
 
