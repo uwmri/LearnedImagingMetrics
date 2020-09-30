@@ -31,7 +31,7 @@ class SubtractArray(sp.linop.Linop):
 
 
 class DataGeneratorRecon(Dataset):
-    def __init__(self, path_root, scan_list, h5file, mask_sl, ifLEARNED):
+    def __init__(self, path_root, scan_list, h5file, mask_sl, ifLEARNED, data_type=None):
         '''
         input: mask (768, 396) complex64
         output: all complex numpy array
@@ -54,6 +54,8 @@ class DataGeneratorRecon(Dataset):
         # No zero padding of truth if using learned loss. Score model takes square images.
         self.ifLEARNED = ifLEARNED
 
+        self.data_type = data_type
+
     def __len__(self):
         return self.len
 
@@ -62,7 +64,14 @@ class DataGeneratorRecon(Dataset):
 
         #print(f'Load {self.scans[idx]}')
         t = time.time()
-        smaps = np.array(self.hf[self.scans[idx]]['smaps'])
+        if self.data_type == 'smap16':
+            smaps = np.array(self.hf[self.scans[idx]]['smaps'])
+            smaps = smaps.view(np.int16).astype(np.float32).view(np.complex64)
+            smaps /= 32760
+            #print(smaps.shape)
+        else:
+            smaps = np.array(self.hf[self.scans[idx]]['smaps'])
+
         #print(f'Get smap ={time.time()-t}, {smaps.dtype} {smaps.shape}')
 
         t = time.time()

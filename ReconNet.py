@@ -47,6 +47,8 @@ else:
     filepath_rankModel = Path('E:\ImagePairs_Pack_04032020')
     filepath_train = Path("E:/")
     filepath_val = Path("E:/")
+    log_dir = Path("E:/")
+
 
 file_rankModel = os.path.join(filepath_rankModel, "RankClassifier16.pt")
 os.chdir(filepath_rankModel)
@@ -82,10 +84,10 @@ mask = mri.poisson((xres, yres), accel=acc, crop_corner=True, return_density=Fal
 # Data generator
 BATCH_SIZE = 1
 prefetch_data = False
-trainingset = DataGeneratorRecon(filepath_train, scans_train, file_train, mask, ifLEARNED=False)
+trainingset = DataGeneratorRecon(filepath_train, scans_train, file_train, mask, ifLEARNED=False, data_type='smap16')
 loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=True)
 
-validationset = DataGeneratorRecon(filepath_val, scans_val, file_val, mask, ifLEARNED=False)
+validationset = DataGeneratorRecon(filepath_val, scans_val, file_val, mask, ifLEARNED=False, data_type='smap16')
 loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=False)
 
 
@@ -137,10 +139,10 @@ Nepoch = 50
 lossT = np.zeros(Nepoch)
 lossV = np.zeros(Nepoch)
 
-logging.basicConfig(filename=f'Recon_{Ntrial}.log', filemode='w', level=logging.INFO)
+logging.basicConfig(filename=os.path.join(log_dir,f'Recon_{Ntrial}.log'), filemode='w', level=logging.INFO)
 
 # save some images during training
-out_name = os.path.join(f'sneakpeek_training{Ntrial}.h5')
+out_name = os.path.join(log_dir,f'sneakpeek_training{Ntrial}.h5')
 try:
     os.remove(out_name)
 except OSError:
@@ -250,11 +252,11 @@ for epoch in range(Nepoch):
                 # undo cropping, imEst2 is square while ReconModel input imEst need to be rectangular
                 imEst2 = zero_pad_imEst(imEst2)
 
-            print(f'{WHICH_LOSS} loss of batch {i} at inner_iter{inner_iter}, epoch{epoch} is {loss} ')
-            # loss = loss / 20.0
 
             loss.backward(retain_graph=True)
             imEst = imEst2
+        loss = loss / INNER_ITER
+        print(f'{WHICH_LOSS} loss of batch {i}, epoch{epoch} is {loss} ')
         optimizer.step()
 
         if epoch%10 == 0:
