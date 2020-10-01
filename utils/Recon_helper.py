@@ -114,9 +114,9 @@ class DataGeneratorRecon(Dataset):
         # kspace = kspace[:]  # array
         kspace = zero_pad4D(kspace)  # array (sl, coil, 768, 396)
         # print(f'kspace shape is {kspace.shape}')
-        mask = np.broadcast_to(self.mask_sl, self.mask_sl.shape)
+        # mask = np.broadcast_to(self.mask_sl, self.mask_sl.shape)
         # print(f'mask shape is {mask.shape}')
-        kspace *= mask
+        kspace *= self.mask_sl
 
         # kspace = complex_2chan(kspace)  # (slice, coil, h, w, 2)
         kspace /= max_truth
@@ -718,17 +718,17 @@ class MoDL(nn.Module):
     # TODO: projector has dimension issue. 768*396 -> 764*396 ->764*396...
     # TODO: How to save the encoder and projector during training MoDL for loss calc
     # def __init__(self, inner_iter=10):
-    def __init__(self, scale_init=1e-3, inner_iter=1):
+    def __init__(self, scale_init=1.0, inner_iter=1):
         super(MoDL, self).__init__()
 
         self.inner_iter = inner_iter
-        self.scale_layers = nn.Parameter(torch.ones([inner_iter]), requires_grad=True)
+        self.scale_layers = nn.Parameter(scale_init*torch.ones([inner_iter]), requires_grad=True)
         self.lam = nn.Parameter(torch.ones([inner_iter]), requires_grad=True)
         # self.denoiser = Unet()
         self.denoiser = CNN_shortcut()
         # self.denoiser = Projector(ENC=False)
 
-    def forward(self, grad_op, image, ifLEARNED):
+    def forward(self, image, kspace, encoding_op, decoding_op, ifLEARNED):
 
         # Initial guess
         # image = decoding_op.apply(x)
@@ -738,39 +738,40 @@ class MoDL(nn.Module):
         # zeros = torch.zeros(((1,) + image.shape[:-1]), dtype=image.dtype)  # torch.Size([1, slice, 768, 396])
         # zeros = zeros.permute(1,0,2,3)
         # zeros = zeros.cuda()
-
         for i in range(self.inner_iter):
             # Steepest descent
+
             # Ex
-            # kspace = encoding_op.apply(image)
+            Ex = encoding_op.apply(image)
 
             # Ex - d
-            # kspace -= x
+            Ex -= kspace
 
             # alpha * E.H *(Ex - d + lambda * image)
             # print(f'step is {self.scale_layers[i]}')
             # print(f'lambda is {self.lam[i]}')
             # image = image - self.scale_layers[i]*(decoding_op.apply(kspace))
-            image = image - self.scale_layers[i] * (grad_op.apply(image))
+            # print(self.scale_layers[i])
+            y_pred = image - self.scale_layers[i] * decoding_op.apply(Ex)
 
-            image = image.permute(0, -1, 1, 2)
+            y_pred = y_pred.permute(0, -1, 1, 2)
             # # make images 3 channel.
             # image = torch.cat((image, zeros), dim=1)        # torch.Size([slice, 3, 768, 396])
 
             # denoised
-            image = self.denoiser(image)
+            y_pred = self.denoiser(y_pred)
 
             # # back to 2 channel
-            image = image.permute(0, 2, 3, 1)
+            y_pred = y_pred.permute(0, 2, 3, 1)
             # image = image[:, :, :, :-1]
 
         if ifLEARNED:
             # crop to square here to match ranknet
-            idxL = int((image.shape[1] - image.shape[2]) / 2)
-            idxR = int(idxL + image.shape[2])
+            idxL = int((y_pred.shape[1] - y_pred.shape[2]) / 2)
+            idxR = int(idxL + y_pred.shape[2])
             image = image[:, idxL:idxR, ...]
 
-        return image
+        return y_pred
 
 
 class MoDL_CG(nn.Module):
