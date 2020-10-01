@@ -52,6 +52,7 @@ def zero_pad_truth(truth, Nymax=768):
     ''' zero pad truth from ([16, 396, 396, 2]) to ([16, 768, 396, 2]) '''
     pady = int(.5 * (Nymax - truth.shape[1]))
     truth_zp = np.pad(truth, ((0, 0), (pady, Nymax - truth.shape[1] - pady), (0,0), (0,0)), 'constant', constant_values=0)
+
     return truth_zp
 
 def zero_pad_imEst(image, Nymax=768):
