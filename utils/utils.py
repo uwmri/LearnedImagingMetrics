@@ -62,6 +62,16 @@ def zero_pad_imEst(image, Nymax=768):
     image = torch.nn.functional.pad(image, (0,0,0,0,pady, padyD), mode='constant', value=0)
     return image
 
+
+def crop_im(image):
+    '''crop imEst and truth to torch([sl, 396,396,2])'''
+
+    idxL = int((image.shape[1] - image.shape[2]) / 2)
+    idxR = int(idxL + image.shape[2])
+    image = image[:, idxL:idxR, ...]
+    return image
+
+
 def imshow(im):
     npim = im.numpy()
     npim = np.squeeze(npim)
