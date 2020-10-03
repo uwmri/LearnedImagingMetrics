@@ -11,7 +11,6 @@ from utils.model_helper import *
 from utils.CreateImagePairs import get_smaps, add_gaussian_noise
 from utils.unet_componets import *
 
-
 class SubtractArray(sp.linop.Linop):
     """Subtract array operator, subtracts a given array allowing composed operator
     Args:
@@ -50,6 +49,7 @@ class DataGeneratorRecon(Dataset):
 
         # iterate over scans
         self.len = len(self.hf)
+        print(f'Found {self.len} cases for training')
 
         # No zero padding of truth if using learned loss. Score model takes square images.
         self.ifLEARNED = ifLEARNED
@@ -171,8 +171,14 @@ class DataIterator():
         self.loader = iter(loader)
 
     def next(self):
-        smaps, im, kspaceU = next(self.loader)
-        im = im.cuda()
+        try:
+            smaps, im, kspaceU = next(self.loader)
+            im = im.cuda()
+        except StopIteration:
+            smaps = None
+            im = None
+            kspaceU = None
+
         return smaps, im, kspaceU
 
 
@@ -491,8 +497,8 @@ class CNN_shortcut(nn.Module):
         # residual
         x = self.conv_in(x)
         x = self.block1(x)
-        # x = self.block2(x)
-        # x = self.block3(x)
+        x = self.block2(x)
+        x = self.block3(x)
         # x = self.block4(x)
         x = self.conv_out(x)
 
@@ -673,36 +679,6 @@ class ClassifierD_l(nn.Module):
         x = self.fc(x)
         return x
 
-
-class Unet(nn.Module):
-    def __init__(self):
-        super(Unet, self).__init__()
-        self.conv_in = DoubleConv(2, 64)
-        self.down1 = Down(64, 128)
-        self.down2 = Down(128, 256)
-        self.down3 = Down(256, 512)
-        self.down4 = Down(512, 1024)
-
-        self.up1 = Up(1024, 512)
-        self.up2 = Up(512, 256)
-        self.up3 = Up(256, 128)
-        self.up4 = Up(128, 64)
-        self.conv_out = nn.Conv2d(64, 2, kernel_size=1)
-
-    def forward(self, x):
-        x1 = self.conv_in(x)
-        x2 = self.down1(x1)
-        x3 = self.down2(x2)
-        x4 = self.down3(x3)
-        x5 = self.down4(x4)
-        x = self.up1(x5, x4)
-        x = self.up2(x, x3)
-        x = self.up3(x, x2)
-        x = self.up4(x, x1)
-        x = self.conv_out(x)
-        return x
-
-
 class ScaleLayer(nn.Module):
 
     def __init__(self, init_value=1e-3):
@@ -723,9 +699,10 @@ class MoDL(nn.Module):
 
         self.inner_iter = inner_iter
         self.scale_layers = nn.Parameter(scale_init*torch.ones([inner_iter]), requires_grad=True)
+        self.scale_denoise = nn.Parameter(0.9 * torch.ones([inner_iter]), requires_grad=True)
         self.lam = nn.Parameter(torch.ones([inner_iter]), requires_grad=True)
-        # self.denoiser = Unet()
-        self.denoiser = CNN_shortcut()
+        self.denoiser = UNet2D(2, 2, final_activation='none', f_maps=4, layer_order='cr', num_groups=2)
+        # self.denoiser = CNN_shortcut()
         # self.denoiser = Projector(ENC=False)
 
     def forward(self, image, kspace, encoding_op, decoding_op, ifLEARNED):

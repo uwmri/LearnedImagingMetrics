@@ -76,12 +76,16 @@ smap_type = 'smap16'
 Ncoils = 20
 xres = 768
 yres = 396
-acc = 8
+acc = 16
 
 # fixed sampling mask
 print(f'Acceleration = {acc}')
 mask = mri.poisson((xres, yres), accel=acc, crop_corner=True, return_density=False, dtype='float32')
 #mask = np.ones((xres, yres), dtype=np.float32)
+
+plt.figure()
+plt.imshow(mask)
+plt.show()
 
 # Data generator
 BATCH_SIZE = 1
@@ -108,6 +112,9 @@ ReconModel = MoDL()
 ReconModel.cuda()
 
 
+torchsummary.summary(ReconModel.denoiser, input_size=(2,768,396), batch_size=16)
+
+
 # for BO
 BO = False
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -124,8 +131,8 @@ def train_evaluate_recon(parameterization):
 
 
 # training
-writer_train = SummaryWriter(f'runs/recon/train_{Ntrial}')
-writer_val = SummaryWriter(f'runs/recon/val_{Ntrial}')
+writer_train = SummaryWriter(os.path.join(log_dir,f'runs/recon/train_{Ntrial}'))
+writer_val = SummaryWriter(os.path.join(log_dir,f'runs/recon/val_{Ntrial}'))
 
 WHICH_LOSS = 'mse'
 LEARNED = False
@@ -297,7 +304,7 @@ for epoch in range(Nepoch):
         train_avg.update(loss.item(), n=BATCH_SIZE)
         logging.info(f'Training Loss for batch {i} = {loss.item()}')
 
-        if i == 9:
+        if i == 29:
             break
 
         #del smaps,im, kspaceU, imEst2
@@ -390,7 +397,7 @@ for epoch in range(Nepoch):
             temp = imEst
             temp = temp.detach().cpu()
             imEstplt = torch.abs(torch.squeeze(chan2_complex(temp)))
-            writer_train.add_image('training', imEstplt[2], 0, dataformats='HW')
+            writer_train.add_image('training', imEstplt[2], epoch, dataformats='HW')
 
             with h5py.File(out_name, 'a') as hf:
                 if epoch == 0:
@@ -398,6 +405,7 @@ for epoch in range(Nepoch):
                     hf.create_dataset(f"{epoch}_FT", data=torch.unsqueeze(noisyplt[2], 0).numpy())
                 hf.create_dataset(f"{epoch}_recon", data=torch.unsqueeze(imEstplt[2],0).numpy())
 
+        if i == 5:
             break
 
         #del smaps, im, kspaceU, imEst2
