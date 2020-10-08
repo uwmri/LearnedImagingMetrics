@@ -360,7 +360,7 @@ class Classifier(nn.Module):
         self.fc2 = nn.Linear(8,3)
         self.drop = nn.Dropout(p=0.5)
 
-    def forward(self, image1,image2, trainOnMSE):
+    def forward(self, image1,image2, trainOnMSE=False):
 
         if trainOnMSE:
             d = torch.sum((torch.abs(image1-image2)**2),dim=(1,2,3))/(image1.shape[1]*image1.shape[2]*image1.shape[3])

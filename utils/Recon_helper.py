@@ -73,6 +73,7 @@ class DataGeneratorRecon(Dataset):
         else:
             smaps = np.array(self.hf[self.scans[idx]]['smaps'])
 
+        smaps = complex_2chan(smaps)
         #print(f'Get smap ={time.time()-t}, {smaps.dtype} {smaps.shape}')
 
         t = time.time()
@@ -83,7 +84,7 @@ class DataGeneratorRecon(Dataset):
 
         truth = zero_pad_truth(truth)
 
-        truth = torch.from_numpy(truth)
+        truth = torch.from_numpy(truth)     # ([16, 768, 396, 2])
 
         # # normalize truth's abs
         # truth = np.reshape(truth, (-1, 396, 396))
@@ -95,7 +96,7 @@ class DataGeneratorRecon(Dataset):
         # truth = np.reshape(truth, (Nslice, 396, 396))
 
         # normalize truth to 0 and 1
-        # truth = torch.reshape(truth, (-1, 396, 396))
+        # maxt_truth shape  (sl, 1, 1, 1)
         max_truth, _ = torch.max(truth, dim=1, keepdim=True)
         max_truth, _ = torch.max(max_truth, dim=2, keepdim=True)
         max_truth, _ = torch.max(max_truth, dim=3, keepdim=True)
@@ -115,14 +116,12 @@ class DataGeneratorRecon(Dataset):
         kspace = np.array(self.hf[self.scans[idx]]['kspace'])
         # kspace = kspace[:]  # array
         kspace = zero_pad4D(kspace)  # array (sl, coil, 768, 396)
-        # print(f'kspace shape is {kspace.shape}')
-        # mask = np.broadcast_to(self.mask_sl, self.mask_sl.shape)
-        # print(f'mask shape is {mask.shape}')
+        # mask_sl shape (768, 396)
         kspace *= self.mask_sl
 
-        # kspace = complex_2chan(kspace)  # (slice, coil, h, w, 2)
+        max_truth = torch.unsqueeze(max_truth, -1)
+        kspace = complex_2chan(kspace)  # (slice, coil, h, w, 2)
         kspace /= max_truth
-
         # normalize kspace to 0 and 1 separately for real and imag
         # kspace = np.reshape(kspace,(-1,768,396))
         # scale_kspace_max = np.tile(max_truth[:, np.newaxis, np.newaxis], (Ncoil, 768, 396))
@@ -131,7 +130,8 @@ class DataGeneratorRecon(Dataset):
         # kspace /= (scale_kspace_max - scale_kspace_min)
         # kspace = np.reshape(kspace,(Nslice, Ncoil, 768,396,2))
         # kspace = torch.from_numpy(kspace)
-        #print(f'Get kspace {time.time()-t} {kspace.dtype} {kspace.shape}')
+        #print(f'Get kspace {time.time()-t} {kspace.dtype} {kspace.shape}')\
+
         return smaps, truth, kspace
 
 
@@ -201,6 +201,7 @@ class DataPrefetcher():
         with torch.cuda.stream(self.stream):
             # self.next_kspaceU = torch.squeeze(self.next_kspaceU)
             self.next_im = torch.squeeze(self.next_im)
+
             # self.next_kspaceU = self.next_kspaceU.cuda(non_blocking=True)
             self.next_im = self.next_im.cuda(non_blocking=True)
 
@@ -295,6 +296,7 @@ def learnedloss_fcn(output, target, scoreModel):
     delta = 0
 
     for sl in range(Nslice):
+
         #print(sl)
         output_sl = torch.unsqueeze(output[sl],0)
         target_sl = torch.unsqueeze(target[sl],0)   # (1,3,396,396)
@@ -304,8 +306,8 @@ def learnedloss_fcn(output, target, scoreModel):
         delta += delta_sl
         #torch.cuda.empty_cache()
     delta /= Nslice
-
-    return delta
+    return  delta
+    #return 0.5*delta + 0.5* torch.mean((output - target) ** 2)
 
 
 # perceptual loss
@@ -327,12 +329,16 @@ class PerceptualLoss_VGG16(torch.nn.Module):
         for param in self.net.parameters():
             param.requires_grad = False
 
-        self.mean = torch.nn.Parameter(torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
+        self.mean = torch.nn.Parameter(torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)).cuda()
         self.std = torch.nn.Parameter(torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
 
     def forward(self, input, target):
         # input and target both (Slice, 396, 396, 2)
         # make the magnitude as the 3rd channel
+        if input.ndim == 3:
+            input = torch.unsqueeze(input, 0)
+            target = torch.unsqueeze(target, 0)
+
         inputabs = torch.sqrt(input[:, :, :, 0] ** 2 + input[:, :, :, 1] ** 2)
         inputabs = torch.unsqueeze(inputabs, dim=3)
         input = torch.cat((input, inputabs), dim=3)
@@ -429,13 +435,18 @@ class NLayerDiscriminator(nn.Module):
 
 
 def loss_GAN(input, target, discriminator):
+
+    if input.ndim == 3:
+        input = torch.unsqueeze(input, 0)
+        target = torch.unsqueeze(target, 0)
+
     Nslice = target.shape[0]
-    input = input.permute(0, -1, 1, 2)
+    input = input.permute(0, -1, 1, 2)      # (sl, ch, h, w)
     target = target.permute(0, -1, 1, 2)
     Dtruth = torch.sum(torch.mean(discriminator(target.contiguous()).view(Nslice, -1), dim=1)) / 8
     Drecon = torch.sum(torch.mean(discriminator(input.contiguous()).view(Nslice, -1), dim=1)) / 8
 
-    return torch.log(Dtruth.abs_()) + torch.log(torch.abs(1.0 - Drecon))
+    return -torch.log(Dtruth.abs_()) + torch.log(1.0 - Drecon.abs_())
 
 
 class DnCNN(nn.Module):
@@ -730,7 +741,9 @@ class MoDL(nn.Module):
         self.denoiser = CNN_shortcut()
         # self.denoiser = Projector(ENC=False)
 
-    def forward(self, kspace, encoding_op, decoding_op, image):
+
+    def forward(self, image, kspace, encoding_op, decoding_op):
+
 
 
         # Initial guess
@@ -769,6 +782,7 @@ class MoDL(nn.Module):
                 y_pred = torch.squeeze(y_pred)
 
             y_pred = self.lam1[i]*image +self.lam2[i]*y_pred
+
         return y_pred
 
 
@@ -853,6 +867,7 @@ class MoDL_CG(nn.Module):
 def train_modRecon(
         net: torch.nn.Module,
         train_loader: DataLoader,
+        mask_gpu: torch.tensor,
         parameters: Dict[str, float],
         dtype: torch.dtype,
         device: torch.device
@@ -873,6 +888,7 @@ def train_modRecon(
         device: torch device
     Returns:
         nn.Module: trained CNN.
+
     """
     # Initialize network
     net.to(dtype=dtype, device=device)  # pyre-ignore [28]
@@ -896,9 +912,12 @@ def train_modRecon(
             # get the inputs
             smaps, im, kspaceU = data
             smaps = sp.to_device(smaps, device=spdevice)
+            smaps = spdevice.xp.squeeze(smaps)
             smaps = chan2_complex(spdevice.xp.squeeze(smaps))
 
-            im, kspaceU = im.cuda(), kspaceU.cuda()  # kspaceU, tensor, [1, slice, coil, 768, 396, 2],
+            kspaceU = sp.to_device(kspaceU, device=spdevice)
+            kspaceU = spdevice.xp.squeeze(kspaceU)
+            kspaceU = chan2_complex(kspaceU)
 
             Nslices = smaps.shape[0]
             Ncoils = 20
@@ -907,25 +926,24 @@ def train_modRecon(
 
             for sl in range(smaps.shape[0]):
                 smaps_sl = smaps[sl]                                # ndarray on cuda (20, 768, 396), complex64
-                im_sl = torch.unsqueeze(im[sl], dim=0)              # tensor on cuda (1, 768, 396, 2)
+                im_sl = im[sl]                                      # tensor on cuda (768, 396, 2)
                 kspaceU_sl = kspaceU[sl]                            # tensor on cuda (20, 768, 396, 2)
                 with spdevice:
-                    A = sp.mri.linop.Sense(smaps_sl, coil_batch_size=None, ishape=(1,768,396))
+                    A = sp.mri.linop.Sense(smaps_sl, coil_batch_size=None, weights=mask_gpu)
                     Ah = A.H
 
                 A_torch = sp.to_pytorch_function(A, input_iscomplex=True, output_iscomplex=True)
                 Ah_torch = sp.to_pytorch_function(Ah, input_iscomplex=True, output_iscomplex=True)
 
-                imEst = 0 * Ah_torch.apply(kspaceU_sl)
+                imEst = 0.0 * Ah_torch.apply(kspaceU_sl)
 
 
                 # zero the parameter gradients
+                kspaceU_sl = sp.to_pytorch(kspaceU_sl)
                 optimizer.zero_grad()
                 for inner_iter in range(10):
                 # forward + backward + optimize
-                    outputs = net(kspaceU_sl, A_torch, Ah_torch, imEst)
-
-
+                    outputs = net(imEst, kspaceU_sl, A_torch, Ah_torch)
                     loss = mseloss_fcn(outputs, im_sl)
                     loss.backward()
                     imEst = outputs
@@ -939,7 +957,7 @@ def train_modRecon(
 
 
 def evaluate_modRecon(
-        net: nn.Module, data_loader: DataLoader, dtype: torch.dtype, device: torch.device
+        net: nn.Module, data_loader: DataLoader, mask_gpu: torch.tensor, dtype: torch.dtype, device: torch.device
 ) -> float:
     """
     Compute classification accuracy on provided dataset.
@@ -958,33 +976,35 @@ def evaluate_modRecon(
             # get the inputs
             smaps, im, kspaceU = data
             smaps = sp.to_device(smaps, device=spdevice)
+            smaps = spdevice.xp.squeeze(smaps)
             smaps = chan2_complex(spdevice.xp.squeeze(smaps))
 
-            im, kspaceU = im.cuda(), kspaceU.cuda()  # kspaceU, tensor, [1, slice, coil, 768, 396, 2],
+            kspaceU = sp.to_device(kspaceU, device=spdevice)
+            kspaceU = spdevice.xp.squeeze(kspaceU)
+            kspaceU = chan2_complex(kspaceU)
 
             Nslices = smaps.shape[0]
             Ncoils = 20
             xres = 768
             yres = 396
 
-            for sl in range(smaps.shape[0]):
+            for sl in range(Nslices):
                 smaps_sl = smaps[sl]  # ndarray on cuda (20, 768, 396), complex64
-                im_sl = torch.unsqueeze(im[sl], dim=0)  # tensor on cuda (1, 768, 396, 2)
+                im_sl = im[sl] # tensor on cuda (1, 768, 396, 2)
                 kspaceU_sl = kspaceU[sl]  # tensor on cuda (20, 768, 396, 2)
                 with spdevice:
-                    A = sp.mri.linop.Sense(smaps_sl, coil_batch_size=None, ishape=(1, 768, 396))
+                    A = sp.mri.linop.Sense(smaps_sl, coil_batch_size=None, weights=mask_gpu)
                     Ah = A.H
 
                 A_torch = sp.to_pytorch_function(A, input_iscomplex=True, output_iscomplex=True)
                 Ah_torch = sp.to_pytorch_function(Ah, input_iscomplex=True, output_iscomplex=True)
 
-                imEst = 0 * Ah_torch.apply(kspaceU_sl)
-
+                imEst = 0.0 * Ah_torch.apply(kspaceU_sl)
 
                 # forward + backward + optimize
+                kspaceU_sl = sp.to_pytorch(kspaceU_sl)
                 for inner_iter in range(10):
-                    outputs = net(kspaceU_sl, A_torch, Ah_torch, imEst)
-
+                    outputs = net(imEst, kspaceU_sl, A_torch, Ah_torch)
 
                     loss = mseloss_fcn(outputs, im_sl)
                     imEst = outputs
@@ -992,4 +1012,4 @@ def evaluate_modRecon(
             if i == 1:
                 break
 
-    return loss.numpy()
+    return loss
