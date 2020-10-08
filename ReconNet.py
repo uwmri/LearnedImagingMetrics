@@ -123,6 +123,9 @@ ReconModel = MoDL()
 ReconModel.cuda()
 
 
+torchsummary.summary(ReconModel.denoiser, input_size=(2,768,396), batch_size=16)
+
+
 # for BO
 BO = False
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -414,6 +417,7 @@ for epoch in range(Nepoch):
                 logging.info(f'Inner iteration took {time.time()-t}s')
 
         train_avg.update(loss.item(), n=BATCH_SIZE)
+
 
         if i % 4 ==0 :
             logging.info(f'Training Loss for batch {i} = {loss.item()}')

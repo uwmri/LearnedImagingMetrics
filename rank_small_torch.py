@@ -8,7 +8,11 @@ import torchsummary
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 
-from ax.service.managed_loop import optimize
+try:
+    from ax.service.managed_loop import optimize
+except:
+    print('NO ax')
+
 
 from utils.model_helper import *
 from utils.utils_DL import *
@@ -18,7 +22,8 @@ shuffle_observers = True
 MOBILE = False
 EFF = False
 BO = False
-ResumeTrain = True
+RESNET = False
+ResumeTrain = False
 
 
 
@@ -71,6 +76,8 @@ for file in os.listdir(filepath_images):
     if fnmatch.fnmatch(file, '*.h5'):
         file_images = os.path.join(filepath_images, file)
 hf = h5.File(name=file_images, mode='r')
+
+log_dir = tk.filedialog.askdirectory(title='Choose log dir')
 
 # Just read and subtract truth for now, index later
 for i in range(NEXAMPLES):
@@ -166,8 +173,10 @@ if MOBILE:
     ranknet = mobilenet_v2(pretrained=False, num_classes=1) # Less than ResNet18
 elif EFF:
     ranknet = EfficientNet.from_pretrained('efficientnet-b0', num_classes=1)
-else:
+elif RESNET:
     ranknet = ResNet2(BasicBlock, [2,2,2,2], for_denoise=False)  # Less than ResNet18
+else:
+    ranknet = L2cnn()
 
 torchsummary.summary(ranknet, (3, maxMatSize, maxMatSize), device="cpu")
 
@@ -219,20 +228,20 @@ else:
         print(best_parameters)
 
     else:
-        optimizer = optim.SGD(classifier.parameters(), lr=0.001, momentum=0.9)
-
+        #optimizer = optim.SGD(classifier.parameters(), lr=0.001, momentum=0.9)
+        optimizer = optim.Adam(classifier.parameters(), lr=0.001)
 
 loss_func = nn.CrossEntropyLoss()
 
 classifier.cuda();
 
 # Training
-Ntrial = 15.2
+Ntrial = 22
 # writer = SummaryWriter(f'runs/rank/trial_{Ntrial}')
-writer_train = SummaryWriter(f'runs/rank/train_{Ntrial}')
-writer_val = SummaryWriter(f'runs/rank/val_{Ntrial}')
+writer_train = SummaryWriter(os.path.join(log_dir,f'runs/rank/train_{Ntrial}'))
+writer_val = SummaryWriter(os.path.join(log_dir,f'runs/rank/val_{Ntrial}'))
 
-Nepoch = 100
+Nepoch = 300
 lossT = np.zeros(Nepoch)
 lossV = np.zeros(Nepoch)
 accV = np.zeros(Nepoch)
@@ -279,6 +288,8 @@ for epoch in range(Nepoch):
         # # every 30 minibatch, show image pairs and predictions
         # if i % 30 == 0:
         #     writer.add_figure()
+        if i % 30 == 0:
+            print(train_acc.avg())
 
         # zero the parameter gradients, backward and update
         optimizer.zero_grad()
@@ -326,7 +337,8 @@ for epoch in range(Nepoch):
 
         accV[epoch] = 100 * correct / total
 
-    print('Epoch = %d : Loss Eval = %f , Loss Train = %f' % (epoch, eval_avg.avg(), train_avg.avg()))
+    #print('Epoch = %d : Loss Eval = %f , Loss Train = %f' % (epoch, eval_avg.avg(), train_avg.avg()))
+    print(f'Epoch = {epoch}, Loss = {eval_avg.avg()}, Loss train = {train_avg.avg()}, Acc = {eval_acc.avg()}, Acc train = {train_acc.avg()}')
     lossT[epoch] = train_avg.avg()
     lossV[epoch] = eval_avg.avg()
 
@@ -348,12 +360,12 @@ for epoch in range(Nepoch):
     writer_train.add_scalar('Acc', train_acc.avg(),
                             epoch)
 
-state = {
-    'state_dict': classifier.state_dict(),
-    'optimizer': optimizer.state_dict(),
-    'epoch': epoch
-}
-torch.save(state, 'RankClassifier15-2.pt')
+    state = {
+        'state_dict': classifier.state_dict(),
+        'optimizer': optimizer.state_dict(),
+        'epoch': epoch
+    }
+    torch.save(state,os.path.join(log_dir,f'RankClassifier{Ntrial}_{epoch}.pt'))
 
 # Save
 

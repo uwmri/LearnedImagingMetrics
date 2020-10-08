@@ -173,8 +173,14 @@ class DataIterator():
         self.loader = iter(loader)
 
     def next(self):
-        smaps, im, kspaceU = next(self.loader)
-        im= im.cuda()
+        try:
+            smaps, im, kspaceU = next(self.loader)
+            im = im.cuda()
+        except StopIteration:
+            smaps = None
+            im = None
+            kspaceU = None
+
         return smaps, im, kspaceU
 
 
@@ -245,6 +251,8 @@ def sneakpeek(dataset, Ncoils=20):
 
 # MSE loss
 def mseloss_fcn(output, target):
+    output = crop_im(output)
+    target = crop_im(target)
     loss = torch.mean((output - target) ** 2)
     return loss
 
@@ -288,18 +296,15 @@ def learnedloss_fcn(output, target, scoreModel):
     delta = 0
 
     for sl in range(Nslice):
+
+        #print(sl)
         output_sl = torch.unsqueeze(output[sl],0)
         target_sl = torch.unsqueeze(target[sl],0)   # (1,3,396,396)
-        # delta_sl = scoreModel(output_sl-target_sl, target_sl-target_sl)
-        # loss_sl = torch.abs(1-delta_sl[0,1])     # maxmize probability to be 'same'
-        # print(f'learned loss for slice {sl} {delta_sl}')
-        score1 = scoreModel(output_sl - target_sl)
-        # print(f'score1 {score1}')
-        score2 = scoreModel(target_sl- target_sl)
-        # print(f'score1 {score2}')
-        delta_sl = (score1 - score2)**2
+        #delta_sl = torch.mean((scoreModel((output_sl - target_sl)) - scoreModel(target_sl-target_sl)).abs_())
+        delta_sl = 1000.0 + torch.mean((scoreModel((output_sl - target_sl))))
+
         delta += delta_sl
-        torch.cuda.empty_cache()
+        #torch.cuda.empty_cache()
     delta /= Nslice
     return  delta
     #return 0.5*delta + 0.5* torch.mean((output - target) ** 2)
@@ -526,7 +531,7 @@ class CNN_shortcut(nn.Module):
         x = self.conv_in(x)
         x = self.block1(x)
         x = self.block2(x)
-        # x = self.block3(x)
+        x = self.block3(x)
         # x = self.block4(x)
         x = self.conv_out(x)
 
@@ -590,7 +595,6 @@ class Projector(nn.Module):
             x = self.layer10(x)
 
         return x
-
 
 class Bottleneck(nn.Module):
 
@@ -707,36 +711,6 @@ class ClassifierD_l(nn.Module):
         x = self.fc(x)
         return x
 
-
-class Unet(nn.Module):
-    def __init__(self):
-        super(Unet, self).__init__()
-        self.conv_in = DoubleConv(2, 64)
-        self.down1 = Down(64, 128)
-        self.down2 = Down(128, 256)
-        self.down3 = Down(256, 512)
-        self.down4 = Down(512, 1024)
-
-        self.up1 = Up(1024, 512)
-        self.up2 = Up(512, 256)
-        self.up3 = Up(256, 128)
-        self.up4 = Up(128, 64)
-        self.conv_out = nn.Conv2d(64, 2, kernel_size=1)
-
-    def forward(self, x):
-        x1 = self.conv_in(x)
-        x2 = self.down1(x1)
-        x3 = self.down2(x2)
-        x4 = self.down3(x3)
-        x5 = self.down4(x4)
-        x = self.up1(x5, x4)
-        x = self.up2(x, x3)
-        x = self.up3(x, x2)
-        x = self.up4(x, x1)
-        x = self.conv_out(x)
-        return x
-
-
 class ScaleLayer(nn.Module):
 
     def __init__(self, init_value=1e-3):
@@ -758,12 +732,18 @@ class MoDL(nn.Module):
 
         self.inner_iter = inner_iter
         self.scale_layers = nn.Parameter(scale_init*torch.ones([inner_iter]), requires_grad=True)
-        self.lam = nn.Parameter(torch.ones([inner_iter]), requires_grad=True)
-        # self.denoiser = Unet()
+        self.lam1 = nn.Parameter(1.0*torch.ones([inner_iter]), requires_grad=True)
+        self.lam2 = nn.Parameter(0.05*torch.ones([inner_iter]), requires_grad=True)
+
+
+        # Options for UNET
+        #self.denoiser = UNet2D(2, 2, final_activation='none', f_maps=8, layer_order='cr', num_groups=4)
         self.denoiser = CNN_shortcut()
         # self.denoiser = Projector(ENC=False)
 
+
     def forward(self, image, kspace, encoding_op, decoding_op):
+
 
 
         # Initial guess
@@ -778,61 +758,31 @@ class MoDL(nn.Module):
             # Steepest descent
 
             # Ex
-
             Ex = encoding_op.apply(image)      # For slice by slice:(20, 768, 396, 2) or by case:([slice, 20, 768, 396, 2])
 
             # Ex - d
             Ex -= kspace
 
-            # alpha * E.H *(Ex - d + lambda * image)
-            # print(f'step is {self.scale_layers[i]}')
-            # print(f'lambda is {self.lam[i]}')
+            # image = image - scale*E.H*(Ex-d)
+            image = image - self.scale_layers[i] * decoding_op.apply(Ex)   # (768, 396, 2)
 
-            y_pred = image - self.scale_layers[i] * decoding_op.apply(Ex)   # (768, 396, 2)
-      
+            y_pred = image
             dim = y_pred.ndim
             if dim ==3:
                 y_pred = torch.unsqueeze(y_pred,0)
 
-            y_pred = y_pred.permute(0, -1, 1, 2)
+            y_pred = y_pred.permute(0, -1, 1, 2).contiguous()
            
-            # denoised
+            # UNet donoise
             y_pred = self.denoiser(y_pred)
 
-            # back to (sl, h, w, 2)
-            y_pred = y_pred.permute(0, 2, 3, 1)
+            # # back to 2 channel
+            y_pred = y_pred.permute(0, 2, 3, 1).contiguous()
+            if dim==3:
+                y_pred = torch.squeeze(y_pred)
 
-            # TODO normalization for not-single-slice training
-            if dim==3: # single slice
-                y_pred = torch.squeeze(y_pred)      # (h, w, 2)
+            y_pred = self.lam1[i]*image +self.lam2[i]*y_pred
 
-                # # scale to ~same as truth
-                # y_pred_real = y_pred[...,0].detach()
-                # y_pred_imag = y_pred[...,1].detach()
-                # scale_real = torch.sum(torch.transpose(y_pred_real,0,1) @ image[...,0].detach()) / \
-                #              torch.sum(torch.transpose(y_pred_real,0,1) @ y_pred_real)
-                # scale_imag = torch.sum(torch.transpose(-y_pred_imag, 0,1) @ image[...,0].detach()) / \
-                #              torch.sum(torch.transpose(-y_pred_imag,0,1) @ y_pred_real)
-                # # print(scale_imag.requires_grad)
-                # # print(f'scale real = {scale_real}, scale_imag = {scale_imag}')
-                # y_pred[...,0] *= scale_real
-                # y_pred[..., 1] *= scale_imag
-                # del y_pred_real, y_pred_imag
-
-                # y_pred_max,_ = torch.max(y_pred.detach(), dim=0,keepdim=True)
-                # y_pred_max,_ = torch.max(y_pred_max, dim=1, keepdim=True)
-                # truth_max,_ = torch.max(image.detach(), dim=0, keepdim=True)
-                # truth_max,_ = torch.max(truth_max, dim=1, keepdim=True)
-                # y_pred_min, _ = torch.min(y_pred.detach(), dim=0, keepdim=True)
-                # y_pred_min, _ = torch.min(y_pred_min, dim=1, keepdim=True)
-                # truth_min, _ = torch.min(image.detach(), dim=0, keepdim=True)
-                # truth_min, _ = torch.min(truth_min, dim=1, keepdim=True)
-                #
-                # print(f'y_pred_real max = {y_pred_max[0,0,0]}, y_pred_imag max = {y_pred_max[0,0,1]}')
-                # print(f'truth_real max = {truth_max[0, 0, 0]}, truth_imag max = {truth_max[0, 0, 1]}')
-                # print(f'y_pred_real min = {y_pred_min[0, 0, 0]}, y_pred_imag min = {y_pred_min[0, 0, 1]}')
-                # print(f'truth_real min = {truth_min[0, 0, 0]}, truth_imag min = {truth_min[0, 0, 1]}')
-                # del y_pred_max, y_pred_min, truth_max, truth_min
         return y_pred
 
 
