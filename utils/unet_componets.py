@@ -380,7 +380,7 @@ class UNet2D(nn.Module):
             or BCEWithLogitsLoss (two-class) respectively)
         f_maps (int, tuple): number of feature maps at each level of the encoder; if it's an integer the number
             of feature maps is given by the geometric progression: f_maps ^ k, k=1,2,3,4
-        final_sigmoid (bool): if True apply element-wise nn.Sigmoid after the
+        final_activation (string): if True apply element-wise nn.Sigmoid after the
             final 1x1 convolution, otherwise apply nn.Softmax. MUST be True if nn.BCELoss (two-class) is used
             to train the model. MUST be False if nn.CrossEntropyLoss (multi-class) is used to train the model.
         layer_order (string): determines the order of layers
@@ -463,7 +463,7 @@ class UNet2D(nn.Module):
 
         # Keep skip to end and also downweight to help training
         #x *= 0.05
-        x += input
+        #x += input
 
         # apply final_activation (i.e. Sigmoid or Softmax) only for prediction. During training the network outputs
         # logits and it's up to the user to normalize it before visualising with tensorboard or computing validation metric

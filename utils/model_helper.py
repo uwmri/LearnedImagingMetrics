@@ -12,6 +12,67 @@ from efficientnet_pytorch import EfficientNet
 from utils.utils import *
 
 
+
+class conv_bn(nn.Module):
+    '''conv ->bn + shortcut -> relu'''
+
+    def __init__(self, Nkernels=64, BN=True):
+        super(conv_bn, self).__init__()
+        self.conv = nn.Conv2d(Nkernels, Nkernels, kernel_size=3, padding=1)
+        self.norm = nn.BatchNorm2d(Nkernels)
+        self.relu = nn.ReLU(inplace=True)
+        self.BN = BN
+
+    def forward(self, x):
+        identity = x
+        x = self.conv(x)
+        if self.BN:
+            x = self.norm(x)
+
+        x = self.relu(x)
+        return x
+
+class L2cnn(nn.Module):
+
+    # ResNet for 2 channel.
+
+    def __init__(self, channel_base = 8, channel_scale = 2):
+
+        super(L2cnn, self).__init__()
+
+        channels = channel_base
+        self.block1 = nn.Sequential(nn.Conv2d( 1, channels, kernel_size=3, padding=1, stride=1),
+                                    nn.BatchNorm2d(channels),
+                                    nn.ReLU(inplace=True),
+                                    nn.AvgPool2d(2))
+
+        self.block2 = nn.Sequential(nn.Conv2d(channels, channels*channel_scale, kernel_size=3, padding=1, stride=1),
+                                    nn.BatchNorm2d(channels*channel_scale),
+                                    nn.ReLU(inplace=True),
+                                    nn.AvgPool2d(2))
+
+        self.block3 = nn.Sequential(nn.Conv2d(channels*channel_scale, channels*channel_scale**2, kernel_size=3, padding=1, stride=1),
+                                    nn.BatchNorm2d(channels*channel_scale**2),
+                                    nn.ReLU(inplace=True),
+                                    nn.AvgPool2d(2))
+
+        self.block4 = nn.Sequential(nn.Conv2d(channels*channel_scale**2, channels*channel_scale**3, kernel_size=3, padding=1, stride=1),
+                                    nn.BatchNorm2d(channels*channel_scale**3),
+                                    nn.ReLU(inplace=True),
+                                    nn.AvgPool2d(2))
+    def forward(self, x):
+        x = torch.square(x)
+        x = torch.sum(x, dim=-3, keepdim=True)
+        x = torch.sqrt(x)
+        x = self.block1(x)
+        x = self.block2(x)
+        x = self.block3(x)
+        x = self.block4(x)
+        x = torch.reshape(x,(x.shape[0],-1))
+        score = torch.sum( x, dim=1)
+        return score
+
+
 class ResNet2(nn.Module):
 
     # ResNet for 2 channel.

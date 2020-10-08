@@ -250,6 +250,8 @@ def sneakpeek(dataset, Ncoils=20):
 
 # MSE loss
 def mseloss_fcn(output, target):
+    output = crop_im(output)
+    target = crop_im(target)
     loss = torch.mean((output - target) ** 2)
     return loss
 
@@ -293,12 +295,14 @@ def learnedloss_fcn(output, target, scoreModel):
     delta = 0
 
     for sl in range(Nslice):
-        print(sl)
+        #print(sl)
         output_sl = torch.unsqueeze(output[sl],0)
         target_sl = torch.unsqueeze(target[sl],0)   # (1,3,396,396)
-        delta_sl = torch.mean((scoreModel((output_sl - target_sl)) - scoreModel(target_sl)).abs_())
+        #delta_sl = torch.mean((scoreModel((output_sl - target_sl)) - scoreModel(target_sl-target_sl)).abs_())
+        delta_sl = 1000.0 + torch.mean((scoreModel((output_sl - target_sl))))
+
         delta += delta_sl
-        torch.cuda.empty_cache()
+        #torch.cuda.empty_cache()
     delta /= Nslice
 
     return delta
@@ -581,7 +585,6 @@ class Projector(nn.Module):
 
         return x
 
-
 class Bottleneck(nn.Module):
 
     def __init__(self, type, inplanes, stride):
@@ -718,13 +721,16 @@ class MoDL(nn.Module):
 
         self.inner_iter = inner_iter
         self.scale_layers = nn.Parameter(scale_init*torch.ones([inner_iter]), requires_grad=True)
-        self.scale_denoise = nn.Parameter(0.9 * torch.ones([inner_iter]), requires_grad=True)
-        self.lam = nn.Parameter(torch.ones([inner_iter]), requires_grad=True)
-        self.denoiser = UNet2D(2, 2, final_activation='none', f_maps=4, layer_order='cr', num_groups=2)
-        # self.denoiser = CNN_shortcut()
+        self.lam1 = nn.Parameter(1.0*torch.ones([inner_iter]), requires_grad=True)
+        self.lam2 = nn.Parameter(0.05*torch.ones([inner_iter]), requires_grad=True)
+
+
+        # Options for UNET
+        #self.denoiser = UNet2D(2, 2, final_activation='none', f_maps=8, layer_order='cr', num_groups=4)
+        self.denoiser = CNN_shortcut()
         # self.denoiser = Projector(ENC=False)
 
-    def forward(self, x, encoding_op, decoding_op, image):
+    def forward(self, kspace, encoding_op, decoding_op, image):
 
 
         # Initial guess
@@ -739,33 +745,30 @@ class MoDL(nn.Module):
             # Steepest descent
 
             # Ex
-
             Ex = encoding_op.apply(image)      # For slice by slice:(20, 768, 396, 2) or by case:([slice, 20, 768, 396, 2])
 
             # Ex - d
             Ex -= kspace
 
-            # alpha * E.H *(Ex - d + lambda * image)
-            # print(f'step is {self.scale_layers[i]}')
-            # print(f'lambda is {self.lam[i]}')
+            # image = image - scale*E.H*(Ex-d)
+            image = image - self.scale_layers[i] * decoding_op.apply(Ex)   # (768, 396, 2)
 
-            y_pred = image - self.scale_layers[i] * decoding_op.apply(Ex)   # (768, 396, 2)
-      
+            y_pred = image
             dim = y_pred.ndim
             if dim ==3:
                 y_pred = torch.unsqueeze(y_pred,0)
 
-            y_pred = y_pred.permute(0, -1, 1, 2)
+            y_pred = y_pred.permute(0, -1, 1, 2).contiguous()
            
-            # denoised
+            # UNet donoise
             y_pred = self.denoiser(y_pred)
 
             # # back to 2 channel
-
-            y_pred = y_pred.permute(0, 2, 3, 1)
+            y_pred = y_pred.permute(0, 2, 3, 1).contiguous()
             if dim==3:
                 y_pred = torch.squeeze(y_pred)
 
+            y_pred = self.lam1[i]*image +self.lam2[i]*y_pred
         return y_pred
 
 
