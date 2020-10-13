@@ -42,15 +42,17 @@ else:
     filepath_train = Path("I:/NYUbrain")
     filepath_val = Path("I:/NYUbrain")
 
-    # filepath_rankModel = Path('E:\ImagePairs_Pack_04032020')
-    # filepath_train = Path("E:/")
-    # filepath_val = Path("E:/")
+
     log_dir = Path('I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020')
 
+
 Ntrial = 2.70
+
 logging.basicConfig(filename=os.path.join(log_dir,f'Recon_{Ntrial}.log'), filemode='w', level=logging.INFO)
 
-file_rankModel = os.path.join(filepath_rankModel, "RankClassifier16.pt")
+#file_rankModel = os.path.join(filepath_rankModel, "RankClassifier16.pt")
+file_rankModel = os.path.join(filepath_rankModel, "RankClassifier22_231.pt")
+
 os.chdir(filepath_rankModel)
 
 classifier = Classifier()
@@ -79,9 +81,15 @@ smap_type = 'smap16'
 Ncoils = 20
 xres = 768
 yres = 396
-acc = 0
+
+acc = 16
 print(f'Acceleration = {acc}')
 # fixed sampling mask
+
+import torchsummary
+torchsummary.summary(score, (3,xres,yres))
+
+
 
 WHICH_MASK='poisson'
 if WHICH_MASK=='poisson':
@@ -101,7 +109,7 @@ mask_gpu = sp.to_device(mask, spdevice)
 
 # Data generator
 BATCH_SIZE = 1
-prefetch_data = False
+prefetch_data = True
 logging.info(f'Load train data from {filepath_train}')
 trainingset = DataGeneratorRecon(filepath_train, scans_train, file_train, mask, data_type=smap_type)
 loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=True)
@@ -222,6 +230,7 @@ for epoch in range(Nepoch):
         prefetcher = DataIterator(loader_T)
 
     smaps, im, kspaceU = prefetcher.next()
+
     i = 0
     tstart_batch = time.time()
     loss_mse = []
@@ -230,9 +239,16 @@ for epoch in range(Nepoch):
     while kspaceU is not None:
         i += 1
 
+
+        # smaps is cupy/numpy [1, slice, coil, 768, 396]
+        # im is on torch, ([16, 396, 396, 2])
+        # kspaceU is on torch ([16, 20, 768, 396, 2])
+
+
         # smaps is torch tensor on cpu [1, slice, coil, 768, 396, 2] (both prefetcher and iterator)
         # im is on cuda, ([16, 396, 396, 2]) or on cuda [1, slice, 768, 396, 2] if DataIterator
         # kspaceU is on cpu ([1, 16, 20, 768, 396, 2]) or on cpu [1, slice, coil, 768, 396, 2] if DataIterator
+
         smaps = sp.to_device(smaps, device=spdevice)
         kspaceU = sp.to_device(kspaceU, device=spdevice)
 
@@ -241,6 +257,10 @@ for epoch in range(Nepoch):
         kspaceU = chan2_complex(kspaceU)
 
         im = torch.squeeze(im)
+
+        kspaceU = sp.to_pytorch(kspaceU, requires_grad=False)
+
+        im = torch.squeeze(im, dim=0)
 
         # seems jsense and espirit wants (coil,h,w), can't do (sl, coil, h, w)
         redo_smaps = False
@@ -264,7 +284,7 @@ for epoch in range(Nepoch):
                 t_sl = time.time()
                 smaps_sl = smaps[sl]                                # ndarray on cuda (20, 768, 396), complex64
                 im_sl = im[sl]                                      # tensor on cuda (768, 396, 2)
-                kspaceU_sl = kspaceU[sl]                            # tensor on cuda (20, 768, 396, 2)
+                kspaceU_sl = kspaceU[sl]
                 with spdevice:
                     A = sp.mri.linop.Sense(smaps_sl, coil_batch_size=None, weights=mask_gpu)
                     Ah = A.H
@@ -274,14 +294,16 @@ for epoch in range(Nepoch):
                 A_torch = sp.to_pytorch_function(A, input_iscomplex=True, output_iscomplex=True)
                 Ah_torch = sp.to_pytorch_function(Ah, input_iscomplex=True, output_iscomplex=True)
 
-                # initial guess
+
                 imEst = 0.0 * sp.to_pytorch(Ah * kspaceU_sl, requires_grad=False)
+
 
                 t = time.time()
                 kspaceU_sl = sp.to_pytorch(kspaceU_sl)
                 optimizer.zero_grad()
 
                 for inner_iter in range(INNER_ITER):
+
                     imEst2 = ReconModel(imEst, kspaceU_sl, A_torch, Ah_torch)    # (768, 396, 2)
 
 
@@ -316,7 +338,9 @@ for epoch in range(Nepoch):
                     loss = loss_temp
                     del loss_temp
                     loss.backward(retain_graph=True)
+                    train_avg.update(loss.item(), BATCH_SIZE)
                     imEst = imEst2
+
                     del imEst2
 
                 # y_pred_max, _ = torch.max(imEst.detach(), dim=0, keepdim=True)
@@ -368,9 +392,10 @@ for epoch in range(Nepoch):
             im_iter = []
             im_grad = []
 
-            kspaceU = sp.to_pytorch(kspaceU)
 
-
+            kspaceU = sp.to_pytorch(kspaceU, requires_grad=False)
+            
+            
             t = time.time()
             optimizer.zero_grad()
             for inner_iter in range(INNER_ITER):
@@ -387,6 +412,8 @@ for epoch in range(Nepoch):
                     torch.cuda.empty_cache()
 
                 loss.backward(retain_graph=True)
+                train_avg.update(loss.item(), n=BATCH_SIZE)
+
                 imEst = imEst2
                 im_iter.append( imEst.cpu().detach().numpy())
                 im_iter.append( imEst.cpu().detach().numpy())
@@ -416,7 +443,9 @@ for epoch in range(Nepoch):
             if epoch%10 == 0:
                 logging.info(f'Inner iteration took {time.time()-t}s')
 
+
         train_avg.update(loss.item(), n=BATCH_SIZE)
+
 
 
         if i % 4 ==0 :
@@ -460,13 +489,14 @@ for epoch in range(Nepoch):
         smaps = chan2_complex(spdevice.xp.squeeze(smaps))
         Nslices = smaps.shape[0]
 
+        kspaceU = sp.to_pytorch(kspaceU, requires_grad=False)
+
         if ifSingleSlice:
             loss_temp = 0
             for sl in range(smaps.shape[0]):
                 smaps_sl = smaps[sl]
                 im_sl = im[sl]
                 kspaceU_sl = kspaceU[sl]
-
                 with spdevice:
                     A = sp.mri.linop.Sense(smaps_sl, coil_batch_size=None, weights=mask_gpu)
                     Ah = A.H
@@ -525,8 +555,10 @@ for epoch in range(Nepoch):
                             loss_temp = learnedloss_fcn(imEst2, im_sl, score)
                     loss = loss_temp
                     imEst = imEst2
+
                     del imEst2, loss_temp
                 eval_avg.update(loss.item(), n=BATCH_SIZE)
+
 
                 if i == 1 and sl == 4:
                     truthplt = torch.abs(chan2_complex(im_sl.cpu()))
@@ -580,7 +612,8 @@ for epoch in range(Nepoch):
 
             imEst = 0.0 * sp.to_pytorch(SENSEH * kspaceU, requires_grad=False)
 
-            kspaceU = sp.to_pytorch(kspaceU)
+            kspaceU = sp.to_pytorch(kspaceU, requires_grad=False)
+
             # forward
             for inner_iter in range(INNER_ITER):
                 imEst2 = ReconModel(imEst, kspaceU, SENSE_torch, SENSEH_torch)
@@ -629,8 +662,10 @@ for epoch in range(Nepoch):
 
         smaps, im, kspaceU = prefetcher.next()
 
-    logging.info(f'epoch {epoch} took {(time.time() - tt)/60} min')
-    torch.cuda.empty_cache()
+
+    logging.info(f'epoch {epoch} took {(time.time() - tt)/60} min, Loss train = {train_avg.avg()}, Loss eval = {eval_avg.avg()}')
+    #torch.cuda.empty_cache()
+
     writer_val.add_scalar('Loss', eval_avg.avg(), epoch)
     writer_train.add_scalar('Loss', train_avg.avg(), epoch)
 
