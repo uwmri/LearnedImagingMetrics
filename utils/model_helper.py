@@ -61,7 +61,8 @@ class L2cnn(nn.Module):
                                     nn.ReLU(inplace=True),
                                     nn.AvgPool2d(2))
     def forward(self, x):
-        x = torch.square(x)
+        x = x**2
+        # x = torch.square(x)
         x = torch.sum(x, dim=-3, keepdim=True)
         x = torch.sqrt(x)
         x = self.block1(x)
@@ -69,7 +70,7 @@ class L2cnn(nn.Module):
         x = self.block3(x)
         x = self.block4(x)
         x = torch.reshape(x,(x.shape[0],-1))
-        score = torch.sum( x, dim=1)
+        score = torch.sum(x, dim=1)
         return score
 
 
@@ -355,10 +356,13 @@ class Classifier(nn.Module):
         super(Classifier,self).__init__()
         # self.rank = ResNet2(BasicBlock, [1,1,1,1])
         # self.rank = mobilenet_v2(pretrained=False, num_classes=1)
-        self.rank = EfficientNet.from_pretrained('efficientnet-b0', num_classes=1)
+        # self.rank = EfficientNet.from_pretrained('efficientnet-b0', num_classes=1)
+        self.rank = L2cnn()
+        self.relu6 = nn.ReLU6(inplace=True)
         self.fc1 = nn.Linear(1,8)
         self.fc2 = nn.Linear(8,3)
         self.drop = nn.Dropout(p=0.5)
+        self.relu = nn.ReLU(inplace=True)
 
     def forward(self, image1,image2, trainOnMSE=False):
 
@@ -369,18 +373,21 @@ class Classifier(nn.Module):
 
         else:
             score1 = self.rank(image1)
+            score1 = score1 * self.relu6(score1+3)/6
+
             score2 = self.rank(image2)
-            # print(score2.shape)
+            score2 = score2 * self.relu6(score2 + 3) / 6
+
             score1 = score1.view(score1.shape[0], -1)
             score2 = score2.view(score2.shape[0], -1)
             # print(f'shape of score2 after reshape {score2.shape}')
             d = score1 - score2
-            #print(d.shape)
+        # d shape [BatchSize, 1]
 
-        # print(d.shape)
-        d = torch.tanh(self.fc1(d))
+        d = self.fc1(d)
+        d = self.relu(d)
         d = self.drop(d)
-        d = F.softmax(self.fc2(d))
+        d = F.softmax(self.fc2(d), dim=1)      # (BatchSize, 3)
         return d
 
 

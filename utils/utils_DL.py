@@ -29,10 +29,10 @@ class RunningAcc:
 
     def update(self, value, n=1):
         self.count += n
-        self.sum += value
+        self.sum += value       # sum N batches acc
 
     def avg(self):
-        return self.sum / self.count
+        return self.sum / self.count    # avg acc over batches
 
 
 class RunningAverage:
