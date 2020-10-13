@@ -46,7 +46,8 @@ else:
     log_dir = Path('I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020')
 
 
-Ntrial = 2.54
+Ntrial = 2.70
+
 logging.basicConfig(filename=os.path.join(log_dir,f'Recon_{Ntrial}.log'), filemode='w', level=logging.INFO)
 
 #file_rankModel = os.path.join(filepath_rankModel, "RankClassifier16.pt")

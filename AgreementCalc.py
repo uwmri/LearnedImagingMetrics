@@ -194,6 +194,13 @@ print(f'{percent_agreed*100}% agreement between reviewers')
 
 #
 # Clean up the label
+# ranks_all = pd.concat([ranks_LBE, ranks_ADK, ranks_eh, ranks_JJ], ignore_index=True)
+# ranks_all = ranks_all.sort_values(by=['ID'])
+#
+# # Only keeps duplicated IDs
+# ranks_dup = ranks_all[ranks_all.duplicated(subset=['ID'], keep=False)]
+#
+# ranks_same = ranks_dup[ranks_dup.duplicated(subset=['Better', 'Worse','ID'], keep=False)]
 #
 # # "clean labels", pairs with 2 or more votes + pairs that only appeared once
 # ranks_once = ranks_all.merge(ranks_dup, how='outer', indicator=True).loc[lambda x:x['_merge']=='left_only']
