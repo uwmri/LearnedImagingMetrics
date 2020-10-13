@@ -26,6 +26,7 @@ RESNET = False
 ResumeTrain = False
 
 
+
 # Ranks
 names = []
 root = tk.Tk()
@@ -168,7 +169,7 @@ print(device)
 if MOBILE:
     ranknet = mobilenet_v2(pretrained=False, num_classes=1) # Less than ResNet18
 elif EFF:
-    ranknet = EfficientNet.from_name('efficientnet-b0', num_classes=1)
+    ranknet = EfficientNet.from_pretrained('efficientnet-b0', num_classes=1)
 elif RESNET:
     ranknet = ResNet2(BasicBlock, [2,2,2,2], for_denoise=False)  # Less than ResNet18
 else:
@@ -266,7 +267,7 @@ for epoch in range(Nepoch):
     for i, data in enumerate(loader_T, 0):
 
         # get the inputs
-        im1, im2, labels = data
+        im1, im2, labels = data             # im (sl, 3 , 396, 396)
         im1, im2 = im1.cuda(), im2.cuda()
         labels = labels.to(device, dtype=torch.long)
 

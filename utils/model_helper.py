@@ -499,7 +499,7 @@ class Classifier(nn.Module):
         self.fc2 = nn.Linear(8,3)
         self.drop = nn.Dropout(p=0.5)
 
-    def forward(self, image1,image2, trainOnMSE):
+    def forward(self, image1,image2, trainOnMSE=False):
 
         if trainOnMSE:
             score1 = torch.sum((torch.abs(image1) ** 2), dim=(1, 2, 3)) / (
