@@ -83,12 +83,10 @@ for i in range(NEXAMPLES):
 
     nameT = 'EXAMPLE_%07d_TRUTH' % (i+1)
     name = 'EXAMPLE_%07d_IMAGE_%04d' % (i+1, 0)
-    X_1[i, :, :] = zero_pad2D(np.array(hf[name]), maxMatSize, maxMatSize) - zero_pad2D(np.array(hf[nameT]), maxMatSize,
-                                                                                       maxMatSize)
+    X_1[i, :, :] = zero_pad2D(np.array(hf[name]), maxMatSize, maxMatSize) - zero_pad2D(np.array(hf[nameT]), maxMatSize, maxMatSize)
 
     name = 'EXAMPLE_%07d_IMAGE_%04d' % (i+1, 1)
-    X_2[i, :, :] = zero_pad2D(np.array(hf[name]), maxMatSize, maxMatSize) - zero_pad2D(np.array(hf[nameT]), maxMatSize,
-                                                                                       maxMatSize)
+    X_2[i, :, :] = zero_pad2D(np.array(hf[name]), maxMatSize, maxMatSize) - zero_pad2D(np.array(hf[nameT]), maxMatSize, maxMatSize)
     if i % 1e2 == 0:
         print(f'loading example pairs {i + 1}')
 
@@ -140,14 +138,13 @@ idV = id[ntrain:]
 Labels_cnnT = Labels[:ntrain]
 Labels_cnnV = Labels[ntrain:]
 
-
 # Data generator
 BATCH_SIZE = 16
-trainingset = DataGenerator_rank(X_1, X_2, Labels_cnnT, idT, flip_prob=.2, trans_prob=0.2, rot_prob=0.2)
+trainingset = DataGenerator_rank(X_1, X_2, Labels_cnnT, idT, augmentation=True)
 loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=True)
 
-validationset = DataGenerator_rank(X_1, X_2, Labels_cnnV, idV, flip_prob=0, trans_prob=0, rot_prob=0)
-loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE * 2, shuffle=True)
+validationset = DataGenerator_rank(X_1, X_2, Labels_cnnV, idV, augmentation=False)
+loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=True)
 
 
 # check loader, show a batch
@@ -158,8 +155,8 @@ checkim2 = checkim2.permute(0, 2, 3, 1)
 checklbnp = checklb.numpy()
 
 randnum = np.random.randint(16)
-imshow(checkim1[randnum, :, :, :])
-imshow(checkim2[randnum, :, :, :])
+imshow(checkim1[randnum, :, :, :].cpu())
+imshow(checkim2[randnum, :, :, :].cpu())
 print(f'Label is {checklbnp[randnum]}')
 # print(f'Label is {checktrans[randnum]}')
 # print(f'Label is {checkcrop[randnum]}')
@@ -210,7 +207,7 @@ if ResumeTrain:
     optimizer.load_state_dict(state['optimizer'])
 
 else:
-    classifier = Classifier()
+    classifier = Classifier(ranknet)
 
     if BO:
         best_parameters, values, experiment, model = optimize(
@@ -228,14 +225,15 @@ else:
 
     else:
         #optimizer = optim.SGD(classifier.parameters(), lr=0.001, momentum=0.9)
-        optimizer = optim.Adam(classifier.parameters(), lr=0.001)
+        optimizer = optim.Adam(classifier.parameters(), lr=1e-5)
 
 loss_func = nn.CrossEntropyLoss()
 
 classifier.cuda();
 
 # Training
-Ntrial = 22
+from random import randrange
+Ntrial = randrange(10000)
 # writer = SummaryWriter(f'runs/rank/trial_{Ntrial}')
 writer_train = SummaryWriter(os.path.join(log_dir,f'runs/rank/train_{Ntrial}'))
 writer_val = SummaryWriter(os.path.join(log_dir,f'runs/rank/val_{Ntrial}'))
@@ -280,8 +278,8 @@ for epoch in range(Nepoch):
         train_avg.update(loss.item(), n=BATCH_SIZE)  # here is total loss of all batches
 
         # acc
-        acc = acc_calc(delta, labels)
-        # print(f'Training: acc of minibatch {i} is {acc}')
+        acc = acc_calc(delta, labels, BatchSize=BATCH_SIZE)
+        #print(f'Training: acc of minibatch {i} is {acc}')
         train_acc.update(acc, n=1)
 
         # # every 30 minibatch, show image pairs and predictions
@@ -325,7 +323,7 @@ for epoch in range(Nepoch):
             eval_avg.update(loss.item(), n=BATCH_SIZE)
 
             # acc
-            acc = acc_calc(delta, labels, BatchSize=BATCH_SIZE*2)
+            acc = acc_calc(delta, labels, BatchSize=BATCH_SIZE)
             # print(f'Val: acc of minibatch {i} is {acc}')
             eval_acc.update(acc, n=1)
 

@@ -11,7 +11,9 @@ from efficientnet_pytorch import EfficientNet
 
 from utils.utils import *
 
-
+import torchvision.transforms.functional as TF
+import sigpy as sp
+import math
 
 class conv_bn(nn.Module):
     '''conv ->bn + shortcut -> relu'''
@@ -36,40 +38,82 @@ class L2cnn(nn.Module):
 
     # ResNet for 2 channel.
 
-    def __init__(self, channel_base = 8, channel_scale = 2):
+    def __init__(self, channel_base=32, channel_scale=1):
 
         super(L2cnn, self).__init__()
 
         channels = channel_base
-        self.block1 = nn.Sequential(nn.Conv2d( 1, channels, kernel_size=3, padding=1, stride=1),
-                                    nn.BatchNorm2d(channels),
-                                    nn.ReLU(inplace=True),
-                                    nn.AvgPool2d(2))
+        pool_rate = 2
 
-        self.block2 = nn.Sequential(nn.Conv2d(channels, channels*channel_scale, kernel_size=3, padding=1, stride=1),
-                                    nn.BatchNorm2d(channels*channel_scale),
+        channels_in = 1
+        channels_out = channel_base
+        self.block1 = nn.Sequential(nn.Conv2d( channels_in, channels_out, kernel_size=3, padding=1, stride=1),
+                                    nn.BatchNorm2d(channels_out),
                                     nn.ReLU(inplace=True),
-                                    nn.AvgPool2d(2))
+                                    nn.Conv2d(channels_out, channels_out, kernel_size=3, padding=1, stride=1),
+                                    nn.BatchNorm2d(channels_out),
+                                    nn.ReLU(inplace=True))
+        self.shortcut1 = nn.Sequential(nn.Conv2d( channels_in, channels_out, kernel_size=1, padding=0, stride=1),
+                                    nn.BatchNorm2d(channels_out))
+        self.pool1 = nn.Sequential(nn.ReLU(inplace=True), nn.AvgPool2d(pool_rate))
 
-        self.block3 = nn.Sequential(nn.Conv2d(channels*channel_scale, channels*channel_scale**2, kernel_size=3, padding=1, stride=1),
-                                    nn.BatchNorm2d(channels*channel_scale**2),
+        channels_in = channels_out
+        channels_out = channels_out*channel_scale
+        self.block2 = nn.Sequential(nn.Conv2d( channels_in, channels_out, kernel_size=3, padding=1, stride=1),
+                                    nn.BatchNorm2d(channels_out),
                                     nn.ReLU(inplace=True),
-                                    nn.AvgPool2d(2))
+                                    nn.Conv2d(channels_out, channels_out, kernel_size=3, padding=1, stride=1),
+                                    nn.BatchNorm2d(channels_out),
+                                    nn.ReLU(inplace=True))
+        self.shortcut2 = nn.Sequential(nn.Conv2d( channels_in, channels_out, kernel_size=1, padding=0, stride=1),
+                                    nn.BatchNorm2d(channels_out))
+        self.pool2 = nn.Sequential(nn.ReLU(inplace=True), nn.AvgPool2d(pool_rate))
 
-        self.block4 = nn.Sequential(nn.Conv2d(channels*channel_scale**2, channels*channel_scale**3, kernel_size=3, padding=1, stride=1),
-                                    nn.BatchNorm2d(channels*channel_scale**3),
+        channels_in = channels_out
+        channels_out = channels_out*channel_scale
+        self.block3 = nn.Sequential(nn.Conv2d( channels_in, channels_out, kernel_size=3, padding=1, stride=1),
+                                    nn.BatchNorm2d(channels_out),
                                     nn.ReLU(inplace=True),
-                                    nn.AvgPool2d(2))
+                                    nn.Conv2d(channels_out, channels_out, kernel_size=3, padding=1, stride=1),
+                                    nn.BatchNorm2d(channels_out),
+                                    nn.ReLU(inplace=True))
+        self.shortcut3 = nn.Sequential(nn.Conv2d( channels_in, channels_out, kernel_size=1, padding=0, stride=1),
+                                    nn.BatchNorm2d(channels_out))
+        self.pool3 = nn.Sequential(nn.ReLU(inplace=True), nn.AvgPool2d(pool_rate))
+
+        channels_in = channels_out
+        channels_out = channels_out*channel_scale
+        self.block4 = nn.Sequential(nn.Conv2d( channels_in, channels_out, kernel_size=3, padding=1, stride=1),
+                                    nn.BatchNorm2d(channels_out),
+                                    nn.ReLU(inplace=True),
+                                    nn.Conv2d(channels_out, channels_out, kernel_size=3, padding=1, stride=1),
+                                    nn.BatchNorm2d(channels_out),
+                                    nn.ReLU(inplace=True))
+        self.shortcut4 = nn.Sequential(nn.Conv2d( channels_in, channels_out, kernel_size=1, padding=0, stride=1),
+                                    nn.BatchNorm2d(channels_out))
+        self.pool4 = nn.Sequential(nn.ReLU(inplace=True), nn.AvgPool2d(pool_rate))
+
     def forward(self, x):
         x = torch.square(x)
         x = torch.sum(x, dim=-3, keepdim=True)
         x = torch.sqrt(x)
-        x = self.block1(x)
-        x = self.block2(x)
-        x = self.block3(x)
-        x = self.block4(x)
+
+        x = self.block1(x) + self.shortcut1(x)
+        x = self.pool1(x)
+
+        x = self.block2(x) + self.shortcut2(x)
+        x = self.pool2(x)
+
+        x = self.block3(x) + self.shortcut3(x)
+        x = self.pool3(x)
+
+        x = self.block4(x) + self.shortcut4(x)
+        x = self.pool4(x)
+
         x = torch.reshape(x,(x.shape[0],-1))
+        x = torch.square(x)
         score = torch.sum( x, dim=1)
+
         return score
 
 
@@ -278,68 +322,162 @@ class MobileNetV2_2chan(nn.Module):
         return self._forward_impl(x)
 
 
+
+def sigpy_image_rotate2( image, theta, verbose=False, device=sp.Device(0)):
+    """
+    SIgpy based 2D image rotation
+
+    Args:
+        image (list or array): List of images to rotate, size [ch,nx,nx]
+        theta(float): image rotation
+
+    """
+    device = sp.Device(device)
+    xp = device.xp
+
+    with device:
+
+        # Random rotation
+        r = xp.array([[math.cos(theta), math.sin(theta)],
+                     [-math.sin(theta), math.cos(theta)]], np.float32)
+
+        if verbose:
+            print(f'Rotation = {r}')
+
+        if isinstance(image, list):
+            ny = image[0].shape[1]
+            nx = image[0].shape[2]
+            nch = image[0].shape[0]
+        else:
+            ny = image.shape[1]
+            nx = image.shape[2]
+            nch = image.shape[0]
+
+        # Pad to be account for zero padding
+        pad = int( (nx*0.42) // 2)
+
+        ny_pad = ny + 2 * pad
+        nx_pad = nx + 2 * pad
+
+        cx = nx // 2
+        cy = ny // 2
+        cx_pad = nx_pad // 2
+        cy_pad = ny_pad // 2
+
+        # Rotate the image coordinates
+        y, x = xp.meshgrid(xp.arange(0, ny, dtype=xp.float32),
+                           xp.arange(0, nx, dtype=xp.float32),
+                           indexing='ij')
+
+        #subtract center of coordinates
+        x -= cx
+        y -= cx
+
+        # Rotate the coordinates
+        coord = xp.stack((y, x), axis=-1)
+
+        if verbose:
+            print(f'Coord Shape {coord.shape}')
+
+        coord = xp.expand_dims(coord, -1)
+        coord = xp.matmul(r, coord)
+        coord = xp.squeeze(coord)
+        coord[:, :, 0] += cx_pad
+        coord[:, :, 1] += cy_pad
+
+        # Actual rotation
+        if isinstance(image, list):
+            image_rotated = []
+            for imt in image:
+                xpad = xp.zeros((ny_pad, nx_pad), dtype=xp.float32)
+                xnew = xp.zeros((nch, ny, nx), dtype=xp.float32)
+                for ch in range(nch):
+                    xpad[pad:pad + ny, pad:pad + ny] = imt[ch]
+                    xnew[ch] = sp.interpolate(xpad, coord, kernel='spline', width=2)
+                image_rotated.append(xnew)
+        else:
+            image_rotated = xp.zeros((nch, ny, nx), dtype=xp.float32)
+            xpad = xp.zeros((ny_pad, nx_pad), dtype=xp.float32)
+            for ch in range(nch):
+                xpad[pad:pad + ny, pad:pad + ny] = image[ch]
+                image_rotated[ch] = sp.interpolate(xpad, coord, kernel='spline', width=2)
+
+    return image_rotated
+
+
+
 class DataGenerator_rank(Dataset):
-    def __init__(self, X_1, X_2, Y, ID, flip_prob, trans_prob, rot_prob,  roll_magL=1, roll_magH=15,
-                 crop_sizeL=1, crop_sizeH=15):
+    def __init__(self, X_1, X_2, Y, ID, augmentation=False,  roll_magL=-15, roll_magH=15,
+                 crop_sizeL=1, crop_sizeH=15, device=sp.Device(0)):
 
         '''
         :param X_1: X_1_cnnT/V
         :param X_2: X_2_cnnT/V
         :param Y: labels
         :param transform
-        :param flip_prob: prob of getting flipped (50% horizontal/vertical)
+        :param augmentation: on/off
         '''
         self.X_1 = X_1
         self.X_2 = X_2
         self.Y = Y
         self.ID = ID
-        self.flip_prob = flip_prob
+        self.augmentation = augmentation
 
-        self.trans_prob = trans_prob
         self.roll_magL = roll_magL
         self.roll_magH = roll_magH
 
-        self.rot_prob = rot_prob
         self.crop_sizeL = crop_sizeL
         self.crop_sizeH = crop_sizeH
+        self.device = device
 
     def __len__(self):
         return len(self.ID)
 
     def __getitem__(self, idx):
 
-        FLIP = np.ndarray.item(np.random.choice([False, True], size=1, p=[1 - self.flip_prob, self.flip_prob]))
-        ROLL = np.ndarray.item(np.random.choice([False, True], size=1, p=[1 - self.trans_prob, self.trans_prob]))
-        ROT = np.ndarray.item(np.random.choice([False, True], size=1, p=[1 - self.rot_prob, self.rot_prob]))
+        if self.augmentation:
+            FLIP = np.ndarray.item(np.random.choice([False, True], size=1, p=[0.5, 0.5]))
+            ROT = True
+            ROLL = True
+        else:
+            FLIP = False
+            ROT = False
+            ROLL = False
 
         IDnum = self.ID[idx]
 
         x1 = self.X_1[IDnum,...]
         x2 = self.X_2[IDnum,...]
 
+        # Push to GPU
+        x1 = sp.to_device(x1, self.device)
+        x2 = sp.to_device(x2, self.device)
+
+        # Rotation
         if ROT:
-            angle = np.random.randint(1,359)
-            x1 = ndimage.rotate(x1, angle, (1, 2), mode='constant', cval=0.0, reshape=False)
-            x2 = ndimage.rotate(x2, angle, (1, 2), mode='constant', cval=0.0, reshape=False)
+            angle = math.pi*(1- 2.0*np.random.rand())
+            x1, x2 = sigpy_image_rotate2( [x1,x2], angle, device=self.device)
 
-        x1 = torch.from_numpy(x1)
-        x2 = torch.from_numpy(x2)
+        xp = self.device.xp
 
-
+        # flip
         if FLIP:
             flip_axis = np.ndarray.item(np.random.choice([0, 1], size=1, p=[0.5, 0.5]))
-            x1 = torch.flip(x1, dims=[flip_axis, ])
-            x2 = torch.flip(x2, dims=[flip_axis, ])
+            x1 = xp.flip(x1, flip_axis)
+            x2 = xp.flip(x2, flip_axis)
 
         if ROLL:
             roll_magLR = np.random.randint(self.roll_magL,self.roll_magH)
             roll_magUD = np.random.randint(self.roll_magL, self.roll_magH)
 
-            x1 = torch.roll(x1, (roll_magLR,roll_magUD),(1,2))
-            x2 = torch.roll(x1, (roll_magLR,roll_magUD),(1,2))
+            x1 = xp.roll(x1, (roll_magLR,roll_magUD),(0,1))
+            x2 = xp.roll(x2, (roll_magLR,roll_magUD),(0,1))
+
+        x1 = sp.to_pytorch(x1, requires_grad=False)
+        x2 = sp.to_pytorch(x2, requires_grad=False)
 
         # make images 3 channel.
-        zeros = torch.zeros(((1,) + x1.shape[1:]), dtype=x1.dtype)
+        zeros = torch.zeros(((1,) + x1.shape[1:]), dtype=x1.dtype, device=x1.get_device())
         x1 = torch.cat((x1, zeros), dim=0)
         x2 = torch.cat((x2, zeros), dim=0)
 
@@ -351,11 +489,12 @@ class DataGenerator_rank(Dataset):
 
 class Classifier(nn.Module):
 
-    def __init__(self):
+    def __init__(self, rank):
         super(Classifier,self).__init__()
         # self.rank = ResNet2(BasicBlock, [1,1,1,1])
         # self.rank = mobilenet_v2(pretrained=False, num_classes=1)
-        self.rank = EfficientNet.from_pretrained('efficientnet-b0', num_classes=1)
+        # self.rank = EfficientNet.from_pretrained('efficientnet-b0', num_classes=1)
+        self.rank = rank
         self.fc1 = nn.Linear(1,8)
         self.fc2 = nn.Linear(8,3)
         self.drop = nn.Dropout(p=0.5)
@@ -363,19 +502,20 @@ class Classifier(nn.Module):
     def forward(self, image1,image2, trainOnMSE):
 
         if trainOnMSE:
-            d = torch.sum((torch.abs(image1-image2)**2),dim=(1,2,3))/(image1.shape[1]*image1.shape[2]*image1.shape[3])
-            d = torch.unsqueeze(d, 1)
-            #print(d.shape)
-
+            score1 = torch.sum((torch.abs(image1) ** 2), dim=(1, 2, 3)) / (
+                        image1.shape[1] * image1.shape[2] * image1.shape[3])
+            score2 = torch.sum((torch.abs(image2) ** 2), dim=(1, 2, 3)) / (
+                        image1.shape[1] * image1.shape[2] * image1.shape[3])
         else:
             score1 = self.rank(image1)
             score2 = self.rank(image2)
-            # print(score2.shape)
-            score1 = score1.view(score1.shape[0], -1)
-            score2 = score2.view(score2.shape[0], -1)
-            # print(f'shape of score2 after reshape {score2.shape}')
-            d = score1 - score2
-            #print(d.shape)
+
+        # print(score2.shape)
+        score1 = score1.view(score1.shape[0], -1)
+        score2 = score2.view(score2.shape[0], -1)
+        # print(f'shape of score2 after reshape {score2.shape}')
+        d = score1 - score2
+        #print(d.shape)
 
         # print(d.shape)
         d = torch.tanh(self.fc1(d))
