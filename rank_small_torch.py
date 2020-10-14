@@ -28,7 +28,7 @@ BO = False
 RESNET = False
 ResumeTrain = False
 
-trainScoreandMSE = False    # train score based classifier and mse(im1)-mse(im2) based classifier at the same time
+trainScoreandMSE = True    # train score based classifier and mse(im1)-mse(im2) based classifier at the same time
 
 
 # Ranks
@@ -75,8 +75,8 @@ if train_on_mag:
 else:
     nch = 2
 
-X_1 = np.zeros((NEXAMPLES, maxMatSize, maxMatSize,nch), dtype=np.float32)  # saved as complex128 though
-X_2 = np.zeros((NEXAMPLES, maxMatSize, maxMatSize,nch), dtype=np.float32)
+X_1 = np.zeros((NEXAMPLES, maxMatSize, maxMatSize, nch), dtype=np.float32)  # saved as complex128 though
+X_2 = np.zeros((NEXAMPLES, maxMatSize, maxMatSize, nch), dtype=np.float32)
 # X_T = np.zeros((NEXAMPLES, maxMatSize, maxMatSize),dtype=np.complex64)
 Labels = np.zeros(NRANKS, dtype=np.int32)
 
@@ -244,7 +244,8 @@ if ResumeTrain:
 
     if trainScoreandMSE:
         file_rankModelMSE = os.path.join(filepath_rankModel, "RankClassifier15_MSE.pt")
-        classifierMSE = Classifier()
+        mse_module = MSEmodule()
+        classifierMSE = Classifier(mse_module)
         stateMSE = torch.load(file_rankModelMSE)
         classifier.load_state_dict(stateMSE['state_dict'], strict=True)
         optimizerMSE = optim.SGD(classifier.parameters(), lr=0.00097, momentum=0.556)
@@ -254,7 +255,8 @@ else:
 
     classifier = Classifier(ranknet)
     if trainScoreandMSE:
-        classifierMSE = Classifier(ranknet)
+        mse_module = MSEmodule()              
+        classifierMSE = Classifier(mse_module)
 
     if BO:
         best_parameters, values, experiment, model = optimize(
@@ -285,9 +287,9 @@ else:
 loss_func = nn.CrossEntropyLoss()
 
 
-classifier.cuda();
+classifier.cuda()
 if trainScoreandMSE:
-    classifierMSE.cuda();
+    classifierMSE.cuda()
 
 
 # Training
@@ -352,7 +354,7 @@ for epoch in range(Nepoch):
         im1, im2 = im1.cuda(), im2.cuda()
         labels = labels.to(device, dtype=torch.long)
         # classifier
-        delta = classifier(im1, im2, trainOnMSE=False)
+        delta = classifier(im1, im2)
 
         # loss
         loss = loss_func(delta, labels)
@@ -377,7 +379,7 @@ for epoch in range(Nepoch):
 
         # train on MSE
         if trainScoreandMSE:
-            deltaMSE = classifierMSE(im1, im2, trainOnMSE=True)
+            deltaMSE = classifierMSE(im1, im2)
             lossMSE = loss_func(deltaMSE, labels)
             train_avgMSE.update(lossMSE.item(), n=BATCH_SIZE)  # here is total loss of all batches
 
@@ -443,7 +445,7 @@ for epoch in range(Nepoch):
             labels = labels.to(device, dtype=torch.long)
 
             # forward
-            delta = classifier(im1, im2, trainOnMSE=False)
+            delta = classifier(im1, im2)
 
             # loss
             loss = loss_func(delta, labels)
@@ -472,7 +474,7 @@ for epoch in range(Nepoch):
 
             # mse-based classifier
             if trainScoreandMSE:
-                deltaMSE = classifierMSE(im1, im2, trainOnMSE=True)
+                deltaMSE = classifierMSE(im1, im2)
                 lossMSE = loss_func(deltaMSE, labels)
                 eval_avgMSE.update(lossMSE.item(), n=BATCH_SIZE)
 
@@ -503,7 +505,8 @@ for epoch in range(Nepoch):
 
     #print('Epoch = %d : Loss Eval = %f , Loss Train = %f' % (epoch, eval_avg.avg(), train_avg.avg()))
     print(f'Epoch = {epoch:03d}, Loss = {eval_avg.avg()}, Loss train = {train_avg.avg()}, Acc = {eval_acc.avg()}, Acc train = {train_acc.avg()}')
-    print(f'        MSE: Loss = {eval_avgMSE.avg()}, Loss train = {train_avgMSE.avg()}, Acc = {eval_accMSE.avg()}, Acc train = {train_accMSE.avg()}')
+    if trainScoreandMSE:
+        print(f'        MSE: Loss = {eval_avgMSE.avg()}, Loss train = {train_avgMSE.avg()}, Acc = {eval_accMSE.avg()}, Acc train = {train_accMSE.avg()}')
     lossT[epoch] = train_avg.avg()
     lossV[epoch] = eval_avg.avg()
 
