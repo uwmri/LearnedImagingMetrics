@@ -19,12 +19,15 @@ from utils.model_helper import *
 from utils.utils_DL import *
 
 subtract_truth = True
+include_unsubtracted = True
+train_on_mag = True
 shuffle_observers = True
 MOBILE = False
 EFF = False
 BO = False
 RESNET = False
 ResumeTrain = False
+
 trainScoreandMSE = False    # train score based classifier and mse(im1)-mse(im2) based classifier at the same time
 
 
@@ -65,8 +68,15 @@ maxMatSize = 396  # largest matrix size seems to be 396
 NEXAMPLES = 2920
 NRANKS = ranks.shape[0]
 
-X_1 = np.zeros((NEXAMPLES, maxMatSize, maxMatSize,2), dtype=np.float32)  # saved as complex128 though
-X_2 = np.zeros((NEXAMPLES, maxMatSize, maxMatSize,2), dtype=np.float32)
+if train_on_mag:
+    nch = 1
+    if include_unsubtracted:
+        nch += 1
+else:
+    nch = 2
+
+X_1 = np.zeros((NEXAMPLES, maxMatSize, maxMatSize,nch), dtype=np.float32)  # saved as complex128 though
+X_2 = np.zeros((NEXAMPLES, maxMatSize, maxMatSize,nch), dtype=np.float32)
 # X_T = np.zeros((NEXAMPLES, maxMatSize, maxMatSize),dtype=np.complex64)
 Labels = np.zeros(NRANKS, dtype=np.int32)
 
@@ -83,11 +93,31 @@ log_dir = tk.filedialog.askdirectory(title='Choose log dir')
 for i in range(NEXAMPLES):
 
     nameT = 'EXAMPLE_%07d_TRUTH' % (i+1)
-    name = 'EXAMPLE_%07d_IMAGE_%04d' % (i+1, 0)
-    X_1[i, :, :] = zero_pad2D(np.array(hf[name]), maxMatSize, maxMatSize) - zero_pad2D(np.array(hf[nameT]), maxMatSize, maxMatSize)
+    name1 = 'EXAMPLE_%07d_IMAGE_%04d' % (i+1, 0)
+    name2 = 'EXAMPLE_%07d_IMAGE_%04d' % (i+1, 1)
 
-    name = 'EXAMPLE_%07d_IMAGE_%04d' % (i+1, 1)
-    X_2[i, :, :] = zero_pad2D(np.array(hf[name]), maxMatSize, maxMatSize) - zero_pad2D(np.array(hf[nameT]), maxMatSize, maxMatSize)
+    im1 = zero_pad2D(np.array(hf[name1]), maxMatSize, maxMatSize)
+    im2 = zero_pad2D(np.array(hf[name2]), maxMatSize, maxMatSize)
+    truth = zero_pad2D(np.array(hf[nameT]), maxMatSize, maxMatSize)
+
+    if subtract_truth:
+        if train_on_mag:
+            X_1[i, :, :, 0] = np.sqrt(np.sum(np.square(im1 - truth), axis=-1))
+            X_2[i, :, :, 0] = np.sqrt(np.sum(np.square(im2 - truth), axis=-1))
+            if include_unsubtracted:
+                X_1[i, :, :, 1] = np.sqrt(np.sum(np.square(im1), axis=-1))
+                X_2[i, :, :, 1] = np.sqrt(np.sum(np.square(im2), axis=-1))
+        else:
+            if train_on_mag:
+                X_1[i, :, :, 0] = np.sqrt(np.sum(np.square(im1 - truth), axis=-1))
+                X_2[i, :, :, 0] = np.sqrt(np.sum(np.square(im2 - truth), axis=-1))
+            else:
+                X_1[i, :, :] = im1 - truth
+                X_2[i, :, :] = im2 - truth
+    else:
+        X_1[i, :, :] = im1
+        X_2[i, :, :] = im2
+
     if i % 1e2 == 0:
         print(f'loading example pairs {i + 1}')
 
@@ -175,7 +205,7 @@ elif RESNET:
 else:
     ranknet = L2cnn()
 
-torchsummary.summary(ranknet, (3, maxMatSize, maxMatSize), device="cpu")
+torchsummary.summary(ranknet, (X_1.shape[-3], maxMatSize, maxMatSize), device="cpu")
 
 
 # Bayesian
@@ -200,6 +230,11 @@ if ResumeTrain:
     root.withdraw()
     filepath_rankModel = tk.filedialog.askdirectory(title='Choose where the saved metric model is')
     file_rankModel = os.path.join(filepath_rankModel, "RankClassifier15.pt")
+    classifier = Classifier(ranknet)
+    if trainScoreandMSE:
+        file_rankModelMSE = os.path.join(filepath_rankModel, "RankClassifier15_MSE.pt")   
+        classifierMSE = Classifier(ranknet)
+
 
     classifier = Classifier()
     state = torch.load(file_rankModel)
@@ -249,9 +284,11 @@ else:
 
 loss_func = nn.CrossEntropyLoss()
 
+
 classifier.cuda();
 if trainScoreandMSE:
     classifierMSE.cuda();
+
 
 # Training
 
@@ -329,8 +366,8 @@ for epoch in range(Nepoch):
         # # every 30 minibatch, show image pairs and predictions
         # if i % 30 == 0:
         #     writer.add_figure()
-        if i % 30 == 0:
-            print(train_acc.avg())
+        #if i % 30 == 0:
+        #    print(train_acc.avg())
 
         # zero the parameter gradients, backward and update
         optimizer.zero_grad()
@@ -348,8 +385,10 @@ for epoch in range(Nepoch):
             accMSE = acc_calc(deltaMSE, labels)
             train_accMSE.update(accMSE, n=1)
 
-            if i % 30 == 0:
-                print(f'Acc trained on mse {train_accMSE.avg()}')
+
+#             if i % 30 == 0:
+#                 print(f'Acc trained on mse {train_accMSE.avg()}')
+
 
             # zero the parameter gradients, backward and update
             optimizerMSE.zero_grad()
@@ -463,7 +502,8 @@ for epoch in range(Nepoch):
         # accV[epoch] = 100 * correct / total
 
     #print('Epoch = %d : Loss Eval = %f , Loss Train = %f' % (epoch, eval_avg.avg(), train_avg.avg()))
-    print(f'Epoch = {epoch}, Loss = {eval_avg.avg()}, Loss train = {train_avg.avg()}, Acc = {eval_acc.avg()}, Acc train = {train_acc.avg()}')
+    print(f'Epoch = {epoch:03d}, Loss = {eval_avg.avg()}, Loss train = {train_avg.avg()}, Acc = {eval_acc.avg()}, Acc train = {train_acc.avg()}')
+    print(f'        MSE: Loss = {eval_avgMSE.avg()}, Loss train = {train_avgMSE.avg()}, Acc = {eval_accMSE.avg()}, Acc train = {train_accMSE.avg()}')
     lossT[epoch] = train_avg.avg()
     lossV[epoch] = eval_avg.avg()
 
