@@ -114,8 +114,8 @@ class L2cnn(nn.Module):
         x = torch.reshape(x,(x.shape[0],-1))
 
         x = x**2
-        score = torch.sum( x, dim=1)
-
+        score = torch.sum(x, dim=1)
+        score = torch.abs(score)
 
         return score
 
@@ -513,20 +513,23 @@ class Classifier(nn.Module):
                         image1.shape[1] * image1.shape[2] * image1.shape[3])
             score2 = torch.sum((torch.abs(image2) ** 2), dim=(1, 2, 3)) / (
                         image1.shape[1] * image1.shape[2] * image1.shape[3])
-
-            score1 = torch.unsqueeze(score1, -1)
-            score2 = torch.unsqueeze(score2, -1)
+           
 
         else:
             score1 = self.rank(image1)
+            #score1 = torch.abs(score1)
             #score1 = score1 * self.relu6(score1+3)/6
 
             score2 = self.rank(image2)
+            #score2 = torch.abs(score2)
             #score2 = score2 * self.relu6(score2 + 3) / 6
 
-            score1 = score1.view(score1.shape[0], -1)
-            score2 = score2.view(score2.shape[0], -1)
-            # print(f'shape of score2 after reshape {score2.shape}')
+        score1 = score1.view(score1.shape[0], -1)
+        score2 = score2.view(score2.shape[0], -1)
+        # print(f'shape of score2 after reshape {score2.shape}')
+        d = score1 - score2
+        # d shape [BatchSize, 1]
+
 
         # Feed difference
         d = score1 - score2
