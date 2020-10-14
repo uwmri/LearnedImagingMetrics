@@ -115,7 +115,7 @@ class L2cnn(nn.Module):
 
         x = x**2
         score = torch.sum(x, dim=1)
-        score = torch.abs(score)
+        # score = torch.abs(score)
 
         return score
 
@@ -411,7 +411,7 @@ def sigpy_image_rotate2( image, theta, verbose=False, device=sp.Device(0)):
 
 class DataGenerator_rank(Dataset):
     def __init__(self, X_1, X_2, Y, ID, augmentation=False,  roll_magL=-15, roll_magH=15,
-                 crop_sizeL=1, crop_sizeH=15, device=sp.Device(0)):
+                 crop_sizeL=1, crop_sizeH=15, device=sp.Device(0), singleChannel=True):
 
         '''
         :param X_1: X_1_cnnT/V
@@ -432,6 +432,7 @@ class DataGenerator_rank(Dataset):
         self.crop_sizeL = crop_sizeL
         self.crop_sizeH = crop_sizeH
         self.device = device
+        self.singleChannel = singleChannel
 
     def __len__(self):
         return len(self.ID)
@@ -480,9 +481,10 @@ class DataGenerator_rank(Dataset):
         x2 = sp.to_pytorch(x2, requires_grad=False)
 
         # make images 3 channel.
-        zeros = torch.zeros(((1,) + x1.shape[1:]), dtype=x1.dtype, device=x1.get_device())
-        x1 = torch.cat((x1, zeros), dim=0)
-        x2 = torch.cat((x2, zeros), dim=0)
+        if not self.singleChannel:
+            zeros = torch.zeros(((1,) + x1.shape[1:]), dtype=x1.dtype, device=x1.get_device())
+            x1 = torch.cat((x1, zeros), dim=0)
+            x2 = torch.cat((x2, zeros), dim=0)
 
         y = self.Y[idx]
 
@@ -516,11 +518,11 @@ class Classifier(nn.Module):
         else:
             score1 = self.rank(image1)
             #score1 = torch.abs(score1)
-            #score1 = score1 * self.relu6(score1+3)/6
+            score1 = score1 * self.relu6(score1+3)/6 + 1
 
             score2 = self.rank(image2)
             #score2 = torch.abs(score2)
-            #score2 = score2 * self.relu6(score2 + 3) / 6
+            score2 = score2 * self.relu6(score2 + 3) / 6 + 1
 
         score1 = score1.view(score1.shape[0], -1)
         score2 = score2.view(score2.shape[0], -1)

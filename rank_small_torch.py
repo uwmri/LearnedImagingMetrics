@@ -21,12 +21,12 @@ from utils.utils_DL import *
 subtract_truth = True
 shuffle_observers = True
 MOBILE = False
-EFF = False
+EFF = True
 BO = False
 RESNET = False
 ResumeTrain = False
 trainScoreandMSE = False    # train score based classifier and mse(im1)-mse(im2) based classifier at the same time
-
+singleChannle = True
 
 # Ranks
 names = []
@@ -106,6 +106,11 @@ for i in range(0, ranks.shape[0]):
         Labels[i] = 2
 
 # torch tensor should be minibatch * channel * H*W
+if singleChannle:
+    X_1 = np.sqrt(X_1[...,0]**2 + X_1[...,1]**2)
+    X_2 = np.sqrt(X_2[..., 0] ** 2 + X_2[..., 1] ** 2)
+    X_1 = np.expand_dims(X_1, axis=-1)
+    X_2 = np.expand_dims(X_2, axis=-1)
 X_1 = np.transpose(X_1, [0, 3, 1, 2])
 X_2 = np.transpose(X_2, [0, 3, 1, 2])
 print(X_1.shape)
@@ -141,10 +146,10 @@ Labels_cnnV = Labels[ntrain:]
 
 # Data generator
 BATCH_SIZE = 16
-trainingset = DataGenerator_rank(X_1, X_2, Labels_cnnT, idT, augmentation=True)
+trainingset = DataGenerator_rank(X_1, X_2, Labels_cnnT, idT, augmentation=True, singleChannel=singleChannle)
 loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=True)
 
-validationset = DataGenerator_rank(X_1, X_2, Labels_cnnV, idV, augmentation=False)
+validationset = DataGenerator_rank(X_1, X_2, Labels_cnnV, idV, augmentation=False, singleChannel=singleChannle)
 loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=True)
 
 
@@ -169,14 +174,16 @@ print(device)
 if MOBILE:
     ranknet = mobilenet_v2(pretrained=False, num_classes=1) # Less than ResNet18
 elif EFF:
-    ranknet = EfficientNet.from_pretrained('efficientnet-b0', num_classes=1)
+    ranknet = EfficientNet.from_pretrained('efficientnet-b0', num_classes=1, in_channels=1)
 elif RESNET:
     ranknet = ResNet2(BasicBlock, [2,2,2,2], for_denoise=False)  # Less than ResNet18
 else:
     ranknet = L2cnn()
 
-torchsummary.summary(ranknet, (3, maxMatSize, maxMatSize), device="cpu")
-
+if singleChannle:
+    torchsummary.summary(ranknet, (1, maxMatSize, maxMatSize), device="cpu")
+else:
+    torchsummary.summary(ranknet, (3, maxMatSize, maxMatSize), device="cpu")
 
 # Bayesian
 # optimize classification accuracy on the validation set as a function of the learning rate and momentum
@@ -240,8 +247,8 @@ else:
         # NEED to set trainOnMSE in train_evaluate manually for both MSE and score-based,
         # get best paramters and initialize optimizier here manually
 
-        # optimizer = optim.SGD(classifier.parameters(), lr=4.64e-6, momentum=0.9)
-        optimizer = optim.Adam(classifier.parameters(), lr=1e-5)
+        optimizer = optim.SGD(classifier.parameters(), lr=0.0337, momentum=0.15494)
+        #optimizer = optim.Adam(classifier.parameters(), lr=1e-5)
         if trainScoreandMSE:
             optimizerMSE = optim.SGD(classifierMSE.parameters(), lr=0.00097, momentum=0.556)
             # optimizerMSE = optim.Adam(classifier.parameters(), lr=0.001)
@@ -486,21 +493,21 @@ for epoch in range(Nepoch):
                                 epoch)
 
 
-    # save models
-    state = {
-        'state_dict': classifier.state_dict(),
-        'optimizer': optimizer.state_dict(),
+# save models
+state = {
+    'state_dict': classifier.state_dict(),
+    'optimizer': optimizer.state_dict(),
+    'epoch': epoch
+}
+torch.save(state,os.path.join(log_dir,f'RankClassifier{Ntrial}_{Nepoch}.pt'))
+
+if trainScoreandMSE:
+    stateMSE = {
+        'state_dict': classifierMSE.state_dict(),
+        'optimizer': optimizerMSE.state_dict(),
         'epoch': epoch
     }
-    torch.save(state,os.path.join(log_dir,f'RankClassifier{Ntrial}_{epoch}.pt'))
-
-    if trainScoreandMSE:
-        stateMSE = {
-            'state_dict': classifierMSE.state_dict(),
-            'optimizer': optimizerMSE.state_dict(),
-            'epoch': epoch
-        }
-        torch.save(stateMSE, os.path.join(log_dir, f'RankClassifier{Ntrial}_{epoch}_MSE.pt'))
+    torch.save(stateMSE, os.path.join(log_dir, f'RankClassifier{Ntrial}_{Nepoch}_MSE.pt'))
 
 # if trainScoreandMSE:
 #     acc_endT = np.array(acc_endT)
