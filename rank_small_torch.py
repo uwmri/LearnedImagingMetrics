@@ -105,8 +105,12 @@ for i in range(NEXAMPLES):
                 X_1[i, :, :, 1] = np.sqrt(np.sum(np.square(im1), axis=-1))
                 X_2[i, :, :, 1] = np.sqrt(np.sum(np.square(im2), axis=-1))
         else:
-            X_1[i, :, :] = im1 - truth
-            X_2[i, :, :] = im2 - truth
+            if train_on_mag:
+                X_1[i, :, :, 0] = np.sqrt(np.sum(np.square(im1 - truth), axis=-1))
+                X_2[i, :, :, 0] = np.sqrt(np.sum(np.square(im2 - truth), axis=-1))
+            else:
+                X_1[i, :, :] = im1 - truth
+                X_2[i, :, :] = im2 - truth
     else:
         X_1[i, :, :] = im1
         X_2[i, :, :] = im2
@@ -114,11 +118,7 @@ for i in range(NEXAMPLES):
     if i % 1e2 == 0:
         print(f'loading example pairs {i + 1}')
 
-if train_on_mag:
-    X_1 = np.expand_dims(np.sqrt(np.sum(np.square(X_1), axis=-1)), axis=-1)
-    X_2 = np.expand_dims(np.sqrt(np.sum(np.square(X_2), axis=-1)), axis=-1)
-    
-# Al    l labels
+# All labels
 for i in range(0, ranks.shape[0]):
 
     # Label based on ranks from ranker
