@@ -1,5 +1,7 @@
 import numpy as np
 from typing import Dict
+import matplotlib.pyplot as plt
+import io
 
 import torch
 import torch.optim as optim
@@ -50,6 +52,29 @@ class RunningAverage:
 
     def avg(self):
         return self.sum / self.count
+
+
+def plt_scoreVsMse(scorelist, mselist):
+    """
+
+    :param scorelistT: list of numbers on cpu(N minibatches, batchsize)
+    :param mselistT: list of numbers on cpu(N minibatches, batchsize)
+    :param epoch:
+    :return: figure
+    """
+    scorelist = np.concatenate(scorelist).ravel()
+    mselist = np.concatenate(mselist).ravel()
+    figure = plt.figure(figsize=(10,10))
+    ax = plt.gca()
+    plt.scatter(scorelist, mselist,s=150, alpha=0.3)
+    plt.xlabel('Score', fontsize=24)
+    plt.ylabel('MSE', fontsize=24)
+    ax.tick_params(axis='both', which='major', labelsize=20)
+    plt.ticklabel_format(axis='both', style='sci', scilimits=(0,0))
+    ax.xaxis.get_offset_text().set_fontsize(24)
+    ax.yaxis.get_offset_text().set_fontsize(24)
+
+    return figure
 
 
 # for Bayesian
