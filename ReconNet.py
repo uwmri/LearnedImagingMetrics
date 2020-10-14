@@ -197,9 +197,9 @@ if BO:
     print(best_parameters)
 
 else:
-    LR = 1e-3
+    LR = 1e-4
     #optimizer = optim.SGD(ReconModel.parameters(), lr=LR, momentum=0.9)
-    optimizer = optim.Adam(ReconModel.parameters(), lr=LR)
+    optimizer = optim.Adam(ReconModel.parameters(), lr=LR, )
     logging.info(f'Adam, lr = {LR}')
 
 logging.info('case averaged loss')

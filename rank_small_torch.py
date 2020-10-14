@@ -19,14 +19,17 @@ from utils.model_helper import *
 from utils.utils_DL import *
 
 subtract_truth = True
+include_unsubtracted = True
+train_on_mag = True
 shuffle_observers = True
 MOBILE = False
-EFF = False
+EFF = True
 BO = False
 RESNET = False
 ResumeTrain = False
 
-
+trainScoreandMSE = False    # train score based classifier and mse(im1)-mse(im2) based classifier at the same time
+singleChannle = True
 
 # Ranks
 names = []
@@ -65,8 +68,15 @@ maxMatSize = 396  # largest matrix size seems to be 396
 NEXAMPLES = 2920
 NRANKS = ranks.shape[0]
 
-X_1 = np.zeros((NEXAMPLES, maxMatSize, maxMatSize,2), dtype=np.float32)  # saved as complex128 though
-X_2 = np.zeros((NEXAMPLES, maxMatSize, maxMatSize,2), dtype=np.float32)
+if train_on_mag:
+    nch = 1
+    if include_unsubtracted:
+        nch += 1
+else:
+    nch = 2
+
+X_1 = np.zeros((NEXAMPLES, maxMatSize, maxMatSize,nch), dtype=np.float32)  # saved as complex128 though
+X_2 = np.zeros((NEXAMPLES, maxMatSize, maxMatSize,nch), dtype=np.float32)
 # X_T = np.zeros((NEXAMPLES, maxMatSize, maxMatSize),dtype=np.complex64)
 Labels = np.zeros(NRANKS, dtype=np.int32)
 
@@ -83,11 +93,31 @@ log_dir = tk.filedialog.askdirectory(title='Choose log dir')
 for i in range(NEXAMPLES):
 
     nameT = 'EXAMPLE_%07d_TRUTH' % (i+1)
-    name = 'EXAMPLE_%07d_IMAGE_%04d' % (i+1, 0)
-    X_1[i, :, :] = zero_pad2D(np.array(hf[name]), maxMatSize, maxMatSize) - zero_pad2D(np.array(hf[nameT]), maxMatSize, maxMatSize)
+    name1 = 'EXAMPLE_%07d_IMAGE_%04d' % (i+1, 0)
+    name2 = 'EXAMPLE_%07d_IMAGE_%04d' % (i+1, 1)
 
-    name = 'EXAMPLE_%07d_IMAGE_%04d' % (i+1, 1)
-    X_2[i, :, :] = zero_pad2D(np.array(hf[name]), maxMatSize, maxMatSize) - zero_pad2D(np.array(hf[nameT]), maxMatSize, maxMatSize)
+    im1 = zero_pad2D(np.array(hf[name1]), maxMatSize, maxMatSize)
+    im2 = zero_pad2D(np.array(hf[name2]), maxMatSize, maxMatSize)
+    truth = zero_pad2D(np.array(hf[nameT]), maxMatSize, maxMatSize)
+
+    if subtract_truth:
+        if train_on_mag:
+            X_1[i, :, :, 0] = np.sqrt(np.sum(np.square(im1 - truth), axis=-1))
+            X_2[i, :, :, 0] = np.sqrt(np.sum(np.square(im2 - truth), axis=-1))
+            if include_unsubtracted:
+                X_1[i, :, :, 1] = np.sqrt(np.sum(np.square(im1), axis=-1))
+                X_2[i, :, :, 1] = np.sqrt(np.sum(np.square(im2), axis=-1))
+        else:
+            if train_on_mag:
+                X_1[i, :, :, 0] = np.sqrt(np.sum(np.square(im1 - truth), axis=-1))
+                X_2[i, :, :, 0] = np.sqrt(np.sum(np.square(im2 - truth), axis=-1))
+            else:
+                X_1[i, :, :] = im1 - truth
+                X_2[i, :, :] = im2 - truth
+    else:
+        X_1[i, :, :] = im1
+        X_2[i, :, :] = im2
+
     if i % 1e2 == 0:
         print(f'loading example pairs {i + 1}')
 
@@ -106,6 +136,11 @@ for i in range(0, ranks.shape[0]):
         Labels[i] = 2
 
 # torch tensor should be minibatch * channel * H*W
+if singleChannle:
+    X_1 = np.sqrt(X_1[...,0]**2 + X_1[...,1]**2)
+    X_2 = np.sqrt(X_2[..., 0] ** 2 + X_2[..., 1] ** 2)
+    X_1 = np.expand_dims(X_1, axis=-1)
+    X_2 = np.expand_dims(X_2, axis=-1)
 X_1 = np.transpose(X_1, [0, 3, 1, 2])
 X_2 = np.transpose(X_2, [0, 3, 1, 2])
 print(X_1.shape)
@@ -141,10 +176,10 @@ Labels_cnnV = Labels[ntrain:]
 
 # Data generator
 BATCH_SIZE = 16
-trainingset = DataGenerator_rank(X_1, X_2, Labels_cnnT, idT, augmentation=True)
+trainingset = DataGenerator_rank(X_1, X_2, Labels_cnnT, idT, augmentation=True, singleChannel=singleChannle)
 loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=True)
 
-validationset = DataGenerator_rank(X_1, X_2, Labels_cnnV, idV, augmentation=False)
+validationset = DataGenerator_rank(X_1, X_2, Labels_cnnV, idV, augmentation=False, singleChannel=singleChannle)
 loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=True)
 
 
@@ -169,20 +204,23 @@ print(device)
 if MOBILE:
     ranknet = mobilenet_v2(pretrained=False, num_classes=1) # Less than ResNet18
 elif EFF:
-    ranknet = EfficientNet.from_pretrained('efficientnet-b0', num_classes=1)
+    ranknet = EfficientNet.from_pretrained('efficientnet-b0', num_classes=1, in_channels=1)
 elif RESNET:
     ranknet = ResNet2(BasicBlock, [2,2,2,2], for_denoise=False)  # Less than ResNet18
 else:
     ranknet = L2cnn()
 
-torchsummary.summary(ranknet, (3, maxMatSize, maxMatSize), device="cpu")
+if singleChannle:
+    torchsummary.summary(ranknet, (1, maxMatSize, maxMatSize), device="cpu")
+else:
+    torchsummary.summary(ranknet, (3, maxMatSize, maxMatSize), device="cpu")
 
 
 # Bayesian
 # optimize classification accuracy on the validation set as a function of the learning rate and momentum
 def train_evaluate(parameterization):
 
-    net = Classifier()
+    net = Classifier(ranknet)
     net = train_mod(net=net, train_loader=loader_T, parameters=parameterization, dtype=torch.float, device=device,
                     trainOnMSE=False)
     return evaluate_mod(
@@ -200,24 +238,31 @@ if ResumeTrain:
     root.withdraw()
     filepath_rankModel = tk.filedialog.askdirectory(title='Choose where the saved metric model is')
     file_rankModel = os.path.join(filepath_rankModel, "RankClassifier15.pt")
-    file_rankModelMSE = os.path.join(filepath_rankModel, "RankClassifier15_MSE.pt")
-    classifier = Classifier()
-    classifierMSE = Classifier()
+    classifier = Classifier(ranknet)
+    if trainScoreandMSE:
+        file_rankModelMSE = os.path.join(filepath_rankModel, "RankClassifier15_MSE.pt")   
+        classifierMSE = Classifier(ranknet)
 
+
+    classifier = Classifier()
     state = torch.load(file_rankModel)
     classifier.load_state_dict(state['state_dict'], strict=True)
     optimizer = optim.SGD(classifier.parameters(), lr=0.05045, momentum=0.0)
     optimizer.load_state_dict(state['optimizer'])
 
-    stateMSE = torch.load(file_rankModelMSE)
-    classifier.load_state_dict(stateMSE['state_dict'], strict=True)
-    optimizerMSE = optim.SGD(classifier.parameters(), lr=0.00097, momentum=0.556)
-    optimizerMSE.load_state_dict(state['optimizer'])
+    if trainScoreandMSE:
+        file_rankModelMSE = os.path.join(filepath_rankModel, "RankClassifier15_MSE.pt")
+        classifierMSE = Classifier()
+        stateMSE = torch.load(file_rankModelMSE)
+        classifier.load_state_dict(stateMSE['state_dict'], strict=True)
+        optimizerMSE = optim.SGD(classifier.parameters(), lr=0.00097, momentum=0.556)
+        optimizerMSE.load_state_dict(state['optimizer'])
 
 else:
 
     classifier = Classifier(ranknet)
-    classifierMSE = Classifier(ranknet)
+    if trainScoreandMSE:
+        classifierMSE = Classifier(ranknet)
 
     if BO:
         best_parameters, values, experiment, model = optimize(
@@ -238,16 +283,20 @@ else:
         # NEED to set trainOnMSE in train_evaluate manually for both MSE and score-based,
         # get best paramters and initialize optimizier here manually
 
-        # optimizer = optim.SGD(classifier.parameters(), lr=0.00043, momentum=1.0)
-        optimizerMSE = optim.SGD(classifierMSE.parameters(), lr=0.00097, momentum=0.556)
-        optimizer = optim.Adam(classifier.parameters(), lr=1e-5)
-        # optimizerMSE = optim.Adam(classifier.parameters(), lr=0.001)
+        optimizer = optim.SGD(classifier.parameters(), lr=0.0337, momentum=0.15494)
+        #optimizer = optim.Adam(classifier.parameters(), lr=1e-5)
+        if trainScoreandMSE:
+            optimizerMSE = optim.SGD(classifierMSE.parameters(), lr=0.00097, momentum=0.556)
+            # optimizerMSE = optim.Adam(classifier.parameters(), lr=0.001)
 
 
 loss_func = nn.CrossEntropyLoss()
 
+
 classifier.cuda();
-classifierMSE.cuda();
+if trainScoreandMSE:
+    classifierMSE.cuda();
+
 
 # Training
 
@@ -259,7 +308,7 @@ writer_train = SummaryWriter(os.path.join(log_dir,f'runs/rank/train_{Ntrial}'))
 writer_val = SummaryWriter(os.path.join(log_dir,f'runs/rank/val_{Ntrial}'))
 
 logging.basicConfig(filename=os.path.join(log_dir,f'runs/rank/ranking_{Ntrial}.log'), filemode='w', level=logging.INFO)
-logging.info('With L2cnn, Hardswish for self.rank')
+logging.info('With L2cnn, abs(score) for self.rank')
 
 Nepoch = 200
 lossT = np.zeros(Nepoch)
@@ -282,23 +331,27 @@ for epoch in range(Nepoch):
     # Setup counter to keep track of loss
     train_avg = RunningAverage()
     eval_avg = RunningAverage()
-    train_avgMSE = RunningAverage()
-    eval_avgMSE = RunningAverage()
 
     # To track accuracy
     train_acc = RunningAcc()
     eval_acc = RunningAcc()
-    train_accMSE = RunningAcc()
-    eval_accMSE = RunningAcc()
+
+    # track score and mse of images
+    scorelistT = []
+    scorelistV = []
+    mselistT = []
+    mselistV = []
+
+    if trainScoreandMSE:
+        train_avgMSE = RunningAverage()
+        eval_avgMSE = RunningAverage()
+        train_accMSE = RunningAcc()
+        eval_accMSE = RunningAcc()
+
+        classifierMSE.train()
 
     # training
     classifier.train()
-    classifierMSE.train()
-
-    # step = 0
-    total_steps = len(trainingset)
-
-
 
     for i, data in enumerate(loader_T, 0):
 
@@ -321,8 +374,8 @@ for epoch in range(Nepoch):
         # # every 30 minibatch, show image pairs and predictions
         # if i % 30 == 0:
         #     writer.add_figure()
-        if i % 30 == 0:
-            print(train_acc.avg())
+        #if i % 30 == 0:
+        #    print(train_acc.avg())
 
         # zero the parameter gradients, backward and update
         optimizer.zero_grad()
@@ -331,39 +384,54 @@ for epoch in range(Nepoch):
 
 
         # train on MSE
-        deltaMSE = classifierMSE(im1, im2, trainOnMSE=True)
-        lossMSE = loss_func(deltaMSE, labels)
-        train_avgMSE.update(lossMSE.item(), n=BATCH_SIZE)  # here is total loss of all batches
+        if trainScoreandMSE:
+            deltaMSE = classifierMSE(im1, im2, trainOnMSE=True)
+            lossMSE = loss_func(deltaMSE, labels)
+            train_avgMSE.update(lossMSE.item(), n=BATCH_SIZE)  # here is total loss of all batches
 
-        # acc
-        accMSE = acc_calc(deltaMSE, labels)
-        train_accMSE.update(accMSE, n=1)
-
-        if i % 30 == 0:
-            print(f'Acc trained on mse {train_accMSE.avg()}')
-
-        # zero the parameter gradients, backward and update
-        optimizerMSE.zero_grad()
-        lossMSE.backward()
-        optimizerMSE.step()
-
-        if epoch == Nepoch-1:
-            acc_endT.append(acc)
-            acc_end_mseT.append(accMSE)
-
-            diff = torch.sum((torch.abs(im1 - im2) ** 2), dim=(1, 2, 3)) / (im1.shape[1] * im1.shape[2] * im1.shape[3])
-            diff = torch.mean(diff)
-            diff_mseT.append(diff.item())
-            s1 = classifier.rank(im1).detach()
-            s1 *= classifier.relu6(s1 + 3) / 6
-            s2 = classifier.rank(im2).detach()
-            s2 *= classifier.relu6(s2 + 3) / 6
-            diff = torch.mean(s1 - s2)
-            diff_scoreT.append(diff.item())
-
-            del diff, s1, s2
+            # acc
+            accMSE = acc_calc(deltaMSE, labels)
+            train_accMSE.update(accMSE, n=1)
 
 
+#             if i % 30 == 0:
+#                 print(f'Acc trained on mse {train_accMSE.avg()}')
+
+
+            # zero the parameter gradients, backward and update
+            optimizerMSE.zero_grad()
+            lossMSE.backward()
+            optimizerMSE.step()
+
+            if epoch == Nepoch-1:
+                acc_endT.append(acc)
+                acc_end_mseT.append(accMSE)
+
+                diff = torch.sum((torch.abs(im1 - im2) ** 2), dim=(1, 2, 3)) / (im1.shape[1] * im1.shape[2] * im1.shape[3])
+                diff = torch.mean(diff)
+                diff_mseT.append(diff.item())
+                s1 = classifier.rank(im1).detach()
+                s1 *= classifier.relu6(s1 + 3) / 6
+                s2 = classifier.rank(im2).detach()
+                s2 *= classifier.relu6(s2 + 3) / 6
+                diff = torch.mean(s1 - s2)
+                diff_scoreT.append(diff.item())
+
+                del diff, s1, s2
+
+        with torch.no_grad():
+            score1 = classifier.rank(im1)
+            score2 = classifier.rank(im2)
+            scorelistT.append(score1.cpu().numpy())
+            scorelistT.append(score2.cpu().numpy())
+
+            mse1 = torch.sum((torch.abs(im1) ** 2), dim=(1, 2, 3)) / (im1.shape[1] * im1.shape[2] * im1.shape[3])
+            mse2 = torch.sum((torch.abs(im2) ** 2), dim=(1, 2, 3)) / (im2.shape[1] * im2.shape[2] * im2.shape[3])
+            mselistT.append(mse1.cpu().numpy())
+            mselistT.append(mse2.cpu().numpy())
+
+    score_mse_figureT = plt_scoreVsMse(scorelistT, mselistT)
+    writer_train.add_figure('Score_vs_mse', score_mse_figureT, epoch)
 
 
     # validation
@@ -399,118 +467,123 @@ for epoch in range(Nepoch):
             # total += labels.size(0)
             # correct += (predictedV == labels).sum().item()
 
+            # get scores and mse
+            score1 = classifier.rank(im1)
+            score2 = classifier.rank(im2)
+            scorelistV.append(score1.cpu().numpy())
+            scorelistV.append(score2.cpu().numpy())
+
+            mse1 = torch.sum((torch.abs(im1) ** 2), dim=(1, 2, 3)) / (im1.shape[1] * im1.shape[2] * im1.shape[3])
+            mse2 = torch.sum((torch.abs(im2) ** 2), dim=(1, 2, 3)) / (im2.shape[1] * im2.shape[2] * im2.shape[3])
+            mselistV.append(mse1.cpu().numpy())
+            mselistV.append(mse2.cpu().numpy())
+
             # mse-based classifier
-            deltaMSE = classifierMSE(im1, im2, trainOnMSE=True)
-            lossMSE = loss_func(deltaMSE, labels)
-            eval_avgMSE.update(lossMSE.item(), n=BATCH_SIZE)
+            if trainScoreandMSE:
+                deltaMSE = classifierMSE(im1, im2, trainOnMSE=True)
+                lossMSE = loss_func(deltaMSE, labels)
+                eval_avgMSE.update(lossMSE.item(), n=BATCH_SIZE)
 
-            accMSE = acc_calc(deltaMSE, labels, BatchSize=BATCH_SIZE * 2)
-            eval_accMSE.update(accMSE, n=1)
+                accMSE = acc_calc(deltaMSE, labels, BatchSize=BATCH_SIZE * 2)
+                eval_accMSE.update(accMSE, n=1)
 
-            # save accuracy, mean MSE and mean (score1-score2) for each minibatches
-            if epoch == Nepoch-1:
-                acc_endV.append(acc)
-                acc_end_mseV.append(accMSE)
+                # save accuracy, mean MSE and mean (score1-score2) for each minibatches
+                if epoch == Nepoch-1:
+                    acc_endV.append(acc)
+                    acc_end_mseV.append(accMSE)
 
-                diff = torch.sum((torch.abs(im1-im2)**2),dim=(1,2,3))/(im1.shape[1]*im1.shape[2]*im1.shape[3])
-                diff = torch.mean(diff)
-                diff_mseV.append(diff.item())
-                s1 = classifier.rank(im1).detach()
-                s1 *= classifier.relu6(s1+3)/6
-                s2 = classifier.rank(im2).detach()
-                s2 *= classifier.relu6(s2+3)/6
-                diff = torch.mean(s1 - s2)
-                diff_scoreV.append(diff.item())
+                    diff = torch.sum((torch.abs(im1-im2)**2),dim=(1,2,3))/(im1.shape[1]*im1.shape[2]*im1.shape[3])
+                    diff = torch.mean(diff)
+                    diff_mseV.append(diff.item())
+                    s1 = classifier.rank(im1).detach()
+                    s1 *= classifier.relu6(s1+3)/6
+                    s2 = classifier.rank(im2).detach()
+                    s2 *= classifier.relu6(s2+3)/6
+                    diff = torch.mean(s1 - s2)
+                    diff_scoreV.append(diff.item())
 
-                del diff, s1, s2
+                    del diff, s1, s2
 
-
-
+    score_mse_figureV = plt_scoreVsMse(scorelistV, mselistV)
+    writer_val.add_figure('Score_vs_mse', score_mse_figureV, epoch)
 
         # accV[epoch] = 100 * correct / total
 
     #print('Epoch = %d : Loss Eval = %f , Loss Train = %f' % (epoch, eval_avg.avg(), train_avg.avg()))
-    print(f'Epoch = {epoch}, Loss = {eval_avg.avg()}, Loss train = {train_avg.avg()}, Acc = {eval_acc.avg()}, Acc train = {train_acc.avg()}')
+    print(f'Epoch = {epoch:03d}, Loss = {eval_avg.avg()}, Loss train = {train_avg.avg()}, Acc = {eval_acc.avg()}, Acc train = {train_acc.avg()}')
+    print(f'        MSE: Loss = {eval_avgMSE.avg()}, Loss train = {train_avgMSE.avg()}, Acc = {eval_accMSE.avg()}, Acc train = {train_accMSE.avg()}')
     lossT[epoch] = train_avg.avg()
     lossV[epoch] = eval_avg.avg()
 
-    # writer.add_scalar('Loss',
-    #                   eval_avg.avg(),
-    #                   epoch)
-    # writer.add_scalar('Accuracy/Val',
-    #                   eval_acc.avg(),
-    #                   epoch)
 
-    # Display train and val on the same graph
-    writer_val.add_scalar('Loss', eval_avg.avg(),
-                          epoch)
-    writer_train.add_scalar('Loss', train_avg.avg(),
-                            epoch)
+    writer_val.add_scalar('Loss', eval_avg.avg(), epoch)
+    writer_train.add_scalar('Loss', train_avg.avg(), epoch)
 
-    writer_val.add_scalar('Acc', eval_acc.avg(),
-                          epoch)
-    writer_train.add_scalar('Acc', train_acc.avg(),
-                            epoch)
+    writer_val.add_scalar('Acc', eval_acc.avg(), epoch)
+    writer_train.add_scalar('Acc', train_acc.avg(), epoch)
 
-    writer_val.add_scalar('LossMSE', eval_avgMSE.avg(),
-                          epoch)
-    writer_train.add_scalar('LossMSE', train_avgMSE.avg(),
-                            epoch)
+    if trainScoreandMSE:
+        writer_val.add_scalar('LossMSE', eval_avgMSE.avg(),
+                              epoch)
+        writer_train.add_scalar('LossMSE', train_avgMSE.avg(),
+                                epoch)
 
-    writer_val.add_scalar('AccMSE', eval_accMSE.avg(),
-                          epoch)
-    writer_train.add_scalar('AccMSE', train_accMSE.avg(),
-                            epoch)
+        writer_val.add_scalar('AccMSE', eval_accMSE.avg(),
+                              epoch)
+        writer_train.add_scalar('AccMSE', train_accMSE.avg(),
+                                epoch)
 
 
-    # save models
-    state = {
-        'state_dict': classifier.state_dict(),
-        'optimizer': optimizer.state_dict(),
-        'epoch': epoch
-    }
-    torch.save(state,os.path.join(log_dir,f'RankClassifier{Ntrial}_{epoch}.pt'))
+# save models
+state = {
+    'state_dict': classifier.state_dict(),
+    'optimizer': optimizer.state_dict(),
+    'epoch': epoch
+}
+torch.save(state,os.path.join(log_dir,f'RankClassifier{Ntrial}_{Nepoch}.pt'))
 
+if trainScoreandMSE:
     stateMSE = {
         'state_dict': classifierMSE.state_dict(),
         'optimizer': optimizerMSE.state_dict(),
         'epoch': epoch
     }
-    torch.save(stateMSE, os.path.join(log_dir, f'RankClassifier{Ntrial}_{epoch}_MSE.pt'))
+    torch.save(stateMSE, os.path.join(log_dir, f'RankClassifier{Ntrial}_{Nepoch}_MSE.pt'))
 
-acc_endT = np.array(acc_endT)
-acc_end_mseT = np.array(acc_end_mseT)
-diff_mseT = np.array(diff_mseT)
-diff_scoreT = np.array(diff_scoreT)
-
-acc_endV = np.array(acc_endV)
-acc_end_mseV = np.array(acc_end_mseV)
-diff_mseV = np.array(diff_mseV)
-diff_scoreV = np.array(diff_scoreV)
-
-plt.plot(acc_endV, acc_end_mseV, '.')
-plt.title(f'Validation accuracies of minibatches at epoch = {Nepoch}')
-plt.show()
-
-plt.plot(acc_endT, acc_end_mseT, '.')
-plt.title(f'Training accuracies of minibatches at epoch = {Nepoch}')
-plt.show()
-
-plt.plot(diff_mseT, acc_end_mseT, '.')
-plt.title(f'Training accuracy vs MSE at epoch = {Nepoch}')
-plt.show()
-
-plt.plot(diff_mseV, acc_end_mseV, '.')
-plt.title(f'Validation accuracy vs MSE at epoch = {Nepoch}')
-plt.show()
-
-plt.plot(diff_scoreT, acc_endT, '.')
-plt.title(f'Training accuracy vs score difference at epoch = {Nepoch}')
-plt.show()
-
-plt.plot(diff_scoreV, acc_endV, '.')
-plt.title(f'Validation accuracy vs score difference at epoch = {Nepoch}')
-plt.show()
-
-
+# if trainScoreandMSE:
+#     acc_endT = np.array(acc_endT)
+#     acc_end_mseT = np.array(acc_end_mseT)
+#     diff_mseT = np.array(diff_mseT)
+#     diff_scoreT = np.array(diff_scoreT)
+#
+#     acc_endV = np.array(acc_endV)
+#     acc_end_mseV = np.array(acc_end_mseV)
+#     diff_mseV = np.array(diff_mseV)
+#     diff_scoreV = np.array(diff_scoreV)
+#
+#     plt.plot(acc_endV, acc_end_mseV, '.')
+#     plt.title(f'Validation accuracies of minibatches at epoch = {Nepoch}')
+#     plt.show()
+#
+#     plt.plot(acc_endT, acc_end_mseT, '.')
+#     plt.title(f'Training accuracies of minibatches at epoch = {Nepoch}')
+#     plt.show()
+#
+#     plt.plot(diff_mseT, acc_end_mseT, '.')
+#     plt.title(f'Training accuracy vs MSE at epoch = {Nepoch}')
+#     plt.show()
+#
+#     plt.plot(diff_mseV, acc_end_mseV, '.')
+#     plt.title(f'Validation accuracy vs MSE at epoch = {Nepoch}')
+#     plt.show()
+#
+#     plt.plot(diff_scoreT, acc_endT, '.')
+#     plt.title(f'Training accuracy vs score difference at epoch = {Nepoch}')
+#     plt.show()
+#
+#     plt.plot(diff_scoreV, acc_endV, '.')
+#     plt.title(f'Validation accuracy vs score difference at epoch = {Nepoch}')
+#     plt.show()
+#
+#
 
