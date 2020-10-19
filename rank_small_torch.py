@@ -23,10 +23,11 @@ include_unsubtracted = True
 train_on_mag = True
 shuffle_observers = True
 MOBILE = False
-EFF = True
+EFF = False
 BO = False
 RESNET = False
 ResumeTrain = False
+CLIP = False
 
 trainScoreandMSE = False    # train score based classifier and mse(im1)-mse(im2) based classifier at the same time
 singleChannle = True
@@ -108,12 +109,8 @@ for i in range(NEXAMPLES):
                 X_1[i, :, :, 1] = np.sqrt(np.sum(np.square(im1), axis=-1))
                 X_2[i, :, :, 1] = np.sqrt(np.sum(np.square(im2), axis=-1))
         else:
-            if train_on_mag:
-                X_1[i, :, :, 0] = np.sqrt(np.sum(np.square(im1 - truth), axis=-1))
-                X_2[i, :, :, 0] = np.sqrt(np.sum(np.square(im2 - truth), axis=-1))
-            else:
-                X_1[i, :, :] = im1 - truth
-                X_2[i, :, :] = im2 - truth
+            X_1[i, :, :] = im1 - truth
+            X_2[i, :, :] = im2 - truth
     else:
         X_1[i, :, :] = im1
         X_2[i, :, :] = im2
@@ -136,14 +133,9 @@ for i in range(0, ranks.shape[0]):
         Labels[i] = 2
 
 # torch tensor should be minibatch * channel * H*W
-if singleChannle:
-    X_1 = np.sqrt(X_1[...,0]**2 + X_1[...,1]**2)
-    X_2 = np.sqrt(X_2[..., 0] ** 2 + X_2[..., 1] ** 2)
-    X_1 = np.expand_dims(X_1, axis=-1)
-    X_2 = np.expand_dims(X_2, axis=-1)
 X_1 = np.transpose(X_1, [0, 3, 1, 2])
 X_2 = np.transpose(X_2, [0, 3, 1, 2])
-print(X_1.shape)
+print(f'X_1 shape {X_1.shape}')
 
 # MobileNet requires values [0,1] and normalized
 if MOBILE:
@@ -210,10 +202,8 @@ elif RESNET:
 else:
     ranknet = L2cnn()
 
-if singleChannle:
-    torchsummary.summary(ranknet, (1, maxMatSize, maxMatSize), device="cpu")
-else:
-    torchsummary.summary(ranknet, (3, maxMatSize, maxMatSize), device="cpu")
+torchsummary.summary(ranknet, (X_1.shape[1], maxMatSize, maxMatSize), device="cpu")
+
 
 
 # Bayesian
@@ -237,17 +227,20 @@ if ResumeTrain:
     root = tk.Tk()
     root.withdraw()
     filepath_rankModel = tk.filedialog.askdirectory(title='Choose where the saved metric model is')
-    file_rankModel = os.path.join(filepath_rankModel, "RankClassifier15.pt")
+    file_rankModel = os.path.join(filepath_rankModel, "RankClassifier5383.pt")
     classifier = Classifier(ranknet)
+    #classifier.rank.register_backward_hook(printgradnorm)
+    loss_func = nn.CrossEntropyLoss()
+
+    state = torch.load(file_rankModel)
+    classifier.load_state_dict(state['state_dict'], strict=True)
+    classifier.cuda();
     if trainScoreandMSE:
         file_rankModelMSE = os.path.join(filepath_rankModel, "RankClassifier15_MSE.pt")   
         classifierMSE = Classifier(ranknet)
+        classifierMSE.cuda();
 
-
-    classifier = Classifier()
-    state = torch.load(file_rankModel)
-    classifier.load_state_dict(state['state_dict'], strict=True)
-    optimizer = optim.SGD(classifier.parameters(), lr=0.05045, momentum=0.0)
+    optimizer = optim.Adam(classifier.parameters(), lr=1e-5)
     optimizer.load_state_dict(state['optimizer'])
 
     if trainScoreandMSE:
@@ -277,25 +270,28 @@ else:
         optimizer = optim.SGD(classifier.parameters(), lr=best_parameters['lr'], momentum=best_parameters['momentum'])
 
         print(best_parameters)
-
+        logging.info(f'{best_parameters}')
     else:
 
         # NEED to set trainOnMSE in train_evaluate manually for both MSE and score-based,
         # get best paramters and initialize optimizier here manually
 
-        optimizer = optim.SGD(classifier.parameters(), lr=0.0337, momentum=0.15494)
-        #optimizer = optim.Adam(classifier.parameters(), lr=1e-5)
+        #optimizer = optim.SGD(classifier.parameters(), lr=0.003152130338485237, momentum=0.27102874871343374)
+        optimizer = optim.Adam(classifier.parameters(), lr=1e-5)
+        logging.info('Adam, lr=1e-5')
         if trainScoreandMSE:
             optimizerMSE = optim.SGD(classifierMSE.parameters(), lr=0.00097, momentum=0.556)
             # optimizerMSE = optim.Adam(classifier.parameters(), lr=0.001)
 
+    #classifier.rank.register_backward_hook(printgradnorm)
+    loss_func = nn.CrossEntropyLoss()
+    classifier.cuda();
+    if trainScoreandMSE:
+        classifierMSE.cuda();
 
-loss_func = nn.CrossEntropyLoss()
 
 
-classifier.cuda();
-if trainScoreandMSE:
-    classifierMSE.cuda();
+
 
 
 # Training
@@ -308,9 +304,13 @@ writer_train = SummaryWriter(os.path.join(log_dir,f'runs/rank/train_{Ntrial}'))
 writer_val = SummaryWriter(os.path.join(log_dir,f'runs/rank/val_{Ntrial}'))
 
 logging.basicConfig(filename=os.path.join(log_dir,f'runs/rank/ranking_{Ntrial}.log'), filemode='w', level=logging.INFO)
-logging.info('With L2cnn, abs(score) for self.rank')
+logging.info('With L2cnn, abs(score) after self.rank')
+logging.info('resume train 5383')
 
-Nepoch = 200
+score_mse_file = os.path.join(f'score_mse_file_{Ntrial}.h5')
+
+
+Nepoch = 100
 lossT = np.zeros(Nepoch)
 lossV = np.zeros(Nepoch)
 # accT = np.zeros(Nepoch)
@@ -380,6 +380,11 @@ for epoch in range(Nepoch):
         # zero the parameter gradients, backward and update
         optimizer.zero_grad()
         loss.backward()
+
+        if CLIP:
+            clipping_value = 1e-2  # arbitrary value of your choosing
+            torch.nn.utils.clip_grad_norm_(classifier.parameters(), clipping_value)
+
         optimizer.step()
 
 
@@ -401,27 +406,33 @@ for epoch in range(Nepoch):
             # zero the parameter gradients, backward and update
             optimizerMSE.zero_grad()
             lossMSE.backward()
+            if CLIP:
+                clipping_value = 1e-2  # arbitrary value of your choosing
+                torch.nn.utils.clip_grad_norm_(classifierMSE.parameters(), clipping_value)
+
             optimizerMSE.step()
 
-            if epoch == Nepoch-1:
-                acc_endT.append(acc)
-                acc_end_mseT.append(accMSE)
-
-                diff = torch.sum((torch.abs(im1 - im2) ** 2), dim=(1, 2, 3)) / (im1.shape[1] * im1.shape[2] * im1.shape[3])
-                diff = torch.mean(diff)
-                diff_mseT.append(diff.item())
-                s1 = classifier.rank(im1).detach()
-                s1 *= classifier.relu6(s1 + 3) / 6
-                s2 = classifier.rank(im2).detach()
-                s2 *= classifier.relu6(s2 + 3) / 6
-                diff = torch.mean(s1 - s2)
-                diff_scoreT.append(diff.item())
-
-                del diff, s1, s2
+            # if epoch == Nepoch-1:
+            #     acc_endT.append(acc)
+            #     acc_end_mseT.append(accMSE)
+            #
+            #     diff = torch.sum((torch.abs(im1 - im2) ** 2), dim=(1, 2, 3)) / (im1.shape[1] * im1.shape[2] * im1.shape[3])
+            #     diff = torch.mean(diff)
+            #     diff_mseT.append(diff.item())
+            #     s1 = classifier.rank(im1).detach()
+            #     s1 = torch.abs(s1)
+            #     s2 = classifier.rank(im2).detach()
+            #     s2 = torch.abs(s2)
+            #     diff = torch.mean(s1 - s2)
+            #     diff_scoreT.append(diff.item())
+            #
+            #     del diff, s1, s2
 
         with torch.no_grad():
             score1 = classifier.rank(im1)
+            score1 = torch.abs(score1)
             score2 = classifier.rank(im2)
+            score2 = torch.abs(score2)
             scorelistT.append(score1.cpu().numpy())
             scorelistT.append(score2.cpu().numpy())
 
@@ -430,8 +441,11 @@ for epoch in range(Nepoch):
             mselistT.append(mse1.cpu().numpy())
             mselistT.append(mse2.cpu().numpy())
 
+    scorelistT = np.concatenate(scorelistT).ravel()
+    mselistT = np.concatenate(mselistT).ravel()
     score_mse_figureT = plt_scoreVsMse(scorelistT, mselistT)
     writer_train.add_figure('Score_vs_mse', score_mse_figureT, epoch)
+
 
 
     # validation
@@ -469,7 +483,9 @@ for epoch in range(Nepoch):
 
             # get scores and mse
             score1 = classifier.rank(im1)
+            score1 = torch.abs(score1)
             score2 = classifier.rank(im2)
+            score2 = torch.abs(score2)
             scorelistV.append(score1.cpu().numpy())
             scorelistV.append(score2.cpu().numpy())
 
@@ -504,6 +520,8 @@ for epoch in range(Nepoch):
 
                     del diff, s1, s2
 
+    scorelistV = np.concatenate(scorelistV).ravel()
+    mselistV = np.concatenate(mselistV).ravel()
     score_mse_figureV = plt_scoreVsMse(scorelistV, mselistV)
     writer_val.add_figure('Score_vs_mse', score_mse_figureV, epoch)
 
@@ -511,7 +529,6 @@ for epoch in range(Nepoch):
 
     #print('Epoch = %d : Loss Eval = %f , Loss Train = %f' % (epoch, eval_avg.avg(), train_avg.avg()))
     print(f'Epoch = {epoch:03d}, Loss = {eval_avg.avg()}, Loss train = {train_avg.avg()}, Acc = {eval_acc.avg()}, Acc train = {train_acc.avg()}')
-    print(f'        MSE: Loss = {eval_avgMSE.avg()}, Loss train = {train_avgMSE.avg()}, Acc = {eval_accMSE.avg()}, Acc train = {train_accMSE.avg()}')
     lossT[epoch] = train_avg.avg()
     lossV[epoch] = eval_avg.avg()
 
@@ -523,6 +540,8 @@ for epoch in range(Nepoch):
     writer_train.add_scalar('Acc', train_acc.avg(), epoch)
 
     if trainScoreandMSE:
+        print(f'MSE: Loss = {eval_avgMSE.avg()}, Loss train = {train_avgMSE.avg()}, Acc = {eval_accMSE.avg()}, Acc train = {train_accMSE.avg()}')
+
         writer_val.add_scalar('LossMSE', eval_avgMSE.avg(),
                               epoch)
         writer_train.add_scalar('LossMSE', train_avgMSE.avg(),
@@ -534,21 +553,27 @@ for epoch in range(Nepoch):
                                 epoch)
 
 
-# save models
-state = {
-    'state_dict': classifier.state_dict(),
-    'optimizer': optimizer.state_dict(),
-    'epoch': epoch
-}
-torch.save(state,os.path.join(log_dir,f'RankClassifier{Ntrial}_{Nepoch}.pt'))
-
-if trainScoreandMSE:
-    stateMSE = {
-        'state_dict': classifierMSE.state_dict(),
-        'optimizer': optimizerMSE.state_dict(),
+    # save models
+    state = {
+        'state_dict': classifier.state_dict(),
+        'optimizer': optimizer.state_dict(),
         'epoch': epoch
     }
-    torch.save(stateMSE, os.path.join(log_dir, f'RankClassifier{Ntrial}_{Nepoch}_MSE.pt'))
+    torch.save(state,os.path.join(log_dir,f'RankClassifier{Ntrial}.pt'))
+
+    if trainScoreandMSE:
+        stateMSE = {
+            'state_dict': classifierMSE.state_dict(),
+            'optimizer': optimizerMSE.state_dict(),
+            'epoch': epoch
+        }
+        torch.save(stateMSE, os.path.join(log_dir, f'RankClassifier{Ntrial}_MSE.pt'))
+
+with h5py.File(score_mse_file, 'w') as hf:
+    hf.create_dataset(f'scoreT_epoch{Nepoch}', data=scorelistT)
+    hf.create_dataset(f'mseT_epoch{Nepoch}', data=mselistT)
+    hf.create_dataset(f'scoreV_epoch{Nepoch}', data=scorelistV)
+    hf.create_dataset(f'mseV_epoch{Nepoch}', data=mselistV)
 
 # if trainScoreandMSE:
 #     acc_endT = np.array(acc_endT)

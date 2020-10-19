@@ -45,7 +45,7 @@ class L2cnn(nn.Module):
         channels = channel_base
         pool_rate = 2
 
-        channels_in = 1
+        channels_in = 2
         channels_out = channel_base
         self.block1 = nn.Sequential(nn.Conv2d( channels_in, channels_out, kernel_size=3, padding=1, stride=1),
                                     nn.BatchNorm2d(channels_out),
@@ -94,10 +94,10 @@ class L2cnn(nn.Module):
         self.pool4 = nn.Sequential(nn.ReLU(inplace=True), nn.AvgPool2d(pool_rate))
 
     def forward(self, x):
-        x = x**2
-        # x = torch.square(x)
-        x = torch.sum(x, dim=-3, keepdim=True)
-        x = torch.sqrt(x)
+        # x = x**2
+        # # x = torch.square(x)
+        # x = torch.sum(x, dim=-3, keepdim=True)
+        # x = torch.sqrt(x)
 
         x = self.block1(x) + self.shortcut1(x)
         x = self.pool1(x)
@@ -519,17 +519,16 @@ class Classifier(nn.Module):
 
         else:
             score1 = self.rank(image1)
-            #score1 = torch.abs(score1)
-            score1 = score1 * self.relu6(score1+3)/6 + 1
+            score1 = torch.abs(score1)
+            #score1 = score1 * self.relu6(score1+3)/6 + 1
 
             score2 = self.rank(image2)
-            #score2 = torch.abs(score2)
-            score2 = score2 * self.relu6(score2 + 3) / 6 + 1
+            score2 = torch.abs(score2)
+            #score2 = score2 * self.relu6(score2 + 3) / 6 + 1
 
         score1 = score1.view(score1.shape[0], -1)
         score2 = score2.view(score2.shape[0], -1)
         # print(f'shape of score2 after reshape {score2.shape}')
-        d = score1 - score2
         # d shape [BatchSize, 1]
 
 
@@ -544,6 +543,10 @@ class Classifier(nn.Module):
         return d
 
 
+#backward hook
+def printgradnorm(self, grad_input, grad_output):
+    print('Inside ' + self.__class__.__name__ + ' backward')
+    print('grad_input norm:', grad_output[0].norm())
 
 
 
