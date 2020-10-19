@@ -491,6 +491,14 @@ class DataGenerator_rank(Dataset):
         return x1, x2, y
         # return x1, x2, y, TRANS, CROP
 
+class MSEmodule(nn.Module):
+    def __init__(self):
+        super(MSEmodule, self).__init__()
+
+    def forward(self, x):
+        y = x.view(x.shape[0], -1)
+        return torch.sqrt(torch.sum(torch.square(y), dim=1, keepdim=True))
+
 
 class Classifier(nn.Module):
 
@@ -508,33 +516,26 @@ class Classifier(nn.Module):
         self.drop = nn.Dropout(p=0.5)
         self.act1 = nn.Sigmoid()
 
-    def forward(self, image1, image2, trainOnMSE=False):
+    def forward(self, image1, image2):
 
-        if trainOnMSE:
-            score1 = torch.sum((torch.abs(image1) ** 2), dim=(1, 2, 3)) / (
-                        image1.shape[1] * image1.shape[2] * image1.shape[3])
-            score2 = torch.sum((torch.abs(image2) ** 2), dim=(1, 2, 3)) / (
-                        image1.shape[1] * image1.shape[2] * image1.shape[3])
-           
 
-        else:
-            score1 = self.rank(image1)
-            score1 = torch.abs(score1)
-            #score1 = score1 * self.relu6(score1+3)/6 + 1
 
-            score2 = self.rank(image2)
-            score2 = torch.abs(score2)
-            #score2 = score2 * self.relu6(score2 + 3) / 6 + 1
+        score1 = self.rank(image1)
+        score1 = torch.abs(score1)
+        #score1 = score1 * self.relu6(score1+3)/6
+
+        score2 = self.rank(image2)
+        score2 = torch.abs(score2)
+        #score2 = score2 * self.relu6(score2 + 3) / 6
+
 
         score1 = score1.view(score1.shape[0], -1)
         score2 = score2.view(score2.shape[0], -1)
         # print(f'shape of score2 after reshape {score2.shape}')
+
         # d shape [BatchSize, 1]
-
-
         # Feed difference
         d = score1 - score2
-        #d = torch.cat([score1,score2], dim=1)
         # d shape [BatchSize, 1]
         d = self.fc1(d)
         d = self.act1(d)
