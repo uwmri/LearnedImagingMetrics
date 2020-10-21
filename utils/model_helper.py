@@ -7,7 +7,10 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset
 from torchvision.models.mobilenet import _make_divisible, ConvBNReLU, InvertedResidual
 
-from efficientnet_pytorch import EfficientNet
+try:
+    from efficientnet_pytorch import EfficientNet
+except:
+    print('Warning efficientnet not found')
 
 from utils.utils import *
 
@@ -38,16 +41,14 @@ class L2cnn(nn.Module):
 
     # ResNet for 2 channel.
 
-    def __init__(self, channel_base=32, channel_scale=1):
+    def __init__(self, channel_base=64, channels_in=None,  channel_scale=1):
 
         super(L2cnn, self).__init__()
 
-        channels = channel_base
         pool_rate = 2
 
-        channels_in = 1
         channels_out = channel_base
-        self.block1 = nn.Sequential(nn.Conv2d( channels_in, channels_out, kernel_size=3, padding=1, stride=1),
+        self.block1 = nn.Sequential(nn.Conv2d(channels_in, channels_out, kernel_size=3, padding=1, stride=1),
                                     nn.BatchNorm2d(channels_out),
                                     nn.ReLU(inplace=True),
                                     nn.Conv2d(channels_out, channels_out, kernel_size=3, padding=1, stride=1),
@@ -94,11 +95,10 @@ class L2cnn(nn.Module):
         self.pool4 = nn.Sequential(nn.ReLU(inplace=True), nn.AvgPool2d(pool_rate))
 
     def forward(self, x):
-        x = x**2
+        #x = x**2
         # x = torch.square(x)
-        x = torch.sum(x, dim=-3, keepdim=True)
-        x = torch.sqrt(x)
-
+        #x = torch.sum(x, dim=-3, keepdim=True)
+        #x = torch.sqrt(x)
         x = self.block1(x) + self.shortcut1(x)
         x = self.pool1(x)
 
@@ -411,7 +411,7 @@ def sigpy_image_rotate2( image, theta, verbose=False, device=sp.Device(0)):
 
 class DataGenerator_rank(Dataset):
     def __init__(self, X_1, X_2, Y, ID, augmentation=False,  roll_magL=-15, roll_magH=15,
-                 crop_sizeL=1, crop_sizeH=15, device=sp.Device(0)):
+                 crop_sizeL=1, crop_sizeH=15, scale_min=0.2, scale_max=2.0, device=sp.Device(0), pad_channels=0):
 
         '''
         :param X_1: X_1_cnnT/V
@@ -425,12 +425,15 @@ class DataGenerator_rank(Dataset):
         self.Y = Y
         self.ID = ID
         self.augmentation = augmentation
+        self.pad_channels = 0
 
         self.roll_magL = roll_magL
         self.roll_magH = roll_magH
 
         self.crop_sizeL = crop_sizeL
         self.crop_sizeH = crop_sizeH
+        self.scale_min = scale_min
+        self.scale_max = scale_max
         self.device = device
 
     def __len__(self):
@@ -440,17 +443,19 @@ class DataGenerator_rank(Dataset):
 
         if self.augmentation:
             FLIP = np.ndarray.item(np.random.choice([False, True], size=1, p=[0.5, 0.5]))
+            scale = np.random.random()*(self.scale_max-self.scale_min) + self.scale_min
             ROT = True
             ROLL = True
         else:
             FLIP = False
             ROT = False
             ROLL = False
+            scale = 1.0
 
         IDnum = self.ID[idx]
 
-        x1 = self.X_1[IDnum,...]
-        x2 = self.X_2[IDnum,...]
+        x1 = scale*self.X_1[IDnum,...].copy()
+        x2 = scale*self.X_2[IDnum,...].copy()
 
         # Push to GPU
         x1 = sp.to_device(x1, self.device)
@@ -481,8 +486,9 @@ class DataGenerator_rank(Dataset):
 
         # make images 3 channel.
         zeros = torch.zeros(((1,) + x1.shape[1:]), dtype=x1.dtype, device=x1.get_device())
-        x1 = torch.cat((x1, zeros), dim=0)
-        x2 = torch.cat((x2, zeros), dim=0)
+        for i in range(self.pad_channels):
+            x1 = torch.cat((x1, zeros), dim=0)
+            x2 = torch.cat((x2, zeros), dim=0)
 
         y = self.Y[idx]
 
@@ -502,41 +508,42 @@ class Classifier(nn.Module):
 
     def __init__(self, rank):
         super(Classifier,self).__init__()
-        # self.rank = ResNet2(BasicBlock, [1,1,1,1])
-        # self.rank = mobilenet_v2(pretrained=False, num_classes=1)
-        # self.rank = EfficientNet.from_pretrained('efficientnet-b0', num_classes=1)
 
         self.rank = rank        
-        self.relu6 = nn.ReLU6(inplace=True)
 
-        self.fc1 = nn.Linear(1, 8)
-        self.fc2 = nn.Linear(8, 3)
-        self.drop = nn.Dropout(p=0.5)
-        self.act1 = nn.Sigmoid()
+        self.f = nn.Sequential( nn.Linear(1, 16),
+                                 nn.Sigmoid(),
+                                 nn.Linear(16, 1))
+
+        self.g = nn.Sequential( nn.Linear(1, 16),
+                                 nn.Sigmoid(),
+                                 nn.Linear(16, 1))
+
 
     def forward(self, image1, image2):
 
 
         score1 = self.rank(image1)
-        #score1 = torch.abs(score1)
-        #score1 = score1 * self.relu6(score1+3)/6
-
         score2 = self.rank(image2)
-        #score2 = torch.abs(score2)
-        #score2 = score2 * self.relu6(score2 + 3) / 6
 
         score1 = score1.view(score1.shape[0], -1)
         score2 = score2.view(score2.shape[0], -1)
-        # print(f'shape of score2 after reshape {score2.shape}')
 
-
-        # Feed difference
+        # Feed difference to classifier
         d = score1 - score2
-        # d shape [BatchSize, 1]
-        d = self.fc1(d)
-        d = self.act1(d)
-        d = self.drop(d)
-        d = F.softmax(self.fc2(d), dim=1)      # (BatchSize, 3)
+
+        # Train based on symetric assumption
+        # P-left = f(x)
+        # P-same = g(x), a symetric function g(x) = g(-x)
+        # P-right = f(-x)
+        px = self.f(d)
+        gx = self.g(d) + self.g(-d)
+        pnx= self.f(-d)
+
+        d = torch.cat([px, gx, pnx],dim=1)
+        d = F.softmax(d, dim=1)      # (BatchSize, 3)
+
+
         return d
 
 

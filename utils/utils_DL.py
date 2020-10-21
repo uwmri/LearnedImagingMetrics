@@ -67,6 +67,8 @@ def plt_scoreVsMse(scorelist, mselist):
     figure = plt.figure(figsize=(10,10))
     ax = plt.gca()
     plt.scatter(scorelist, mselist,s=150, alpha=0.3)
+    plt.xlim([0, 2*np.median(scorelist)])
+    plt.ylim([0, 2*np.median(mselist)])
     plt.xlabel('Score', fontsize=24)
     plt.ylabel('MSE', fontsize=24)
     ax.tick_params(axis='both', which='major', labelsize=20)

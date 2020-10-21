@@ -203,7 +203,7 @@ elif EFF:
 elif RESNET:
     ranknet = ResNet2(BasicBlock, [2,2,2,2], for_denoise=False)  # Less than ResNet18
 else:
-    ranknet = L2cnn()
+    ranknet = L2cnn(channels_in=X_1.shape[-3])
 
 torchsummary.summary(ranknet, (X_1.shape[-3], maxMatSize, maxMatSize), device="cpu")
 
@@ -283,9 +283,7 @@ else:
             optimizerMSE = optim.SGD(classifierMSE.parameters(), lr=0.00097, momentum=0.556)
             # optimizerMSE = optim.Adam(classifier.parameters(), lr=0.001)
 
-
 loss_func = nn.CrossEntropyLoss()
-
 
 classifier.cuda()
 if trainScoreandMSE:
