@@ -19,8 +19,6 @@ except:
 from utils.model_helper import *
 from utils.utils_DL import *
 
-subtract_truth = True
-include_unsubtracted = False
 train_on_mag = True
 shuffle_observers = True
 MOBILE = False
@@ -72,13 +70,14 @@ NRANKS = ranks.shape[0]
 
 if train_on_mag:
     nch = 1
-    if include_unsubtracted:
-        nch += 1
 else:
     nch = 2
 
+# Images and truth
 X_1 = np.zeros((NEXAMPLES, maxMatSize, maxMatSize, nch), dtype=np.float32)  # saved as complex128 though
 X_2 = np.zeros((NEXAMPLES, maxMatSize, maxMatSize, nch), dtype=np.float32)
+X_T = np.zeros((NEXAMPLES, maxMatSize, maxMatSize, nch), dtype=np.float32)
+
 # X_T = np.zeros((NEXAMPLES, maxMatSize, maxMatSize),dtype=np.complex64)
 Labels = np.zeros(NRANKS, dtype=np.int32)
 
@@ -103,20 +102,15 @@ for i in range(NEXAMPLES):
     im2 = zero_pad2D(np.array(hf[name2]), maxMatSize, maxMatSize)
     truth = zero_pad2D(np.array(hf[nameT]), maxMatSize, maxMatSize)
 
-    if subtract_truth:
-        if train_on_mag:
-            X_1[i, :, :, 0] = np.sqrt(np.sum(np.square(im1 - truth), axis=-1))
-            X_2[i, :, :, 0] = np.sqrt(np.sum(np.square(im2 - truth), axis=-1))
+    if train_on_mag:
+        X_1[i] = np.sqrt(np.sum(np.square(im1), axis=-1, keepdims=True))
+        X_2[i] = np.sqrt(np.sum(np.square(im2), axis=-1, keepdims=True))
+        X_T[i] = np.sqrt(np.sum(np.square(truth), axis=-1, keepdims=True))
 
-            if include_unsubtracted:
-                X_1[i, :, :, 1] = np.sqrt(np.sum(np.square(im1), axis=-1))
-                X_2[i, :, :, 1] = np.sqrt(np.sum(np.square(im2), axis=-1))
-        else:
-            X_1[i, :, :] = im1 - truth
-            X_2[i, :, :] = im2 - truth
     else:
-        X_1[i, :, :] = im1
-        X_2[i, :, :] = im2
+        X_1[i] = im1
+        X_2[i] = im2
+        X_T[i] = truth
 
     if i % 1e2 == 0:
         print(f'loading example pairs {i + 1}')
@@ -138,6 +132,8 @@ for i in range(0, ranks.shape[0]):
 # torch tensor should be minibatch * channel * H*W
 X_1 = np.transpose(X_1, [0, 3, 1, 2])
 X_2 = np.transpose(X_2, [0, 3, 1, 2])
+X_T = np.transpose(X_T, [0, 3, 1, 2])
+
 print(f'X_1 shape {X_1.shape}')
 
 # MobileNet requires values [0,1] and normalized
@@ -171,23 +167,25 @@ Labels_cnnV = Labels[ntrain:]
 
 # Data generator
 BATCH_SIZE = 16
-trainingset = DataGenerator_rank(X_1, X_2, Labels_cnnT, idT, augmentation=True, pad_channels=0)
+trainingset = DataGenerator_rank(X_1, X_2, X_T, Labels_cnnT, idT, augmentation=True, pad_channels=0)
 loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=True)
 
-validationset = DataGenerator_rank(X_1, X_2, Labels_cnnV, idV, augmentation=False, pad_channels=0)
+validationset = DataGenerator_rank(X_1, X_2, X_T, Labels_cnnV, idV, augmentation=False, pad_channels=0)
 loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=False)
 
 
 # check loader, show a batch
 check = iter(loader_T)
-checkim1, checkim2, checklb = check.next()
+checkim1, checkim2, checkimt, checklb = check.next()
 checkim1 = checkim1.permute(0, 2, 3, 1)
 checkim2 = checkim2.permute(0, 2, 3, 1)
+checkimt = checkimt.permute(0, 2, 3, 1)
 checklbnp = checklb.numpy()
 
 randnum = np.random.randint(16)
 imshow(checkim1[randnum, :, :, :].cpu())
 imshow(checkim2[randnum, :, :, :].cpu())
+imshow(checkimt[randnum, :, :, :].cpu())
 print(f'Label is {checklbnp[randnum]}')
 # print(f'Label is {checktrans[randnum]}')
 # print(f'Label is {checkcrop[randnum]}')
@@ -205,7 +203,9 @@ elif RESNET:
 else:
     ranknet = L2cnn(channels_in=X_1.shape[-3])
 
-torchsummary.summary(ranknet, (X_1.shape[-3], maxMatSize, maxMatSize), device="cpu")
+# Print summary
+torchsummary.summary(ranknet, [(X_1.shape[-3], maxMatSize, maxMatSize)
+                              ,(X_1.shape[-3], maxMatSize, maxMatSize)], device="cpu")
 
 
 # Bayesian
@@ -352,12 +352,12 @@ for epoch in range(Nepoch):
     for i, data in enumerate(loader_T, 0):
 
         # get the inputs
-        im1, im2, labels = data             # im (sl, 3 , 396, 396)
-        im1, im2 = im1.cuda(), im2.cuda()
+        im1, im2, imt, labels = data             # im (sl, 3 , 396, 396)
+        im1, im2, imt = im1.cuda(), im2.cuda(), imt.cuda()
         labels = labels.to(device, dtype=torch.long)
 
         # classifier
-        delta = classifier(im1, im2)
+        delta = classifier(im1, im2, imt)
 
         # loss
         loss = loss_func(delta, labels)
@@ -387,7 +387,7 @@ for epoch in range(Nepoch):
 
         # train on MSE
         if trainScoreandMSE:
-            deltaMSE = classifierMSE(im1, im2)
+            deltaMSE = classifierMSE(im1, im2, imt)
             lossMSE = loss_func(deltaMSE, labels)
             train_avgMSE.update(lossMSE.item(), n=BATCH_SIZE)  # here is total loss of all batches
 
@@ -410,19 +410,15 @@ for epoch in range(Nepoch):
             optimizerMSE.step()
 
         with torch.no_grad():
-            score1 = classifier.rank(im1)
+            score1 = classifier.rank(im1, imt)
             score1 = torch.abs(score1)
-            score2 = classifier.rank(im2)
+            score2 = classifier.rank(im2, imt)
             score2 = torch.abs(score2)
             scorelistT.append(score1.cpu().numpy())
             scorelistT.append(score2.cpu().numpy())
 
-            if include_unsubtracted:
-                mse1 = torch.mean((torch.abs(im1[:, 0, ...]) ** 2), dim=(1, 2))
-                mse2 = torch.mean((torch.abs(im2[:, 0, ...]) ** 2), dim=(1, 2))
-            else:
-                mse1 = torch.mean((torch.abs(im1) ** 2), dim=(1, 2, 3))
-                mse2 = torch.mean((torch.abs(im2) ** 2), dim=(1, 2, 3))
+            mse1 = torch.mean((torch.abs(im1 - imt) ** 2), dim=(1, 2, 3))
+            mse2 = torch.mean((torch.abs(im2 - imt) ** 2), dim=(1, 2, 3))
 
             mselistT.append(mse1.cpu().numpy())
             mselistT.append(mse2.cpu().numpy())
@@ -441,16 +437,13 @@ for epoch in range(Nepoch):
         for i, data in enumerate(loader_V, 0):
 
             # get the inputs
-            im1, im2, labels = data
+            im1, im2, imt, labels = data  # im (sl, 3 , 396, 396)
+            im1, im2, imt = im1.cuda(), im2.cuda(), imt.cuda()
 
-            # print(f'Val: im1 shape {im1.shape}')
-            # print(f'Val: label shape {labels.shape}')
-
-            im1, im2, = im1.cuda(), im2.cuda()
             labels = labels.to(device, dtype=torch.long)
 
             # forward
-            delta = classifier(im1, im2)
+            delta = classifier(im1, im2, imt)
 
             # loss
             loss = loss_func(delta, labels)
@@ -467,26 +460,22 @@ for epoch in range(Nepoch):
             # correct += (predictedV == labels).sum().item()
 
             # get scores and mse
-            score1 = classifier.rank(im1)
+            score1 = classifier.rank(im1, imt)
             score1 = torch.abs(score1)
-            score2 = classifier.rank(im2)
+            score2 = classifier.rank(im2, imt)
             score2 = torch.abs(score2)
             scorelistV.append(score1.cpu().numpy())
             scorelistV.append(score2.cpu().numpy())
 
-            if include_unsubtracted:
-                mse1 = torch.mean((torch.abs(im1[:,0,...]) ** 2), dim=(1, 2))
-                mse2 = torch.mean((torch.abs(im2[:,0,...]) ** 2), dim=(1, 2))
-            else:
-                mse1 = torch.mean((torch.abs(im1) ** 2), dim=(1, 2, 3))
-                mse2 = torch.mean((torch.abs(im2) ** 2), dim=(1, 2, 3))
+            mse1 = torch.mean((torch.abs(im1 - imt) ** 2), dim=(1, 2, 3))
+            mse2 = torch.mean((torch.abs(im2 - imt) ** 2), dim=(1, 2, 3))
 
             mselistV.append(mse1.cpu().numpy())
             mselistV.append(mse2.cpu().numpy())
 
             # mse-based classifier
             if trainScoreandMSE:
-                deltaMSE = classifierMSE(im1, im2)
+                deltaMSE = classifierMSE(im1, im2, imt)
                 lossMSE = loss_func(deltaMSE, labels)
                 eval_avgMSE.update(lossMSE.item(), n=BATCH_SIZE)
 
