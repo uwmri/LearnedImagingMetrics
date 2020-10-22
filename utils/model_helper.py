@@ -623,6 +623,7 @@ class Classifier(nn.Module):
         score1 = score1.view(score1.shape[0], -1)
         score2 = score2.view(score2.shape[0], -1)
 
+
         # Feed difference to classifier
         d = score1 - score2
 
@@ -638,6 +639,7 @@ class Classifier(nn.Module):
         d = F.softmax(d, dim=1)      # (BatchSize, 3)
 
 
+
         return d
 
 
@@ -647,5 +649,22 @@ def printgradnorm(self, grad_input, grad_output):
     print('grad_input norm:', grad_output[0].norm())
 
 
+def get_sampler(labels):
+    """ labels is 1d array (n,) """
+
+    class_sample_count = np.array([len(np.where(labels == t)[0]) for t in np.unique(labels)])
+    weight = 1. / class_sample_count
+    samples_weight = np.array([weight[t] for t in labels])
+
+    samples_weight = torch.from_numpy(samples_weight)
+    sampler = torch.utils.data.WeightedRandomSampler(samples_weight, len(samples_weight))
+
+    return sampler
 
 
+def get_class_weights(labels):
+    class_sample_count = np.array([len(np.where(labels == t)[0]) for t in np.unique(labels)], dtype='float32')
+    weights = class_sample_count / class_sample_count.max()
+    weights = torch.from_numpy(weights)
+
+    return weights.cuda()
