@@ -8,6 +8,7 @@ from torchvision.models import mobilenet_v2
 import torchsummary
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
+import torch
 
 try:
     from ax.service.managed_loop import optimize
@@ -18,8 +19,6 @@ except:
 from utils.model_helper import *
 from utils.utils_DL import *
 
-subtract_truth = True
-include_unsubtracted = True
 train_on_mag = True
 shuffle_observers = True
 MOBILE = False
@@ -32,9 +31,7 @@ SAMPLER = False
 WeightedLoss = False
 
 
-trainScoreandMSE = False    # train score based classifier and mse(im1)-mse(im2) based classifier at the same time
-singleChannle = True
-
+trainScoreandMSE = True    # train score based classifier and mse(im1)-mse(im2) based classifier at the same time
 
 # Ranks
 names = []
@@ -75,13 +72,14 @@ NRANKS = ranks.shape[0]
 
 if train_on_mag:
     nch = 1
-    if include_unsubtracted:
-        nch += 1
 else:
     nch = 2
 
+# Images and truth
 X_1 = np.zeros((NEXAMPLES, maxMatSize, maxMatSize, nch), dtype=np.float32)  # saved as complex128 though
 X_2 = np.zeros((NEXAMPLES, maxMatSize, maxMatSize, nch), dtype=np.float32)
+X_T = np.zeros((NEXAMPLES, maxMatSize, maxMatSize, nch), dtype=np.float32)
+
 # X_T = np.zeros((NEXAMPLES, maxMatSize, maxMatSize),dtype=np.complex64)
 Labels = np.zeros(NRANKS, dtype=np.int32)
 
@@ -101,23 +99,20 @@ for i in range(NEXAMPLES):
     name1 = 'EXAMPLE_%07d_IMAGE_%04d' % (i+1, 0)
     name2 = 'EXAMPLE_%07d_IMAGE_%04d' % (i+1, 1)
 
+
     im1 = zero_pad2D(np.array(hf[name1]), maxMatSize, maxMatSize)
     im2 = zero_pad2D(np.array(hf[name2]), maxMatSize, maxMatSize)
     truth = zero_pad2D(np.array(hf[nameT]), maxMatSize, maxMatSize)
 
-    if subtract_truth:
-        if train_on_mag:
-            X_1[i, :, :, 0] = np.sqrt(np.sum(np.square(im1 - truth), axis=-1))
-            X_2[i, :, :, 0] = np.sqrt(np.sum(np.square(im2 - truth), axis=-1))
-            if include_unsubtracted:
-                X_1[i, :, :, 1] = np.sqrt(np.sum(np.square(im1), axis=-1))
-                X_2[i, :, :, 1] = np.sqrt(np.sum(np.square(im2), axis=-1))
-        else:
-            X_1[i, :, :] = im1 - truth
-            X_2[i, :, :] = im2 - truth
+    if train_on_mag:
+        X_1[i] = np.sqrt(np.sum(np.square(im1), axis=-1, keepdims=True))
+        X_2[i] = np.sqrt(np.sum(np.square(im2), axis=-1, keepdims=True))
+        X_T[i] = np.sqrt(np.sum(np.square(truth), axis=-1, keepdims=True))
+
     else:
-        X_1[i, :, :] = im1
-        X_2[i, :, :] = im2
+        X_1[i] = im1
+        X_2[i] = im2
+        X_T[i] = truth
 
     if i % 1e2 == 0:
         print(f'loading example pairs {i + 1}')
@@ -139,6 +134,8 @@ for i in range(0, ranks.shape[0]):
 # torch tensor should be minibatch * channel * H*W
 X_1 = np.transpose(X_1, [0, 3, 1, 2])
 X_2 = np.transpose(X_2, [0, 3, 1, 2])
+X_T = np.transpose(X_T, [0, 3, 1, 2])
+
 print(f'X_1 shape {X_1.shape}')
 
 # MobileNet requires values [0,1] and normalized
@@ -173,20 +170,21 @@ Labels_cnnV = Labels[ntrain:]
 
 # Data generator
 BATCH_SIZE = 16
+
 if SAMPLER:
     # deal with imbalanced class
     samplerT = get_sampler(Labels_cnnT)
     samplerV = get_sampler(Labels_cnnV)
-    trainingset = DataGenerator_rank(X_1, X_2, Labels_cnnT, idT, augmentation=True, singleChannel=singleChannle)
+    trainingset = DataGenerator_rank(X_1, X_2, Labels_cnnT, idT, augmentation=True, pad_channels=0)
     loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=False, sampler=samplerT)
 
-    validationset = DataGenerator_rank(X_1, X_2, Labels_cnnV, idV, augmentation=False, singleChannel=singleChannle)
+    validationset = DataGenerator_rank(X_1, X_2, Labels_cnnV, idV, augmentation=False, pad_channels=0)
     loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=False, sampler=samplerV)
 else:
-    trainingset = DataGenerator_rank(X_1, X_2, Labels_cnnT, idT, augmentation=True, singleChannel=singleChannle)
+    trainingset = DataGenerator_rank(X_1, X_2, Labels_cnnT, idT, augmentation=True, pad_channels=0)
     loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=True)
 
-    validationset = DataGenerator_rank(X_1, X_2, Labels_cnnV, idV, augmentation=False, singleChannel=singleChannle)
+    validationset = DataGenerator_rank(X_1, X_2, Labels_cnnV, idV, augmentation=False, pad_channels=0)
     loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=True)
 
 if WeightedLoss:
@@ -196,14 +194,16 @@ else:
 
 # check loader, show a batch
 check = iter(loader_T)
-checkim1, checkim2, checklb = check.next()
+checkim1, checkim2, checkimt, checklb = check.next()
 checkim1 = checkim1.permute(0, 2, 3, 1)
 checkim2 = checkim2.permute(0, 2, 3, 1)
+checkimt = checkimt.permute(0, 2, 3, 1)
 checklbnp = checklb.numpy()
 
 randnum = np.random.randint(16)
 imshow(checkim1[randnum, :, :, :].cpu())
 imshow(checkim2[randnum, :, :, :].cpu())
+imshow(checkimt[randnum, :, :, :].cpu())
 print(f'Label is {checklbnp[randnum]}')
 # print(f'Label is {checktrans[randnum]}')
 # print(f'Label is {checkcrop[randnum]}')
@@ -219,10 +219,11 @@ elif EFF:
 elif RESNET:
     ranknet = ResNet2(BasicBlock, [2,2,2,2], for_denoise=False)  # Less than ResNet18
 else:
-    ranknet = L2cnn()
+    ranknet = L2cnn(channels_in=X_1.shape[-3])
 
-torchsummary.summary(ranknet, (X_1.shape[1], maxMatSize, maxMatSize), device="cpu")
-
+# Print summary
+torchsummary.summary(ranknet, [(X_1.shape[-3], maxMatSize, maxMatSize)
+                              ,(X_1.shape[-3], maxMatSize, maxMatSize)], device="cpu")
 
 
 # Bayesian
@@ -257,7 +258,7 @@ if ResumeTrain:
         classifierMSE = Classifier(ranknet)
         classifierMSE.cuda();
 
-    optimizer = optim.Adam(classifier.parameters(), lr=1e-5)
+    optimizer = optim.Adam(classifier.parameters(), lr=1e-4)
     optimizer.load_state_dict(state['optimizer'])
 
     if trainScoreandMSE:
@@ -303,10 +304,12 @@ else:
             # optimizerMSE = optim.Adam(classifier.parameters(), lr=0.001)
 
     #classifier.rank.register_backward_hook(printgradnorm)
+
     loss_func = nn.CrossEntropyLoss(weight=weight)
     classifier.cuda();
     if trainScoreandMSE:
         classifierMSE.cuda();
+
 
 
 # Training
@@ -319,13 +322,11 @@ writer_train = SummaryWriter(os.path.join(log_dir,f'runs/rank/train_{Ntrial}'))
 writer_val = SummaryWriter(os.path.join(log_dir,f'runs/rank/val_{Ntrial}'))
 
 logging.basicConfig(filename=os.path.join(log_dir,f'runs/rank/ranking_{Ntrial}.log'), filemode='w', level=logging.INFO)
-logging.info('With L2cnn, abs(score) after self.rank')
-logging.info('resume train 5383')
-
-score_mse_file = os.path.join(f'score_mse_file_{Ntrial}.h5')
+logging.info('With L2cnn, abs(score) for self.rank')
 
 
-Nepoch = 150
+Nepoch = 200
+
 lossT = np.zeros(Nepoch)
 lossV = np.zeros(Nepoch)
 # accT = np.zeros(Nepoch)
@@ -371,11 +372,12 @@ for epoch in range(Nepoch):
     for i, data in enumerate(loader_T, 0):
 
         # get the inputs
-        im1, im2, labels = data             # im (sl, 3 , 396, 396)
-        im1, im2 = im1.cuda(), im2.cuda()
+        im1, im2, imt, labels = data             # im (sl, 3 , 396, 396)
+        im1, im2, imt = im1.cuda(), im2.cuda(), imt.cuda()
         labels = labels.to(device, dtype=torch.long)
+
         # classifier
-        delta = classifier(im1, im2)
+        delta = classifier(im1, im2, imt)
 
         # loss
         loss = loss_func(delta, labels)
@@ -405,7 +407,7 @@ for epoch in range(Nepoch):
 
         # train on MSE
         if trainScoreandMSE:
-            deltaMSE = classifierMSE(im1, im2)
+            deltaMSE = classifierMSE(im1, im2, imt)
             lossMSE = loss_func(deltaMSE, labels)
             train_avgMSE.update(lossMSE.item(), n=BATCH_SIZE)  # here is total loss of all batches
 
@@ -427,32 +429,17 @@ for epoch in range(Nepoch):
 
             optimizerMSE.step()
 
-            # if epoch == Nepoch-1:
-            #     acc_endT.append(acc)
-            #     acc_end_mseT.append(accMSE)
-            #
-            #     diff = torch.sum((torch.abs(im1 - im2) ** 2), dim=(1, 2, 3)) / (im1.shape[1] * im1.shape[2] * im1.shape[3])
-            #     diff = torch.mean(diff)
-            #     diff_mseT.append(diff.item())
-            #     s1 = classifier.rank(im1).detach()
-            #     s1 = torch.abs(s1)
-            #     s2 = classifier.rank(im2).detach()
-            #     s2 = torch.abs(s2)
-            #     diff = torch.mean(s1 - s2)
-            #     diff_scoreT.append(diff.item())
-            #
-            #     del diff, s1, s2
-
         with torch.no_grad():
-            score1 = classifier.rank(im1)
+            score1 = classifier.rank(im1, imt)
             score1 = torch.abs(score1)
-            score2 = classifier.rank(im2)
+            score2 = classifier.rank(im2, imt)
             score2 = torch.abs(score2)
             scorelistT.append(score1.cpu().numpy())
             scorelistT.append(score2.cpu().numpy())
 
-            mse1 = torch.sum((torch.abs(im1) ** 2), dim=(1, 2, 3)) / (im1.shape[1] * im1.shape[2] * im1.shape[3])
-            mse2 = torch.sum((torch.abs(im2) ** 2), dim=(1, 2, 3)) / (im2.shape[1] * im2.shape[2] * im2.shape[3])
+            mse1 = torch.mean((torch.abs(im1 - imt) ** 2), dim=(1, 2, 3))
+            mse2 = torch.mean((torch.abs(im2 - imt) ** 2), dim=(1, 2, 3))
+
             mselistT.append(mse1.cpu().numpy())
             mselistT.append(mse2.cpu().numpy())
 
@@ -460,7 +447,6 @@ for epoch in range(Nepoch):
     mselistT = np.concatenate(mselistT).ravel()
     score_mse_figureT = plt_scoreVsMse(scorelistT, mselistT)
     writer_train.add_figure('Score_vs_mse', score_mse_figureT, epoch)
-
 
 
     # validation
@@ -471,16 +457,13 @@ for epoch in range(Nepoch):
         for i, data in enumerate(loader_V, 0):
 
             # get the inputs
-            im1, im2, labels = data
+            im1, im2, imt, labels = data  # im (sl, 3 , 396, 396)
+            im1, im2, imt = im1.cuda(), im2.cuda(), imt.cuda()
 
-            # print(f'Val: im1 shape {im1.shape}')
-            # print(f'Val: label shape {labels.shape}')
-
-            im1, im2, = im1.cuda(), im2.cuda()
             labels = labels.to(device, dtype=torch.long)
 
             # forward
-            delta = classifier(im1, im2)
+            delta = classifier(im1, im2, imt)
 
             # loss
             loss = loss_func(delta, labels)
@@ -497,43 +480,27 @@ for epoch in range(Nepoch):
             # correct += (predictedV == labels).sum().item()
 
             # get scores and mse
-            score1 = classifier.rank(im1)
+            score1 = classifier.rank(im1, imt)
             score1 = torch.abs(score1)
-            score2 = classifier.rank(im2)
+            score2 = classifier.rank(im2, imt)
             score2 = torch.abs(score2)
             scorelistV.append(score1.cpu().numpy())
             scorelistV.append(score2.cpu().numpy())
 
-            mse1 = torch.sum((torch.abs(im1) ** 2), dim=(1, 2, 3)) / (im1.shape[1] * im1.shape[2] * im1.shape[3])
-            mse2 = torch.sum((torch.abs(im2) ** 2), dim=(1, 2, 3)) / (im2.shape[1] * im2.shape[2] * im2.shape[3])
+            mse1 = torch.mean((torch.abs(im1 - imt) ** 2), dim=(1, 2, 3))
+            mse2 = torch.mean((torch.abs(im2 - imt) ** 2), dim=(1, 2, 3))
+
             mselistV.append(mse1.cpu().numpy())
             mselistV.append(mse2.cpu().numpy())
 
             # mse-based classifier
             if trainScoreandMSE:
-                deltaMSE = classifierMSE(im1, im2)
+                deltaMSE = classifierMSE(im1, im2, imt)
                 lossMSE = loss_func(deltaMSE, labels)
                 eval_avgMSE.update(lossMSE.item(), n=BATCH_SIZE)
 
                 accMSE = acc_calc(deltaMSE, labels, BatchSize=BATCH_SIZE * 2)
                 eval_accMSE.update(accMSE, n=1)
-
-                # save accuracy, mean MSE and mean (score1-score2) for each minibatches
-                if epoch == Nepoch-1:
-                    acc_endV.append(acc)
-                    acc_end_mseV.append(accMSE)
-
-                    diff = torch.sum((torch.abs(im1-im2)**2),dim=(1,2,3))/(im1.shape[1]*im1.shape[2]*im1.shape[3])
-                    diff = torch.mean(diff)
-                    diff_mseV.append(diff.item())
-                    s1 = classifier.rank(im1).detach()
-                    s1 *= classifier.relu6(s1+3)/6
-                    s2 = classifier.rank(im2).detach()
-                    s2 *= classifier.relu6(s2+3)/6
-                    diff = torch.mean(s1 - s2)
-                    diff_scoreV.append(diff.item())
-
-                    del diff, s1, s2
 
     scorelistV = np.concatenate(scorelistV).ravel()
     mselistV = np.concatenate(mselistV).ravel()

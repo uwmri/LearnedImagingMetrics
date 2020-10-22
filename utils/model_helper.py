@@ -7,13 +7,115 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset
 from torchvision.models.mobilenet import _make_divisible, ConvBNReLU, InvertedResidual
 
-from efficientnet_pytorch import EfficientNet
+try:
+    from efficientnet_pytorch import EfficientNet
+except:
+    print('Warning efficientnet not found')
 
 from utils.utils import *
 
 import torchvision.transforms.functional as TF
 import sigpy as sp
 import math
+import torch
+import torch.nn.functional as F
+from math import exp
+import numpy as np
+
+
+def gaussian(window_size, sigma):
+    gauss = torch.Tensor([exp(-(x - window_size // 2) ** 2 / float(2 * sigma ** 2)) for x in range(window_size)])
+    return gauss / gauss.sum()
+
+
+def create_window(window_size, channel=1):
+    _1D_window = gaussian(window_size, 1.5).unsqueeze(1)
+    _2D_window = _1D_window.mm(_1D_window.t()).float().unsqueeze(0).unsqueeze(0)
+    window = _2D_window.expand(channel, 1, window_size, window_size).contiguous()
+    return window
+
+
+def ssim(img1, img2, window_size=11, window=None, size_average=True, full=False, val_range=None):
+    # Value range can be different from 255. Other common ranges are 1 (sigmoid) and 2 (tanh).
+    if val_range is None:
+        if torch.max(img1) > 128:
+            max_val = 255
+        else:
+            max_val = 1
+
+        if torch.min(img1) < -0.5:
+            min_val = -1
+        else:
+            min_val = 0
+        L = max_val - min_val
+    else:
+        L = val_range
+
+    padd = 0
+    (_, channel, height, width) = img1.size()
+    if window is None:
+        real_size = min(window_size, height, width)
+        window = create_window(real_size, channel=channel).to(img1.device)
+
+    mu1 = F.conv2d(img1, window, padding=padd, groups=channel)
+    mu2 = F.conv2d(img2, window, padding=padd, groups=channel)
+
+    mu1_sq = mu1.pow(2)
+    mu2_sq = mu2.pow(2)
+    mu1_mu2 = mu1 * mu2
+
+    sigma1_sq = F.conv2d(img1 * img1, window, padding=padd, groups=channel) - mu1_sq
+    sigma2_sq = F.conv2d(img2 * img2, window, padding=padd, groups=channel) - mu2_sq
+    sigma12 = F.conv2d(img1 * img2, window, padding=padd, groups=channel) - mu1_mu2
+
+    C1 = (0.01 * L) ** 2
+    C2 = (0.03 * L) ** 2
+
+    v1 = 2.0 * sigma12 + C2
+    v2 = sigma1_sq + sigma2_sq + C2
+    cs = torch.mean(v1 / v2)  # contrast sensitivity
+
+    ssim_map = ((2 * mu1_mu2 + C1) * v1) / ((mu1_sq + mu2_sq + C1) * v2)
+
+    if size_average:
+        ret = ssim_map.mean()
+    else:
+        ret = ssim_map.mean(1).mean(1).mean(1)
+
+    if full:
+        return ret, cs
+    return ret
+
+
+# Classes to re-use window
+class SSIM(torch.nn.Module):
+    def __init__(self, window_size=11, size_average=False, val_range=1):
+        super(SSIM, self).__init__()
+        self.window_size = window_size
+        self.size_average = size_average
+        self.val_range = val_range
+
+        # Assume 1 channel for SSIM
+        self.channel = 1
+        self.window = create_window(window_size)
+
+    def forward(self, img1, img2):
+        (_, channel, _, _) = img1.size()
+
+        if channel == self.channel and self.window.dtype == img1.dtype:
+            window = self.window.to(img1.device).type(img1.dtype)
+        else:
+            window = create_window(self.window_size, channel).to(img1.device).type(img1.dtype)
+            self.window = window
+            self.channel = channel
+
+        ssimv = ssim(img1, img2, window=window, window_size=self.window_size,
+                    size_average=self.size_average, val_range=self.val_range)
+        ssimv = torch.reshape( ssimv, (-1, 1))
+
+        return ssimv
+
+
 
 class conv_bn(nn.Module):
     '''conv ->bn + shortcut -> relu'''
@@ -34,87 +136,71 @@ class conv_bn(nn.Module):
         x = self.relu(x)
         return x
 
+class L2cnnBlock(nn.Module):
+    def __init__(self, channels_in=64, channels_out=64, pool_rate=2):
+        super(L2cnnBlock, self).__init__()
+
+        self.block = nn.Sequential(nn.Conv2d( channels_in, channels_out, kernel_size=3, padding=1, stride=1),
+                                    nn.BatchNorm2d(channels_out),
+                                    nn.ReLU(inplace=True),
+                                    nn.Conv2d(channels_out, channels_out, kernel_size=3, padding=1, stride=1),
+                                    nn.BatchNorm2d(channels_out),
+                                    nn.ReLU(inplace=True))
+        self.shortcut = nn.Sequential(nn.Conv2d( channels_in, channels_out, kernel_size=1, padding=0, stride=1),
+                                    nn.BatchNorm2d(channels_out))
+        self.pool = nn.Sequential(nn.ReLU(inplace=True), nn.AvgPool2d(pool_rate))
+
+    def forward(self,x):
+        x = self.block(x) + self.shortcut(x)
+        x = self.pool(x)
+        return x
+
+
 class L2cnn(nn.Module):
-
-    # ResNet for 2 channel.
-
-    def __init__(self, channel_base=32, channel_scale=1):
+    def __init__(self, channel_base=32, channels_in=1,  channel_scale=1, group_depth=8):
 
         super(L2cnn, self).__init__()
-
-        channels = channel_base
         pool_rate = 2
-
-        channels_in = 2
         channels_out = channel_base
-        self.block1 = nn.Sequential(nn.Conv2d( channels_in, channels_out, kernel_size=3, padding=1, stride=1),
-                                    nn.BatchNorm2d(channels_out),
-                                    nn.ReLU(inplace=True),
-                                    nn.Conv2d(channels_out, channels_out, kernel_size=3, padding=1, stride=1),
-                                    nn.BatchNorm2d(channels_out),
-                                    nn.ReLU(inplace=True))
-        self.shortcut1 = nn.Sequential(nn.Conv2d( channels_in, channels_out, kernel_size=1, padding=0, stride=1),
-                                    nn.BatchNorm2d(channels_out))
-        self.pool1 = nn.Sequential(nn.ReLU(inplace=True), nn.AvgPool2d(pool_rate))
 
-        channels_in = channels_out
-        channels_out = channels_out*channel_scale
-        self.block2 = nn.Sequential(nn.Conv2d( channels_in, channels_out, kernel_size=3, padding=1, stride=1),
-                                    nn.BatchNorm2d(channels_out),
-                                    nn.ReLU(inplace=True),
-                                    nn.Conv2d(channels_out, channels_out, kernel_size=3, padding=1, stride=1),
-                                    nn.BatchNorm2d(channels_out),
-                                    nn.ReLU(inplace=True))
-        self.shortcut2 = nn.Sequential(nn.Conv2d( channels_in, channels_out, kernel_size=1, padding=0, stride=1),
-                                    nn.BatchNorm2d(channels_out))
-        self.pool2 = nn.Sequential(nn.ReLU(inplace=True), nn.AvgPool2d(pool_rate))
+        # Connect to output using a linear combination
+        self.layer_connector =  nn.Linear(3,1,bias=False)
+        self.ssim_op = SSIM( window_size=11, size_average=False, val_range=1)
 
-        channels_in = channels_out
-        channels_out = channels_out*channel_scale
-        self.block3 = nn.Sequential(nn.Conv2d( channels_in, channels_out, kernel_size=3, padding=1, stride=1),
-                                    nn.BatchNorm2d(channels_out),
-                                    nn.ReLU(inplace=True),
-                                    nn.Conv2d(channels_out, channels_out, kernel_size=3, padding=1, stride=1),
-                                    nn.BatchNorm2d(channels_out),
-                                    nn.ReLU(inplace=True))
-        self.shortcut3 = nn.Sequential(nn.Conv2d( channels_in, channels_out, kernel_size=1, padding=0, stride=1),
-                                    nn.BatchNorm2d(channels_out))
-        self.pool3 = nn.Sequential(nn.ReLU(inplace=True), nn.AvgPool2d(pool_rate))
+        self.layers = nn.ModuleList()
+        for block in range(group_depth):
 
-        channels_in = channels_out
-        channels_out = channels_out*channel_scale
-        self.block4 = nn.Sequential(nn.Conv2d( channels_in, channels_out, kernel_size=3, padding=1, stride=1),
-                                    nn.BatchNorm2d(channels_out),
-                                    nn.ReLU(inplace=True),
-                                    nn.Conv2d(channels_out, channels_out, kernel_size=3, padding=1, stride=1),
-                                    nn.BatchNorm2d(channels_out),
-                                    nn.ReLU(inplace=True))
-        self.shortcut4 = nn.Sequential(nn.Conv2d( channels_in, channels_out, kernel_size=1, padding=0, stride=1),
-                                    nn.BatchNorm2d(channels_out))
-        self.pool4 = nn.Sequential(nn.ReLU(inplace=True), nn.AvgPool2d(pool_rate))
+            self.layers.append(L2cnnBlock(channels_in, channels_out, pool_rate))
 
-    def forward(self, x):
-        # x = x**2
-        # # x = torch.square(x)
-        # x = torch.sum(x, dim=-3, keepdim=True)
-        # x = torch.sqrt(x)
+            # Update channels
+            channels_in = channels_out
+            channels_out = channels_out * channel_scale
 
-        x = self.block1(x) + self.shortcut1(x)
-        x = self.pool1(x)
+    def layer_mse(self, x):
+        y = x.view(x.shape[0], -1)
+        return torch.mean(torch.square(y), dim=1, keepdim=True)
 
-        x = self.block2(x) + self.shortcut2(x)
-        x = self.pool2(x)
+    def forward(self, input, truth):
+        x = input.clone()
 
-        x = self.block3(x) + self.shortcut3(x)
-        x = self.pool3(x)
+        # SSIM
+        ssim = 1.0 - self.ssim_op(x, truth)
 
-        x = self.block4(x) + self.shortcut4(x)
-        x = self.pool4(x)
+        diff = input - truth
 
-        x = torch.reshape(x,(x.shape[0],-1))
+        # Mean square error
+        mse = self.layer_mse(diff)
 
-        x = x**2
-        score = torch.sum(x, dim=1)
+        # Convolutional pathway
+        for l in self.layers:
+            diff = l(diff)
+        cnn_score = self.layer_mse(diff)
+
+        #x = torch.reshape(x,(x.shape[0],-1))
+        #x = x**2
+        #score = torch.mean(x, dim=1)
+        combined = torch.cat([ssim,mse,cnn_score],dim=1)
+        score = self.layer_connector(combined)
         # score = torch.abs(score)
 
         return score
@@ -410,11 +496,12 @@ def sigpy_image_rotate2( image, theta, verbose=False, device=sp.Device(0)):
 
 
 class DataGenerator_rank(Dataset):
-    def __init__(self, X_1, X_2, Y, ID, augmentation=False,  roll_magL=-15, roll_magH=15,
-                 crop_sizeL=1, crop_sizeH=15, device=sp.Device(0), singleChannel=True):
+    def __init__(self, X_1, X_2, X_T, Y, ID, augmentation=False,  roll_magL=-15, roll_magH=15,
+                 crop_sizeL=1, crop_sizeH=15, scale_min=0.2, scale_max=2.0, device=sp.Device(0), pad_channels=0):
 
         '''
         :param X_1: X_1_cnnT/V
+        :param X_2: X_2_cnnT/V
         :param X_2: X_2_cnnT/V
         :param Y: labels
         :param transform
@@ -422,17 +509,20 @@ class DataGenerator_rank(Dataset):
         '''
         self.X_1 = X_1
         self.X_2 = X_2
+        self.X_T = X_T
         self.Y = Y
         self.ID = ID
         self.augmentation = augmentation
+        self.pad_channels = pad_channels
 
         self.roll_magL = roll_magL
         self.roll_magH = roll_magH
 
         self.crop_sizeL = crop_sizeL
         self.crop_sizeH = crop_sizeH
+        self.scale_min = scale_min
+        self.scale_max = scale_max
         self.device = device
-        self.singleChannel = singleChannel
 
     def __len__(self):
         return len(self.ID)
@@ -441,26 +531,30 @@ class DataGenerator_rank(Dataset):
 
         if self.augmentation:
             FLIP = np.ndarray.item(np.random.choice([False, True], size=1, p=[0.5, 0.5]))
+            scale = np.random.random()*(self.scale_max-self.scale_min) + self.scale_min
             ROT = True
             ROLL = True
         else:
             FLIP = False
             ROT = False
             ROLL = False
+            scale = 1.0
 
         IDnum = self.ID[idx]
 
-        x1 = self.X_1[IDnum,...]
-        x2 = self.X_2[IDnum,...]
+        x1 = scale * self.X_1[IDnum, ...].copy()
+        x2 = scale * self.X_2[IDnum, ...].copy()
+        xt = scale * self.X_T[IDnum, ...].copy()
 
         # Push to GPU
         x1 = sp.to_device(x1, self.device)
         x2 = sp.to_device(x2, self.device)
+        xt = sp.to_device(xt, self.device)
 
         # Rotation
         if ROT:
             angle = math.pi*(1- 2.0*np.random.rand())
-            x1, x2 = sigpy_image_rotate2( [x1,x2], angle, device=self.device)
+            x1, x2, xt = sigpy_image_rotate2( [x1, x2, xt], angle, device=self.device)
 
         xp = self.device.xp
 
@@ -469,6 +563,7 @@ class DataGenerator_rank(Dataset):
             flip_axis = np.ndarray.item(np.random.choice([0, 1], size=1, p=[0.5, 0.5]))
             x1 = xp.flip(x1, flip_axis)
             x2 = xp.flip(x2, flip_axis)
+            xt = xp.flip(xt, flip_axis)
 
         if ROLL:
             roll_magLR = np.random.randint(self.roll_magL,self.roll_magH)
@@ -476,27 +571,31 @@ class DataGenerator_rank(Dataset):
 
             x1 = xp.roll(x1, (roll_magLR,roll_magUD),(0,1))
             x2 = xp.roll(x2, (roll_magLR,roll_magUD),(0,1))
+            xt = xp.roll(xt, (roll_magLR, roll_magUD), (0, 1))
 
         x1 = sp.to_pytorch(x1, requires_grad=False)
         x2 = sp.to_pytorch(x2, requires_grad=False)
+        xt = sp.to_pytorch(xt, requires_grad=False)
 
         # make images 3 channel.
-        if not self.singleChannel:
-            zeros = torch.zeros(((1,) + x1.shape[1:]), dtype=x1.dtype, device=x1.get_device())
+        zeros = torch.zeros(((1,) + x1.shape[1:]), dtype=x1.dtype, device=x1.get_device())
+        for i in range(self.pad_channels):
             x1 = torch.cat((x1, zeros), dim=0)
             x2 = torch.cat((x2, zeros), dim=0)
+            xt = torch.cat((xt, zeros), dim=0)
 
         y = self.Y[idx]
 
-        return x1, x2, y
+        return x1, x2, xt, y
         # return x1, x2, y, TRANS, CROP
 
 class MSEmodule(nn.Module):
     def __init__(self):
         super(MSEmodule, self).__init__()
 
-    def forward(self, x):
-        y = x.view(x.shape[0], -1)
+    def forward(self, x, truth):
+        y = x - truth
+        y = y.view(y.shape[0], -1)
         return torch.sqrt(torch.sum(torch.square(y), dim=1, keepdim=True))
 
 
@@ -504,46 +603,42 @@ class Classifier(nn.Module):
 
     def __init__(self, rank):
         super(Classifier,self).__init__()
-        # self.rank = ResNet2(BasicBlock, [1,1,1,1])
-        # self.rank = mobilenet_v2(pretrained=False, num_classes=1)
-        # self.rank = EfficientNet.from_pretrained('efficientnet-b0', num_classes=1)
 
         self.rank = rank        
-        self.relu6 = nn.ReLU6(inplace=True)
 
-        self.fc1 = nn.Linear(1, 8)
-        self.fc2 = nn.Linear(8, 3)
-        self.drop = nn.Dropout(p=0.5)
-        self.act1 = nn.Sigmoid()
+        self.f = nn.Sequential( nn.Linear(1, 16),
+                                 nn.Sigmoid(),
+                                 nn.Linear(16, 1))
 
-    def forward(self, image1, image2):
+        self.g = nn.Sequential( nn.Linear(1, 16),
+                                 nn.Sigmoid(),
+                                 nn.Linear(16, 1))
 
 
+    def forward(self, image1, image2, imaget):
 
-        score1 = self.rank(image1)
-        score1 = torch.abs(score1)
-        #score1 = score1 * self.relu6(score1+3)/6
-
-        score2 = self.rank(image2)
-        score2 = torch.abs(score2)
-        #score2 = score2 * self.relu6(score2 + 3) / 6
-
+        score1 = self.rank(image1, imaget)
+        score2 = self.rank(image2, imaget)
 
         score1 = score1.view(score1.shape[0], -1)
         score2 = score2.view(score2.shape[0], -1)
-        # print(f'shape of score2 after reshape {score2.shape}')
 
-        # d shape [BatchSize, 1]
-        # Feed difference
-        d = score1 - score2     # d shape [BatchSize, 1]
-        d = self.fc1(d)
-        d = self.act1(d)
-        d = self.drop(d)
-        d = F.softmax(self.fc2(d), dim=1)      # (BatchSize, 3)
-        #d = self.fc2(d)
 
-        # weight = torch.cat((score2, (score2+score1)/2, score1), dim=1)
-        # d *= weight
+        # Feed difference to classifier
+        d = score1 - score2
+
+        # Train based on symetric assumption
+        # P-left = f(x)
+        # P-same = g(x), a symetric function g(x) = g(-x)
+        # P-right = f(-x)
+        px = self.f(d)
+        gx = self.g(d) + self.g(-d)
+        pnx= self.f(-d)
+
+        d = torch.cat([px, gx, pnx],dim=1)
+        d = F.softmax(d, dim=1)      # (BatchSize, 3)
+
+
 
         return d
 
