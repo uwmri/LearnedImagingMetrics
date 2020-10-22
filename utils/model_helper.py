@@ -37,85 +37,52 @@ class conv_bn(nn.Module):
         x = self.relu(x)
         return x
 
+class L2cnnBlock(nn.Module):
+    def __init__(self, channels_in=64, channels_out=64, pool_rate=2):
+        super(L2cnnBlock, self).__init__()
+
+        self.block = nn.Sequential(nn.Conv2d( channels_in, channels_out, kernel_size=3, padding=1, stride=1),
+                                    nn.BatchNorm2d(channels_out),
+                                    nn.ReLU(inplace=True),
+                                    nn.Conv2d(channels_out, channels_out, kernel_size=3, padding=1, stride=1),
+                                    nn.BatchNorm2d(channels_out),
+                                    nn.ReLU(inplace=True))
+        self.shortcut = nn.Sequential(nn.Conv2d( channels_in, channels_out, kernel_size=1, padding=0, stride=1),
+                                    nn.BatchNorm2d(channels_out))
+        self.pool = nn.Sequential(nn.ReLU(inplace=True), nn.AvgPool2d(pool_rate))
+
+    def forward(self,x):
+        x = self.block(x) + self.shortcut(x)
+        x = self.pool(x)
+        return x
+
+
 class L2cnn(nn.Module):
-
-    # ResNet for 2 channel.
-
-    def __init__(self, channel_base=64, channels_in=None,  channel_scale=1):
+    def __init__(self, channel_base=32, channels_in=1,  channel_scale=1, group_depth=8):
 
         super(L2cnn, self).__init__()
-
         pool_rate = 2
-
         channels_out = channel_base
-        self.block1 = nn.Sequential(nn.Conv2d(channels_in, channels_out, kernel_size=3, padding=1, stride=1),
-                                    nn.BatchNorm2d(channels_out),
-                                    nn.ReLU(inplace=True),
-                                    nn.Conv2d(channels_out, channels_out, kernel_size=3, padding=1, stride=1),
-                                    nn.BatchNorm2d(channels_out),
-                                    nn.ReLU(inplace=True))
-        self.shortcut1 = nn.Sequential(nn.Conv2d( channels_in, channels_out, kernel_size=1, padding=0, stride=1),
-                                    nn.BatchNorm2d(channels_out))
-        self.pool1 = nn.Sequential(nn.ReLU(inplace=True), nn.AvgPool2d(pool_rate))
 
-        channels_in = channels_out
-        channels_out = channels_out*channel_scale
-        self.block2 = nn.Sequential(nn.Conv2d( channels_in, channels_out, kernel_size=3, padding=1, stride=1),
-                                    nn.BatchNorm2d(channels_out),
-                                    nn.ReLU(inplace=True),
-                                    nn.Conv2d(channels_out, channels_out, kernel_size=3, padding=1, stride=1),
-                                    nn.BatchNorm2d(channels_out),
-                                    nn.ReLU(inplace=True))
-        self.shortcut2 = nn.Sequential(nn.Conv2d( channels_in, channels_out, kernel_size=1, padding=0, stride=1),
-                                    nn.BatchNorm2d(channels_out))
-        self.pool2 = nn.Sequential(nn.ReLU(inplace=True), nn.AvgPool2d(pool_rate))
+        self.layers = nn.ModuleList()
+        for block in range(group_depth):
 
-        channels_in = channels_out
-        channels_out = channels_out*channel_scale
-        self.block3 = nn.Sequential(nn.Conv2d( channels_in, channels_out, kernel_size=3, padding=1, stride=1),
-                                    nn.BatchNorm2d(channels_out),
-                                    nn.ReLU(inplace=True),
-                                    nn.Conv2d(channels_out, channels_out, kernel_size=3, padding=1, stride=1),
-                                    nn.BatchNorm2d(channels_out),
-                                    nn.ReLU(inplace=True))
-        self.shortcut3 = nn.Sequential(nn.Conv2d( channels_in, channels_out, kernel_size=1, padding=0, stride=1),
-                                    nn.BatchNorm2d(channels_out))
-        self.pool3 = nn.Sequential(nn.ReLU(inplace=True), nn.AvgPool2d(pool_rate))
+            self.layers.append(L2cnnBlock(channels_in, channels_out, pool_rate))
 
-        channels_in = channels_out
-        channels_out = channels_out*channel_scale
-        self.block4 = nn.Sequential(nn.Conv2d( channels_in, channels_out, kernel_size=3, padding=1, stride=1),
-                                    nn.BatchNorm2d(channels_out),
-                                    nn.ReLU(inplace=True),
-                                    nn.Conv2d(channels_out, channels_out, kernel_size=3, padding=1, stride=1),
-                                    nn.BatchNorm2d(channels_out),
-                                    nn.ReLU(inplace=True))
-        self.shortcut4 = nn.Sequential(nn.Conv2d( channels_in, channels_out, kernel_size=1, padding=0, stride=1),
-                                    nn.BatchNorm2d(channels_out))
-        self.pool4 = nn.Sequential(nn.ReLU(inplace=True), nn.AvgPool2d(pool_rate))
+            # Update channels
+            channels_in = channels_out
+            channels_out = channels_out * channel_scale
 
-    def forward(self, x):
-        #x = x**2
-        # x = torch.square(x)
-        #x = torch.sum(x, dim=-3, keepdim=True)
-        #x = torch.sqrt(x)
-        x = self.block1(x) + self.shortcut1(x)
-        x = self.pool1(x)
+    def forward(self, input):
+        x = input.clone()
 
-        x = self.block2(x) + self.shortcut2(x)
-        x = self.pool2(x)
-
-        x = self.block3(x) + self.shortcut3(x)
-        x = self.pool3(x)
-
-        x = self.block4(x) + self.shortcut4(x)
-        x = self.pool4(x)
+        for l in self.layers:
+            x = l(x)
 
         x = torch.reshape(x,(x.shape[0],-1))
-
         x = x**2
-        score = torch.sum(x, dim=1)
-        score = torch.abs(score)
+        score = torch.mean(x, dim=1)
+        # score = torch.abs(score)
 
         return score
 
@@ -425,7 +392,7 @@ class DataGenerator_rank(Dataset):
         self.Y = Y
         self.ID = ID
         self.augmentation = augmentation
-        self.pad_channels = 0
+        self.pad_channels = pad_channels
 
         self.roll_magL = roll_magL
         self.roll_magH = roll_magH
@@ -500,7 +467,8 @@ class MSEmodule(nn.Module):
         super(MSEmodule, self).__init__()
 
     def forward(self, x):
-        y = x.view(x.shape[0], -1)
+        xch0 = x[:, 0,...]
+        y = x.view(xch0.shape[0], -1)
         return torch.sqrt(torch.sum(torch.square(y), dim=1, keepdim=True))
 
 
@@ -521,7 +489,6 @@ class Classifier(nn.Module):
 
 
     def forward(self, image1, image2):
-
 
         score1 = self.rank(image1)
         score2 = self.rank(image2)
@@ -547,6 +514,10 @@ class Classifier(nn.Module):
         return d
 
 
+#backward hook
+def printgradnorm(self, grad_input, grad_output):
+    print('Inside ' + self.__class__.__name__ + ' backward')
+    print('grad_input norm:', grad_output[0].norm())
 
 
 

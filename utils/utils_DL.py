@@ -62,8 +62,7 @@ def plt_scoreVsMse(scorelist, mselist):
     :param epoch:
     :return: figure
     """
-    scorelist = np.concatenate(scorelist).ravel()
-    mselist = np.concatenate(mselist).ravel()
+
     figure = plt.figure(figsize=(10,10))
     ax = plt.gca()
     plt.scatter(scorelist, mselist,s=150, alpha=0.3)

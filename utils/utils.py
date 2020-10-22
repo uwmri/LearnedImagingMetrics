@@ -73,10 +73,14 @@ def crop_im(image):
 
 
 def imshow(im):
+
     npim = im.numpy()
     npim = np.squeeze(npim)
-    abs = np.sqrt(npim[:,:,0]**2 + npim[:,:,1]**2)
-    plt.imshow(abs,cmap='gray')
+    if npim.ndim == 3:
+        abs = np.sqrt(npim[:,:,0]**2 + npim[:,:,1]**2)
+        plt.imshow(abs, cmap='gray')
+    else:
+        plt.imshow(npim, cmap='gray')
     plt.show()
 
 
