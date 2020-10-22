@@ -23,11 +23,13 @@ include_unsubtracted = True
 train_on_mag = True
 shuffle_observers = True
 MOBILE = False
-EFF = False
-BO = False
+EFF = True
+BO = True
 RESNET = False
 ResumeTrain = False
 CLIP = False
+SAMPLER = False
+WeightedLoss = False
 
 
 trainScoreandMSE = False    # train score based classifier and mse(im1)-mse(im2) based classifier at the same time
@@ -168,14 +170,29 @@ idV = id[ntrain:]
 Labels_cnnT = Labels[:ntrain]
 Labels_cnnV = Labels[ntrain:]
 
+
 # Data generator
 BATCH_SIZE = 16
-trainingset = DataGenerator_rank(X_1, X_2, Labels_cnnT, idT, augmentation=True, singleChannel=singleChannle)
-loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=True)
+if SAMPLER:
+    # deal with imbalanced class
+    samplerT = get_sampler(Labels_cnnT)
+    samplerV = get_sampler(Labels_cnnV)
+    trainingset = DataGenerator_rank(X_1, X_2, Labels_cnnT, idT, augmentation=True, singleChannel=singleChannle)
+    loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=False, sampler=samplerT)
 
-validationset = DataGenerator_rank(X_1, X_2, Labels_cnnV, idV, augmentation=False, singleChannel=singleChannle)
-loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=True)
+    validationset = DataGenerator_rank(X_1, X_2, Labels_cnnV, idV, augmentation=False, singleChannel=singleChannle)
+    loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=False, sampler=samplerV)
+else:
+    trainingset = DataGenerator_rank(X_1, X_2, Labels_cnnT, idT, augmentation=True, singleChannel=singleChannle)
+    loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=True)
 
+    validationset = DataGenerator_rank(X_1, X_2, Labels_cnnV, idV, augmentation=False, singleChannel=singleChannle)
+    loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=True)
+
+if WeightedLoss:
+    weight = get_class_weights(Labels)
+else:
+    weight = torch.ones(3).cuda()
 
 # check loader, show a batch
 check = iter(loader_T)
@@ -198,7 +215,7 @@ print(device)
 if MOBILE:
     ranknet = mobilenet_v2(pretrained=False, num_classes=1) # Less than ResNet18
 elif EFF:
-    ranknet = EfficientNet.from_pretrained('efficientnet-b0', num_classes=1, in_channels=1)
+    ranknet = EfficientNet.from_name('efficientnet-b0', override_params={'num_classes': 1})
 elif RESNET:
     ranknet = ResNet2(BasicBlock, [2,2,2,2], for_denoise=False)  # Less than ResNet18
 else:
@@ -213,14 +230,12 @@ torchsummary.summary(ranknet, (X_1.shape[1], maxMatSize, maxMatSize), device="cp
 def train_evaluate(parameterization):
 
     net = Classifier(ranknet)
-    net = train_mod(net=net, train_loader=loader_T, parameters=parameterization, dtype=torch.float, device=device,
-                    trainOnMSE=False)
+    net = train_mod(net=net, train_loader=loader_T, parameters=parameterization, dtype=torch.float, device=device)
     return evaluate_mod(
         net=net,
         data_loader=loader_V,
         dtype=torch.float,
-        device=device,
-        trainOnMSE=False
+        device=device
     )
 
 
@@ -229,10 +244,10 @@ if ResumeTrain:
     root = tk.Tk()
     root.withdraw()
     filepath_rankModel = tk.filedialog.askdirectory(title='Choose where the saved metric model is')
-    file_rankModel = os.path.join(filepath_rankModel, "RankClassifier5383.pt")
+    file_rankModel = os.path.join(filepath_rankModel, "RankClassifier76.pt")
     classifier = Classifier(ranknet)
     #classifier.rank.register_backward_hook(printgradnorm)
-    loss_func = nn.CrossEntropyLoss()
+    loss_func = nn.CrossEntropyLoss(weight=weight)
 
     state = torch.load(file_rankModel)
     classifier.load_state_dict(state['state_dict'], strict=True)
@@ -288,15 +303,10 @@ else:
             # optimizerMSE = optim.Adam(classifier.parameters(), lr=0.001)
 
     #classifier.rank.register_backward_hook(printgradnorm)
-    loss_func = nn.CrossEntropyLoss()
+    loss_func = nn.CrossEntropyLoss(weight=weight)
     classifier.cuda();
     if trainScoreandMSE:
         classifierMSE.cuda();
-
-
-
-
-
 
 
 # Training
@@ -315,7 +325,7 @@ logging.info('resume train 5383')
 score_mse_file = os.path.join(f'score_mse_file_{Ntrial}.h5')
 
 
-Nepoch = 100
+Nepoch = 150
 lossT = np.zeros(Nepoch)
 lossV = np.zeros(Nepoch)
 # accT = np.zeros(Nepoch)

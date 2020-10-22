@@ -535,12 +535,16 @@ class Classifier(nn.Module):
 
         # d shape [BatchSize, 1]
         # Feed difference
-        d = score1 - score2
-        # d shape [BatchSize, 1]
+        d = score1 - score2     # d shape [BatchSize, 1]
         d = self.fc1(d)
         d = self.act1(d)
         d = self.drop(d)
         d = F.softmax(self.fc2(d), dim=1)      # (BatchSize, 3)
+        #d = self.fc2(d)
+
+        # weight = torch.cat((score2, (score2+score1)/2, score1), dim=1)
+        # d *= weight
+
         return d
 
 
@@ -550,5 +554,22 @@ def printgradnorm(self, grad_input, grad_output):
     print('grad_input norm:', grad_output[0].norm())
 
 
+def get_sampler(labels):
+    """ labels is 1d array (n,) """
+
+    class_sample_count = np.array([len(np.where(labels == t)[0]) for t in np.unique(labels)])
+    weight = 1. / class_sample_count
+    samples_weight = np.array([weight[t] for t in labels])
+
+    samples_weight = torch.from_numpy(samples_weight)
+    sampler = torch.utils.data.WeightedRandomSampler(samples_weight, len(samples_weight))
+
+    return sampler
 
 
+def get_class_weights(labels):
+    class_sample_count = np.array([len(np.where(labels == t)[0]) for t in np.unique(labels)], dtype='float32')
+    weights = class_sample_count / class_sample_count.max()
+    weights = torch.from_numpy(weights)
+
+    return weights.cuda()
