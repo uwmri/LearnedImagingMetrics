@@ -164,7 +164,10 @@ class L2cnn(nn.Module):
         channels_out = channel_base
 
         # Connect to output using a linear combination
-        self.layer_connector =  nn.Linear(3,1,bias=False)
+        self.weight_mse = torch.nn.Parameter(torch.tensor([1000.0]).view(1,1))
+        self.weight_cnn = torch.nn.Parameter(torch.tensor([1.0]).view(1, 1))
+        self.weight_ssim = torch.nn.Parameter(torch.tensor([1.0]).view(1, 1))
+
         self.ssim_op = SSIM( window_size=11, size_average=False, val_range=1)
 
         self.layers = nn.ModuleList()
@@ -183,8 +186,8 @@ class L2cnn(nn.Module):
     def forward(self, input, truth):
         x = input.clone()
 
-        # SSIM
-        ssim = 1.0 - self.ssim_op(x, truth)
+        # SSIM (range is -1 to 1)
+        ssim = 2.0 - self.ssim_op(x, truth)
 
         diff = input - truth
 
@@ -199,8 +202,7 @@ class L2cnn(nn.Module):
         #x = torch.reshape(x,(x.shape[0],-1))
         #x = x**2
         #score = torch.mean(x, dim=1)
-        combined = torch.cat([ssim,mse,cnn_score],dim=1)
-        score = self.layer_connector(combined)
+        score = torch.abs(self.weight_ssim)*ssim + torch.abs(self.weight_mse)*mse + torch.abs(self.weight_cnn)*cnn_score
         # score = torch.abs(score)
 
         return score
