@@ -22,38 +22,55 @@ from utils.utils_DL import *
 train_on_mag = True
 shuffle_observers = True
 MOBILE = False
-EFF = True
-BO = True
+EFF = False
+BO = False
 RESNET = False
 ResumeTrain = False
 CLIP = False
 SAMPLER = False
 WeightedLoss = False
+Pretrain = 'pretraining'   # pretraining or pretrained or none
 
+trainScoreandMSE = False    # train score based classifier and mse(im1)-mse(im2) based classifier at the same time
 
-trainScoreandMSE = True    # train score based classifier and mse(im1)-mse(im2) based classifier at the same time
+maxMatSize = 396  # largest matrix size seems to be 396
+if Pretrain == 'pretraining':
+    # use Image_pairs_0506 and 0507 for pretraining
+    NEXAMPLES = 13116
+    NEXAMPLES1 = 5016
+    NEXAMPLES2 = 8100
+else:
+    NEXAMPLES = 2920
 
 # Ranks
-names = []
-root = tk.Tk()
-root.withdraw()
-filepath_csv = tk.filedialog.askdirectory(title='Choose where the csv file is')
-os.chdir(filepath_csv)
+if Pretrain == 'pretraining':
+    ranks = np.zeros((NEXAMPLES, 3), dtype=np.int)
+    ranks[:,1] = 1
+    ranks[:, 2] = np.arange(NEXAMPLES,  dtype=np.int)
 
-files_csv = os.listdir(filepath_csv)
-for file in files_csv:
-    if fnmatch.fnmatch(file, '*consensus.csv'):
-        names.append(os.path.join(filepath_csv, file))
 
-# Load the ranks
-ranks = []
-for fname in names:
-    print(fname)
-    with open(fname) as csvfile:
-        readCSV = csv.reader(csvfile, delimiter=',')
-        for row in readCSV:
-            ranks.append(row)
-ranks = np.array(ranks, dtype=np.int)
+else:
+    names = []
+    filepath_csv = Path('I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020')
+    os.chdir(filepath_csv)
+
+    files_csv = os.listdir(filepath_csv)
+    for file in files_csv:
+        if fnmatch.fnmatch(file, '*consensus.csv'):
+            names.append(os.path.join(filepath_csv, file))
+
+    # Load the ranks
+    ranks = []
+    for fname in names:
+        print(fname)
+        with open(fname) as csvfile:
+            readCSV = csv.reader(csvfile, delimiter=',')
+            for row in readCSV:
+                ranks.append(row)
+    ranks = np.array(ranks, dtype=np.int)
+
+NRANKS = ranks.shape[0]
+
 
 # # Human consistency on duplicated pairs
 # _, countR = np.unique(ranks, axis=0, return_counts=True)
@@ -65,10 +82,6 @@ ranks = np.array(ranks, dtype=np.int)
 if shuffle_observers:
     np.random.shuffle(ranks)
 
-# Examples
-maxMatSize = 396  # largest matrix size seems to be 396
-NEXAMPLES = 2920
-NRANKS = ranks.shape[0]
 
 if train_on_mag:
     nch = 1
@@ -83,42 +96,81 @@ X_T = np.zeros((NEXAMPLES, maxMatSize, maxMatSize, nch), dtype=np.float32)
 # X_T = np.zeros((NEXAMPLES, maxMatSize, maxMatSize),dtype=np.complex64)
 Labels = np.zeros(NRANKS, dtype=np.int32)
 
-root = tk.Tk()
-root.withdraw()
-filepath_images = tk.filedialog.askdirectory(title='Choose where the h5 is')
-file ='TRAINING_IMAGES_04032020.h5'
-file_images = os.path.join(filepath_images, file)
-hf = h5.File(name=file_images, mode='r')
+if Pretrain == 'pretraining':
+    filepath_images = Path("I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_05062020")
+    path2 = Path("I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_05072020")
+    file = 'TRAINING_IMAGES_v7.h5'
+    file1 = os.path.join(filepath_images, file)
+    file2 = os.path.join(path2, file)
 
-log_dir = tk.filedialog.askdirectory(title='Choose log dir')
+    hf1 = h5.File(name=file1, mode='r')
+    hf2 = h5.File(name=file2, mode='r')
+    for i in range(NEXAMPLES):
+        if i<NEXAMPLES1:
+            nameT = 'EXAMPLE_%07d_TRUTH' % (i+1)
+            name1 = 'EXAMPLE_%07d_IMAGE_%04d' % (i+1, 0)
+            name2 = 'EXAMPLE_%07d_IMAGE_%04d' % (i+1, 1)
 
-# Just read and subtract truth for now, index later
-for i in range(NEXAMPLES):
+            im1 = zero_pad2D(np.array(hf1[name1]), maxMatSize, maxMatSize)
+            im2 = zero_pad2D(np.array(hf1[name2]), maxMatSize, maxMatSize)
+            truth = zero_pad2D(np.array(hf1[nameT]), maxMatSize, maxMatSize)
+        else:
+            nameT = 'EXAMPLE_%07d_TRUTH' % (i + 1 - NEXAMPLES1)
+            name1 = 'EXAMPLE_%07d_IMAGE_%04d' % (i + 1- NEXAMPLES1, 0)
+            name2 = 'EXAMPLE_%07d_IMAGE_%04d' % (i + 1- NEXAMPLES1, 1)
 
-    nameT = 'EXAMPLE_%07d_TRUTH' % (i+1)
-    name1 = 'EXAMPLE_%07d_IMAGE_%04d' % (i+1, 0)
-    name2 = 'EXAMPLE_%07d_IMAGE_%04d' % (i+1, 1)
+            im1 = zero_pad2D(np.array(hf2[name1]), maxMatSize, maxMatSize)
+            im2 = zero_pad2D(np.array(hf2[name2]), maxMatSize, maxMatSize)
+            truth = zero_pad2D(np.array(hf2[nameT]), maxMatSize, maxMatSize)
+
+        if train_on_mag:
+            X_1[i] = np.sqrt(np.sum(np.square(im1), axis=-1, keepdims=True))
+            X_2[i] = np.sqrt(np.sum(np.square(im2), axis=-1, keepdims=True))
+            X_T[i] = np.sqrt(np.sum(np.square(truth), axis=-1, keepdims=True))
+
+        else:
+            X_1[i] = im1
+            X_2[i] = im2
+            X_T[i] = truth
+
+        if i % 1e2 == 0:
+            print(f'loading example pairs {i + 1}')
 
 
-    im1 = zero_pad2D(np.array(hf[name1]), maxMatSize, maxMatSize)
-    im2 = zero_pad2D(np.array(hf[name2]), maxMatSize, maxMatSize)
-    truth = zero_pad2D(np.array(hf[nameT]), maxMatSize, maxMatSize)
 
-    if train_on_mag:
-        X_1[i] = np.sqrt(np.sum(np.square(im1), axis=-1, keepdims=True))
-        X_2[i] = np.sqrt(np.sum(np.square(im2), axis=-1, keepdims=True))
-        X_T[i] = np.sqrt(np.sum(np.square(truth), axis=-1, keepdims=True))
+else:
+    filepath_images = Path('I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020')
+    file ='TRAINING_IMAGES_04032020.h5'
+    file_images = os.path.join(filepath_images, file)
+    hf = h5.File(name=file_images, mode='r')
 
-    else:
-        X_1[i] = im1
-        X_2[i] = im2
-        X_T[i] = truth
+    # Just read and subtract truth for now, index later
+    for i in range(NEXAMPLES):
 
-    if i % 1e2 == 0:
-        print(f'loading example pairs {i + 1}')
+        nameT = 'EXAMPLE_%07d_TRUTH' % (i+1)
+        name1 = 'EXAMPLE_%07d_IMAGE_%04d' % (i+1, 0)
+        name2 = 'EXAMPLE_%07d_IMAGE_%04d' % (i+1, 1)
+
+
+        im1 = zero_pad2D(np.array(hf[name1]), maxMatSize, maxMatSize)
+        im2 = zero_pad2D(np.array(hf[name2]), maxMatSize, maxMatSize)
+        truth = zero_pad2D(np.array(hf[nameT]), maxMatSize, maxMatSize)
+
+        if train_on_mag:
+            X_1[i] = np.sqrt(np.sum(np.square(im1), axis=-1, keepdims=True))
+            X_2[i] = np.sqrt(np.sum(np.square(im2), axis=-1, keepdims=True))
+            X_T[i] = np.sqrt(np.sum(np.square(truth), axis=-1, keepdims=True))
+
+        else:
+            X_1[i] = im1
+            X_2[i] = im2
+            X_T[i] = truth
+
+        if i % 1e2 == 0:
+            print(f'loading example pairs {i + 1}')
 
 # All labels
-for i in range(0, ranks.shape[0]):
+for i in range(0, NRANKS):
 
     # Label based on ranks from ranker
     if ranks[i, 0] == 2:
@@ -131,10 +183,14 @@ for i in range(0, ranks.shape[0]):
         # X_1 is better
         Labels[i] = 2
 
+
 # torch tensor should be minibatch * channel * H*W
 X_1 = np.transpose(X_1, [0, 3, 1, 2])
 X_2 = np.transpose(X_2, [0, 3, 1, 2])
 X_T = np.transpose(X_T, [0, 3, 1, 2])
+
+if Pretrain == 'pretraining':
+    X_1 = X_T
 
 print(f'X_1 shape {X_1.shape}')
 
@@ -175,16 +231,16 @@ if SAMPLER:
     # deal with imbalanced class
     samplerT = get_sampler(Labels_cnnT)
     samplerV = get_sampler(Labels_cnnV)
-    trainingset = DataGenerator_rank(X_1, X_2, Labels_cnnT, idT, augmentation=True, pad_channels=0)
+    trainingset = DataGenerator_rank(X_1, X_2, X_T, Labels_cnnT, idT, augmentation=True, pad_channels=0)
     loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=False, sampler=samplerT)
 
-    validationset = DataGenerator_rank(X_1, X_2, Labels_cnnV, idV, augmentation=False, pad_channels=0)
+    validationset = DataGenerator_rank(X_1, X_2, X_T, Labels_cnnV, idV, augmentation=False, pad_channels=0)
     loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=False, sampler=samplerV)
 else:
-    trainingset = DataGenerator_rank(X_1, X_2, Labels_cnnT, idT, augmentation=True, pad_channels=0)
+    trainingset = DataGenerator_rank(X_1, X_2, X_T, Labels_cnnT, idT, augmentation=True, pad_channels=0)
     loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=True)
 
-    validationset = DataGenerator_rank(X_1, X_2, Labels_cnnV, idV, augmentation=False, pad_channels=0)
+    validationset = DataGenerator_rank(X_1, X_2, X_T, Labels_cnnV, idV, augmentation=False, pad_channels=0)
     loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=True)
 
 if WeightedLoss:
@@ -242,9 +298,7 @@ def train_evaluate(parameterization):
 
 if ResumeTrain:
     # load RankNet
-    root = tk.Tk()
-    root.withdraw()
-    filepath_rankModel = tk.filedialog.askdirectory(title='Choose where the saved metric model is')
+    filepath_rankModel = Path('I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020')
     file_rankModel = os.path.join(filepath_rankModel, "RankClassifier76.pt")
     classifier = Classifier(ranknet)
     #classifier.rank.register_backward_hook(printgradnorm)
@@ -253,10 +307,7 @@ if ResumeTrain:
     state = torch.load(file_rankModel)
     classifier.load_state_dict(state['state_dict'], strict=True)
     classifier.cuda();
-    if trainScoreandMSE:
-        file_rankModelMSE = os.path.join(filepath_rankModel, "RankClassifier15_MSE.pt")   
-        classifierMSE = Classifier(ranknet)
-        classifierMSE.cuda();
+
 
     optimizer = optim.Adam(classifier.parameters(), lr=1e-4)
     optimizer.load_state_dict(state['optimizer'])
@@ -317,13 +368,13 @@ else:
 from random import randrange
 Ntrial = randrange(10000)
 
-# writer = SummaryWriter(f'runs/rank/trial_{Ntrial}')
+log_dir = filepath_images
 writer_train = SummaryWriter(os.path.join(log_dir,f'runs/rank/train_{Ntrial}'))
 writer_val = SummaryWriter(os.path.join(log_dir,f'runs/rank/val_{Ntrial}'))
 
 logging.basicConfig(filename=os.path.join(log_dir,f'runs/rank/ranking_{Ntrial}.log'), filemode='w', level=logging.INFO)
 logging.info('With L2cnn, abs(score) for self.rank')
-
+score_mse_file = os.path.join(f'score_mse_file_{Ntrial}.h5')
 
 Nepoch = 200
 
@@ -545,7 +596,7 @@ for epoch in range(Nepoch):
         'optimizer': optimizer.state_dict(),
         'epoch': epoch
     }
-    torch.save(state,os.path.join(log_dir,f'RankClassifier{Ntrial}.pt'))
+    torch.save(state,os.path.join(log_dir,f'RankClassifier{Ntrial}_{Pretrain}.pt'))
 
     if trainScoreandMSE:
         stateMSE = {
@@ -557,9 +608,10 @@ for epoch in range(Nepoch):
 
 with h5py.File(score_mse_file, 'w') as hf:
     hf.create_dataset(f'scoreT_epoch{Nepoch}', data=scorelistT)
-    hf.create_dataset(f'mseT_epoch{Nepoch}', data=mselistT)
     hf.create_dataset(f'scoreV_epoch{Nepoch}', data=scorelistV)
-    hf.create_dataset(f'mseV_epoch{Nepoch}', data=mselistV)
+    if trainScoreandMSE:
+        hf.create_dataset(f'mseV_epoch{Nepoch}', data=mselistV)
+        hf.create_dataset(f'mseT_epoch{Nepoch}', data=mselistT)
 
 # if trainScoreandMSE:
 #     acc_endT = np.array(acc_endT)

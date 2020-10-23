@@ -181,7 +181,7 @@ class L2cnn(nn.Module):
 
     def layer_mse(self, x):
         y = x.view(x.shape[0], -1)
-        return torch.mean(torch.square(y), dim=1, keepdim=True)
+        return torch.mean(y**2, dim=1, keepdim=True)
 
     def forward(self, input, truth):
         x = input.clone()
@@ -543,7 +543,7 @@ class DataGenerator_rank(Dataset):
             scale = 1.0
 
         IDnum = self.ID[idx]
-
+        print('IDnum')
         x1 = scale * self.X_1[IDnum, ...].copy()
         x2 = scale * self.X_2[IDnum, ...].copy()
         xt = scale * self.X_T[IDnum, ...].copy()
@@ -589,7 +589,7 @@ class DataGenerator_rank(Dataset):
         y = self.Y[idx]
 
         return x1, x2, xt, y
-        # return x1, x2, y, TRANS, CROP
+
 
 class MSEmodule(nn.Module):
     def __init__(self):
@@ -598,7 +598,7 @@ class MSEmodule(nn.Module):
     def forward(self, x, truth):
         y = x - truth
         y = y.view(y.shape[0], -1)
-        return torch.sqrt(torch.sum(torch.square(y), dim=1, keepdim=True))
+        return torch.sqrt(torch.sum(y**2, dim=1, keepdim=True))
 
 
 class Classifier(nn.Module):
