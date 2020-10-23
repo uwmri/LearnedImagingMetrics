@@ -84,8 +84,7 @@ def train_mod(
     train_loader: DataLoader,
     parameters: Dict[str, float],
     dtype: torch.dtype,
-    device: torch.device,
-    trainOnMSE: bool
+    device: torch.device
 
 ) -> nn.Module:
     """
@@ -135,7 +134,7 @@ def train_mod(
             optimizer.zero_grad()
 
             # forward + backward + optimize
-            outputs = net(im1, im2, trainOnMSE)
+            outputs = net(im1, im2)
             loss = criterion(outputs, labels)
             loss.backward()
             optimizer.step()
@@ -144,8 +143,7 @@ def train_mod(
 
 
 def evaluate_mod(
-    net: nn.Module, data_loader: DataLoader, dtype: torch.dtype, device: torch.device, trainOnMSE: bool
-) -> float:
+    net: nn.Module, data_loader: DataLoader, dtype: torch.dtype, device: torch.device) -> float:
     """
     Compute classification accuracy on provided dataset.
 
@@ -166,7 +164,7 @@ def evaluate_mod(
             im1, im2, = im1.cuda(), im2.cuda()
             labels = labels.to(device, dtype=torch.long)
 
-            outputs = net(im1, im2, trainOnMSE)
+            outputs = net(im1, im2)
 
             # use Acc as metrics
             _, predicted = torch.max(outputs.data, 1)
