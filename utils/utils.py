@@ -1,4 +1,5 @@
 import h5py
+import cupy
 import numpy as np
 from matplotlib import pyplot as plt
 from pathlib import Path
@@ -115,3 +116,15 @@ def chan2_complex(input):
     output = input[...,0] + 1j *input[...,1]
 
     return output
+
+
+def print_mem():
+    cupy_mempool = cupy.get_default_memory_pool()
+    cupy_pinned_mempool = cupy.get_default_pinned_memory_pool()
+    torch_allocated = torch.cuda.memory_allocated()
+    torch_max_allocated = torch.cuda.max_memory_allocated()
+    torch_cached = torch.cuda.memory_reserved()
+    print(f'cupy mem {cupy_mempool.used_bytes()*9.313e-10} Gb')
+    print(f'torch mempool {torch_allocated*9.313e-10} Gb')
+    print(f'torch max mempool {torch_max_allocated*9.313e-10} Gb')
+    print(f'torch reserved {torch_cached*9.313e-10} Gb')

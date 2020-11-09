@@ -33,7 +33,7 @@ class SubtractArray(sp.linop.Linop):
 
 class DataGeneratorRecon(Dataset):
 
-    def __init__(self,path_root, scan_list, h5file, mask_sl, data_type=None):
+    def __init__(self,path_root, h5file, mask_sl, rank_trained_on_mag=True, data_type=None):
 
         '''
         input: mask (768, 396) complex64
@@ -57,6 +57,8 @@ class DataGeneratorRecon(Dataset):
 
         self.data_type = data_type
 
+        self.rank_trained_on_mag = rank_trained_on_mag
+
     def __len__(self):
         return self.len
 
@@ -78,13 +80,11 @@ class DataGeneratorRecon(Dataset):
 
         t = time.time()
         truth = np.array(self.hf[self.scans[idx]]['truths'])
-        # truth = truth[:]
         truth = complex_2chan(truth)
-
-
+        if self.rank_trained_on_mag:
+            truth = np.sqrt(np.sum(np.square(truth), axis=-1, keepdims=True))
         truth = zero_pad_truth(truth)
-
-        truth = torch.from_numpy(truth)     # ([16, 768, 396, 2])
+        truth = torch.from_numpy(truth)     # ([16, 768, 396, ch])
 
         # # normalize truth's abs
         # truth = np.reshape(truth, (-1, 396, 396))
@@ -175,7 +175,7 @@ class DataIterator():
     def next(self):
         try:
             smaps, im, kspaceU = next(self.loader)
-            im = im.cuda()
+            # im = im.cuda()
         except StopIteration:
             smaps = None
             im = None
@@ -223,19 +223,21 @@ class DataPrefetcher():
 
 
 # plot a training/val set
-def sneakpeek(dataset, Ncoils=20):
+def sneakpeek(dataset, Ncoils=20, rank_trained_on_mag=True):
     idx = np.random.randint(len(dataset))
-    checkkspace, checktruth, checksmaps = dataset[idx]
+    checksmaps, checktruth, checkkspace = dataset[idx]
     Nslice = checktruth.shape[0]
     slice_num = np.random.randint(Nslice)
     coil_num = np.random.randint(20)
 
     checksmaps = chan2_complex(checksmaps)
     checksmaps = checksmaps[slice_num]
-    checktruth = chan2_complex(checktruth.numpy())
     checkkspace = chan2_complex(checkkspace.numpy())
 
-    plt.imshow(np.abs(checktruth[slice_num]), cmap='gray')
+    if not rank_trained_on_mag:
+        checktruth = chan2_complex(checktruth.numpy())
+        checktruth = np.abs(checktruth)
+    plt.imshow(checktruth[slice_num], cmap='gray')
     plt.show()
     plt.imshow(np.log(np.abs(checkkspace[slice_num, coil_num, ...]) + 1e-5), cmap='gray')
     plt.show()
@@ -251,8 +253,8 @@ def sneakpeek(dataset, Ncoils=20):
 
 # MSE loss
 def mseloss_fcn(output, target):
-    output = crop_im(output)
-    target = crop_im(target)
+    # output = crop_im(output)
+    # target = crop_im(target)
     loss = torch.mean((output - target) ** 2)
     return loss
 
@@ -272,42 +274,42 @@ def loss_fcn_onenet(noisy, output, target, projector, encoder, discriminator, di
 
 
 # learned metrics loss
-def learnedloss_fcn(output, target, scoreModel):
-
+def learnedloss_fcn(output, target, scoreModel, rank_trained_on_mag=True):
 
     if output.ndim == 3:
         output = torch.unsqueeze(output, 0)
         target = torch.unsqueeze(target, 0)
+    if rank_trained_on_mag and output.shape[-1] == 2:
+        output = torch.sqrt(torch.sum(output**2, axis=-1, keepdims=True))
 
-    output = crop_im(output)
-    target = crop_im(target)
-
-
+    # output = crop_im(output)
+    # target = crop_im(target)
     output = output.permute(0, -1, 1,2)
     target = target.permute(0, -1, 1,2)
 
     Nslice = output.shape[0]
-    # add a zero channel since ranknet expect 3chan
-    zeros = torch.zeros(((Nslice, 1,) + output.shape[2:]), dtype=output.dtype)
-    zeros = zeros.cuda()
-    output = torch.cat((output, zeros), dim=1)
 
-    target = torch.cat((target, zeros), dim=1)      # (batch=1, 3, 396, 396)
+    if not rank_trained_on_mag:
+        # add a zero channel since ranknet expect 3chan
+        zeros = torch.zeros(((Nslice, 1,) + output.shape[2:]), dtype=output.dtype)
+        zeros = zeros.cuda()
+        output = torch.cat((output, zeros), dim=1)
+
+        target = torch.cat((target, zeros), dim=1)      # (batch=1, 3, 396, 396)
+
     delta = 0
-
     for sl in range(Nslice):
 
         #print(sl)
         output_sl = torch.unsqueeze(output[sl],0)
-        target_sl = torch.unsqueeze(target[sl],0)   # (1,3,396,396)
-        #delta_sl = torch.mean((scoreModel((output_sl - target_sl)) - scoreModel(target_sl-target_sl)).abs_())
-        delta_sl = 1000.0 + torch.mean((scoreModel((output_sl - target_sl))))
+        target_sl = torch.unsqueeze(target[sl],0)   # (1,ch,396,396)
 
+        delta_sl = scoreModel(output_sl, target_sl)
         delta += delta_sl
         #torch.cuda.empty_cache()
     delta /= Nslice
-    return  delta
-    #return 0.5*delta + 0.5* torch.mean((output - target) ** 2)
+    return delta
+
 
 
 # perceptual loss
@@ -743,8 +745,6 @@ class MoDL(nn.Module):
 
 
     def forward(self, image, kspace, encoding_op, decoding_op):
-
-
 
         # Initial guess
         # image = decoding_op.apply(x)

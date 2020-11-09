@@ -3,6 +3,7 @@ from tkinter import filedialog
 import h5py as h5
 import csv
 import logging
+from scipy.stats import pearsonr
 
 from torchvision.models import mobilenet_v2
 import torchsummary
@@ -25,13 +26,13 @@ MOBILE = False
 EFF = False
 BO = False
 RESNET = False
-ResumeTrain = False
+ResumeTrain = True
 CLIP = False
 SAMPLER = False
 WeightedLoss = False
-Pretrain = 'pretraining'   # pretraining or pretrained or none
+Pretrain = 'pretrained'   # pretraining or pretrained or none
 
-trainScoreandMSE = False    # train score based classifier and mse(im1)-mse(im2) based classifier at the same time
+trainScoreandMSE = True    # train score based classifier and mse(im1)-mse(im2) based classifier at the same time
 
 maxMatSize = 396  # largest matrix size seems to be 396
 if Pretrain == 'pretraining':
@@ -184,6 +185,7 @@ for i in range(0, NRANKS):
         Labels[i] = 2
 
 
+
 # torch tensor should be minibatch * channel * H*W
 X_1 = np.transpose(X_1, [0, 3, 1, 2])
 X_2 = np.transpose(X_2, [0, 3, 1, 2])
@@ -299,7 +301,7 @@ def train_evaluate(parameterization):
 if ResumeTrain:
     # load RankNet
     filepath_rankModel = Path('I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020')
-    file_rankModel = os.path.join(filepath_rankModel, "RankClassifier76.pt")
+    file_rankModel = os.path.join(filepath_rankModel, "RankClassifier1785_pretrained.pt")
     classifier = Classifier(ranknet)
     #classifier.rank.register_backward_hook(printgradnorm)
     loss_func = nn.CrossEntropyLoss(weight=weight)
@@ -309,17 +311,25 @@ if ResumeTrain:
     classifier.cuda();
 
 
-    optimizer = optim.Adam(classifier.parameters(), lr=1e-4)
+    optimizer = optim.Adam(classifier.parameters(), lr=1e-5)
     optimizer.load_state_dict(state['optimizer'])
 
     if trainScoreandMSE:
-        file_rankModelMSE = os.path.join(filepath_rankModel, "RankClassifier15_MSE.pt")
+        file_rankModelMSE = os.path.join(filepath_rankModel, "RankClassifier4177_pretraining_MSE.pt")
         mse_module = MSEmodule()
         classifierMSE = Classifier(mse_module)
         stateMSE = torch.load(file_rankModelMSE)
-        classifier.load_state_dict(stateMSE['state_dict'], strict=True)
-        optimizerMSE = optim.SGD(classifier.parameters(), lr=0.00097, momentum=0.556)
-        optimizerMSE.load_state_dict(state['optimizer'])
+        classifierMSE.load_state_dict(stateMSE['state_dict'], strict=True)
+
+        classifierMSE.cuda();
+
+        optimizerMSE = optim.Adam(classifierMSE.parameters(), lr=1e-5)
+        optimizerMSE.load_state_dict(stateMSE['optimizer'])
+
+        # mse_module = MSEmodule()
+        # classifierMSE = Classifier(mse_module)
+        # optimizerMSE = optim.Adam(classifierMSE.parameters(), lr=1e-5)
+
 
 else:
 
@@ -348,11 +358,12 @@ else:
         # get best paramters and initialize optimizier here manually
 
         #optimizer = optim.SGD(classifier.parameters(), lr=0.003152130338485237, momentum=0.27102874871343374)
-        optimizer = optim.Adam(classifier.parameters(), lr=1e-5)
-        logging.info('Adam, lr=1e-5')
+        learning_rate = 1e-3
+        optimizer = optim.Adam(classifier.parameters(), lr=learning_rate)
+        logging.info(f'Adam, lr={learning_rate}')
         if trainScoreandMSE:
-            optimizerMSE = optim.SGD(classifierMSE.parameters(), lr=0.00097, momentum=0.556)
-            # optimizerMSE = optim.Adam(classifier.parameters(), lr=0.001)
+            #optimizerMSE = optim.SGD(classifierMSE.parameters(), lr=0.00097, momentum=0.556)
+            optimizerMSE = optim.Adam(classifierMSE.parameters(), lr=learning_rate)
 
     #classifier.rank.register_backward_hook(printgradnorm)
 
@@ -373,10 +384,10 @@ writer_train = SummaryWriter(os.path.join(log_dir,f'runs/rank/train_{Ntrial}'))
 writer_val = SummaryWriter(os.path.join(log_dir,f'runs/rank/val_{Ntrial}'))
 
 logging.basicConfig(filename=os.path.join(log_dir,f'runs/rank/ranking_{Ntrial}.log'), filemode='w', level=logging.INFO)
-logging.info('With L2cnn, abs(score) for self.rank')
+logging.info('With L2cnn, SSIM and MSE fused, symetric classifier')
 score_mse_file = os.path.join(f'score_mse_file_{Ntrial}.h5')
 
-Nepoch = 200
+Nepoch = 250
 
 lossT = np.zeros(Nepoch)
 lossV = np.zeros(Nepoch)
@@ -423,7 +434,7 @@ for epoch in range(Nepoch):
     for i, data in enumerate(loader_T, 0):
 
         # get the inputs
-        im1, im2, imt, labels = data             # im (sl, 3 , 396, 396)
+        im1, im2, imt, labels = data             # im (sl, ch , 396, 396)
         im1, im2, imt = im1.cuda(), im2.cuda(), imt.cuda()
         labels = labels.to(device, dtype=torch.long)
 
@@ -497,8 +508,9 @@ for epoch in range(Nepoch):
     scorelistT = np.concatenate(scorelistT).ravel()
     mselistT = np.concatenate(mselistT).ravel()
     score_mse_figureT = plt_scoreVsMse(scorelistT, mselistT)
+    corrT, pT = pearsonr(scorelistT, mselistT)
     writer_train.add_figure('Score_vs_mse', score_mse_figureT, epoch)
-
+    writer_train.add_scalar('Pearson Corr and p-value', {'Corr':corrT, 'p-value':pT}, epoch)
 
     # validation
 
@@ -558,6 +570,10 @@ for epoch in range(Nepoch):
     score_mse_figureV = plt_scoreVsMse(scorelistV, mselistV)
     writer_val.add_figure('Score_vs_mse', score_mse_figureV, epoch)
 
+    # linear correlation
+    corrV, pV = pearsonr(scorelistV, mselistV)
+    writer_val.add_scalars('Pearson Corr and p-value', {'Corr': corrV, 'p-value': pV}, epoch)
+
         # accV[epoch] = 100 * correct / total
 
     #print('Epoch = %d : Loss Eval = %f , Loss Train = %f' % (epoch, eval_avg.avg(), train_avg.avg()))
@@ -604,14 +620,14 @@ for epoch in range(Nepoch):
             'optimizer': optimizerMSE.state_dict(),
             'epoch': epoch
         }
-        torch.save(stateMSE, os.path.join(log_dir, f'RankClassifier{Ntrial}_MSE.pt'))
+        torch.save(stateMSE, os.path.join(log_dir, f'RankClassifier{Ntrial}_{Pretrain}_MSE.pt'))
 
-with h5py.File(score_mse_file, 'w') as hf:
-    hf.create_dataset(f'scoreT_epoch{Nepoch}', data=scorelistT)
-    hf.create_dataset(f'scoreV_epoch{Nepoch}', data=scorelistV)
-    if trainScoreandMSE:
-        hf.create_dataset(f'mseV_epoch{Nepoch}', data=mselistV)
-        hf.create_dataset(f'mseT_epoch{Nepoch}', data=mselistT)
+    with h5py.File(score_mse_file, 'a') as hf:
+        hf.create_dataset(f'scoreT_epoch{Nepoch}', data=scorelistT)
+        hf.create_dataset(f'scoreV_epoch{Nepoch}', data=scorelistV)
+        if trainScoreandMSE:
+            hf.create_dataset(f'mseV_epoch{Nepoch}', data=mselistV)
+            hf.create_dataset(f'mseT_epoch{Nepoch}', data=mselistT)
 
 # if trainScoreandMSE:
 #     acc_endT = np.array(acc_endT)

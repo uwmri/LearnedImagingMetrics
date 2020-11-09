@@ -57,8 +57,8 @@ class RunningAverage:
 def plt_scoreVsMse(scorelist, mselist):
     """
 
-    :param scorelistT: list of numbers on cpu(N minibatches, batchsize)
-    :param mselistT: list of numbers on cpu(N minibatches, batchsize)
+    :param scorelistT: 1d np array on cpu(N minibatches*batchsize, )
+    :param mselistT: 1d np array on cpu(N minibatches*batchsize, )
     :param epoch:
     :return: figure
     """
@@ -74,6 +74,31 @@ def plt_scoreVsMse(scorelist, mselist):
     plt.ticklabel_format(axis='both', style='sci', scilimits=(0,0))
     ax.xaxis.get_offset_text().set_fontsize(24)
     ax.yaxis.get_offset_text().set_fontsize(24)
+
+    return figure
+
+
+def plt_loss_learnedVsMse(loss_learned, loss_mse):
+
+    figure = plt.figure(figsize=(10,10))
+    ax = plt.gca()
+    plt.scatter(loss_learned, loss_mse,s=150, alpha=0.3)
+    plt.xlim([0, 2*np.median(loss_learned)])
+    plt.ylim([0, 2*np.median(loss_mse)])
+    plt.xlabel('Learned loss', fontsize=24)
+    plt.ylabel('MSE loss', fontsize=24)
+    ax.tick_params(axis='both', which='major', labelsize=20)
+    plt.ticklabel_format(axis='both', style='sci', scilimits=(0,0))
+    ax.xaxis.get_offset_text().set_fontsize(24)
+    ax.yaxis.get_offset_text().set_fontsize(24)
+
+    return figure
+
+
+def plt_recon(recon):
+
+    figure = plt.figure(figsize=(10,10))
+    plt.imshow(recon.numpy(), cmap='gray')
 
     return figure
 

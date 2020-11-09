@@ -137,16 +137,16 @@ class conv_bn(nn.Module):
         return x
 
 class L2cnnBlock(nn.Module):
-    def __init__(self, channels_in=64, channels_out=64, pool_rate=2):
+    def __init__(self, channels_in=64, channels_out=64, pool_rate=2, bias=False):
         super(L2cnnBlock, self).__init__()
 
-        self.block = nn.Sequential(nn.Conv2d( channels_in, channels_out, kernel_size=3, padding=1, stride=1),
+        self.block = nn.Sequential(nn.Conv2d( channels_in, channels_out, kernel_size=3, padding=1, stride=1, bias=bias),
                                     nn.BatchNorm2d(channels_out),
                                     nn.ReLU(inplace=True),
-                                    nn.Conv2d(channels_out, channels_out, kernel_size=3, padding=1, stride=1),
+                                    nn.Conv2d(channels_out, channels_out, kernel_size=3, padding=1, stride=1, bias=bias),
                                     nn.BatchNorm2d(channels_out),
                                     nn.ReLU(inplace=True))
-        self.shortcut = nn.Sequential(nn.Conv2d( channels_in, channels_out, kernel_size=1, padding=0, stride=1),
+        self.shortcut = nn.Sequential(nn.Conv2d( channels_in, channels_out, kernel_size=1, padding=0, stride=1, bias=bias),
                                     nn.BatchNorm2d(channels_out))
         self.pool = nn.Sequential(nn.ReLU(inplace=True), nn.AvgPool2d(pool_rate))
 
@@ -157,7 +157,7 @@ class L2cnnBlock(nn.Module):
 
 
 class L2cnn(nn.Module):
-    def __init__(self, channel_base=32, channels_in=1,  channel_scale=1, group_depth=8):
+    def __init__(self, channel_base=32, channels_in=1,  channel_scale=1, group_depth=8, bias=False):
 
         super(L2cnn, self).__init__()
         pool_rate = 2
@@ -173,7 +173,7 @@ class L2cnn(nn.Module):
         self.layers = nn.ModuleList()
         for block in range(group_depth):
 
-            self.layers.append(L2cnnBlock(channels_in, channels_out, pool_rate))
+            self.layers.append(L2cnnBlock(channels_in, channels_out, pool_rate, bias=bias))
 
             # Update channels
             channels_in = channels_out
@@ -543,7 +543,6 @@ class DataGenerator_rank(Dataset):
             scale = 1.0
 
         IDnum = self.ID[idx]
-        print('IDnum')
         x1 = scale * self.X_1[IDnum, ...].copy()
         x2 = scale * self.X_2[IDnum, ...].copy()
         xt = scale * self.X_T[IDnum, ...].copy()
@@ -639,8 +638,6 @@ class Classifier(nn.Module):
 
         d = torch.cat([px, gx, pnx],dim=1)
         d = F.softmax(d, dim=1)      # (BatchSize, 3)
-
-
 
         return d
 
