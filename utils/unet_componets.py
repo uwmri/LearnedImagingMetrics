@@ -2,8 +2,19 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-def conv2d(in_channels, out_channels, kernel_size, bias, padding=1):
-    return nn.Conv2d(in_channels, out_channels, kernel_size, padding=padding, bias=bias)
+def conv2d(in_channels, out_channels, kernel_size, bias=False, padding=1, groups=1):
+    return nn.Conv2d(in_channels, out_channels, kernel_size, padding=padding, bias=bias, groups=groups)
+
+class depthwise_separable_conv(nn.Module):
+    def __init__(self, nin, nout, bias=False):
+        super(depthwise_separable_conv, self).__init__()
+        self.depthwise = nn.Conv2d(nin, nin, kernel_size=3, padding=1, groups=nin, bias=bias)
+        self.pointwise = nn.Conv2d(nin, nout, kernel_size=1, bias=bias)
+
+    def forward(self, x):
+        out = self.depthwise(x)
+        out = self.pointwise(out)
+        return out
 
 def create_conv(in_channels, out_channels, kernel_size, order, num_groups, padding=1):
     """
@@ -24,39 +35,35 @@ def create_conv(in_channels, out_channels, kernel_size, order, num_groups, paddi
     Return:
         list of tuple (name, module)
     """
-    assert 'c' in order, "Conv layer MUST be present"
-    assert order[0] not in 'rle', 'Non-linearity cannot be the first operation in the layer'
-
-    print(order)
 
     modules = []
     for i, char in enumerate(order):
         if char == 'r':
-            modules.append(('ReLU', nn.ReLU(inplace=True)))
+            modules.append((f'ReLU{i}', nn.ReLU(inplace=True)))
         elif char == 'l':
-            modules.append(('LeakyReLU', nn.LeakyReLU(negative_slope=0.1, inplace=True)))
+            modules.append((f'LeakyReLU{i}', nn.LeakyReLU(negative_slope=0.1, inplace=True)))
         elif char == 'e':
-            modules.append(('ELU', nn.ELU(inplace=True)))
+            modules.append((f'ELU{i}', nn.ELU(inplace=True)))
         elif char == 'c':
             # add learnable bias only in the absence of gatchnorm/groupnorm
             # bias = not ('g' in order or 'b' in order)
             bias = not ('g' in order)
-            modules.append(('conv', conv2d(in_channels, out_channels, kernel_size, bias, padding=padding)))
+            modules.append((f'conv{i}', conv2d(in_channels, out_channels, kernel_size, bias, padding=padding)))
+            in_channels = out_channels
+        elif char == 'C':
+            modules.append((f'conv{i}', depthwise_separable_conv(in_channels, out_channels, bias=False)))
+            in_channels = out_channels
+        elif char == 'i':
+            modules.append((f'instancenorm{i}', nn.InstanceNorm2d(out_channels)))
         elif char == 'g':
-            is_before_conv = i < order.index('c')
-            assert not is_before_conv, 'GroupNorm MUST go after the Conv2d'
             # number of groups must be less or equal the number of channels
             if out_channels < num_groups:
                 num_groups = out_channels
-            modules.append(('groupnorm', nn.GroupNorm(num_groups=num_groups, num_channels=out_channels)))
+            modules.append((f'groupnorm{i}', nn.GroupNorm(num_groups=num_groups, num_channels=out_channels)))
         elif char == 'b':
-            is_before_conv = i < order.index('c')
-            if is_before_conv:
-                modules.append(('batchnorm', nn.BatchNorm2d(in_channels)))
-            else:
-                modules.append(('batchnorm', nn.BatchNorm2d(out_channels)))
+            modules.append((f'batchnorm{i}', nn.BatchNorm2d(out_channels)))
         else:
-            raise ValueError(f"Unsupported layer type '{char}'. MUST be one of ['b', 'g', 'r', 'l', 'e', 'c']")
+            raise ValueError(f"Unsupported layer type '{char}'. MUST be one of ['b', 'g', 'r', 'l', 'e', 'c', 'C', 'i']")
 
     return modules
 
@@ -129,7 +136,8 @@ class DoubleConv(nn.Sequential):
         self.add_module('SingleConv2',
                         SingleConv(conv2_in_channels, conv2_out_channels, kernel_size, order, num_groups))
 
-class TripleConv(nn.Sequential):
+
+class ResBottle(nn.Module):
     """
     A module consisting of two consecutive convolution layers (e.g. BatchNorm2d+ReLU+Conv2d).
     We use (Conv2d+ReLU+GroupNorm2d) by default.
@@ -152,7 +160,7 @@ class TripleConv(nn.Sequential):
     """
 
     def __init__(self, in_channels, out_channels, encoder, kernel_size=3, order='crg', num_groups=8):
-        super(TripleConv, self).__init__()
+        super(ResBottle, self).__init__()
         if encoder:
             # we're in the encoder path
             conv1_in_channels = in_channels
@@ -166,65 +174,22 @@ class TripleConv(nn.Sequential):
             conv2_in_channels, conv2_out_channels = out_channels, out_channels
 
         # conv1
-        self.add_module('SingleConv1',
-                        SingleConv(conv1_in_channels, conv1_out_channels, kernel_size, order, num_groups))
+        self.conv1 = SingleConv(conv1_in_channels, conv1_out_channels, kernel_size, 'crb', num_groups)
         # conv2
-        self.add_module('SingleConv2',
-                        SingleConv(conv2_in_channels, conv2_out_channels, kernel_size, order, num_groups))
+        self.conv2 = SingleConv(conv2_in_channels, conv2_out_channels, kernel_size, 'c', num_groups)
 
-        # conv3
-        self.add_module('SingleConv3',
-                        SingleConv(conv2_in_channels, conv2_out_channels, kernel_size, order, num_groups))
-
-
-
-class ExtResNetBlock(nn.Module):
-    """
-    Basic UNet block consisting of a SingleConv followed by the residual block.
-    The SingleConv takes care of increasing/decreasing the number of channels and also ensures that the number
-    of output channels is compatible with the residual block that follows.
-    This block can be used instead of standard DoubleConv in the Encoder module.
-    Motivated by: https://arxiv.org/pdf/1706.00120.pdf
-
-    Notice we use ELU instead of ReLU (order='cge') and put non-linearity after the groupnorm.
-    """
-
-    def __init__(self, in_channels, out_channels, kernel_size=3, order='cge', num_groups=8, **kwargs):
-        super(ExtResNetBlock, self).__init__()
-
-        # first convolution
-        self.conv1 = SingleConv(in_channels, out_channels, kernel_size=kernel_size, order=order, num_groups=num_groups)
-        # residual block
-        self.conv2 = SingleConv(out_channels, out_channels, kernel_size=kernel_size, order=order, num_groups=num_groups)
-        # remove non-linearity from the 3rd convolution since it's going to be applied after adding the residual
-        n_order = order
-        for c in 'rel':
-            n_order = n_order.replace(c, '')
-        self.conv3 = SingleConv(out_channels, out_channels, kernel_size=kernel_size, order=n_order,
-                                num_groups=num_groups)
-
-        # create non-linearity separately
-        if 'l' in order:
-            self.non_linearity = nn.LeakyReLU(negative_slope=0.1, inplace=True)
-        elif 'e' in order:
-            self.non_linearity = nn.ELU(inplace=True)
-        else:
-            self.non_linearity = nn.ReLU(inplace=True)
+        # Shortcut
+        self.convshortcut = SingleConv(conv1_in_channels, conv2_out_channels, 1, 'c',  num_groups, padding=0)
+        self.activation = nn.ReLU(inplace=True)
 
     def forward(self, x):
-        # apply first convolution and save the output as a residual
-        out = self.conv1(x)
-        residual = out
+        shortcut = self.convshortcut(x)
+        x = self.conv1(x)
+        x = self.conv2(x)
+        x += shortcut
+        x = self.activation(x)
 
-        # residual block
-        out = self.conv2(out)
-        out = self.conv3(out)
-
-        out += residual
-        out = self.non_linearity(out)
-
-        return out
-
+        return x
 
 class Encoder(nn.Module):
     """
@@ -246,29 +211,28 @@ class Encoder(nn.Module):
         num_groups (int): number of groups for the GroupNorm
     """
 
-    def __init__(self, in_channels, out_channels, conv_kernel_size=3, apply_pooling=True,
-                 pool_kernel_size=(2, 2), pool_type='avg', basic_module=DoubleConv, conv_layer_order='crg',
-                 num_groups=8):
+    def __init__(self, in_channels, out_channels, conv_kernel_size=3, basic_module=ResBottle, downsample=True, conv_layer_order='crb',
+                 num_groups=8, scale_factor=(2,2) ):
         super(Encoder, self).__init__()
-        assert pool_type in ['max', 'avg']
-        if apply_pooling:
-            if pool_type == 'max':
-                self.pooling = nn.MaxPool2d(kernel_size=pool_kernel_size)
-            else:
-                self.pooling = nn.AvgPool2d(kernel_size=pool_kernel_size)
-        else:
-            self.pooling = None
 
         self.basic_module = basic_module(in_channels, out_channels,
                                          encoder=True,
                                          kernel_size=conv_kernel_size,
                                          order=conv_layer_order,
                                          num_groups=num_groups)
+        if downsample:
+            self.downsample = nn.Conv2d(in_channels,
+                                               in_channels,
+                                               kernel_size=2,
+                                               stride=scale_factor,
+                                               padding=0, bias=False, groups=in_channels)
+        else:
+            self.downsample = nn.Identity()
 
     def forward(self, x):
-        if self.pooling is not None:
-            x = self.pooling(x)
+        x = self.downsample(x)
         x = self.basic_module(x)
+
         return x
 
 
@@ -290,79 +254,41 @@ class Decoder(nn.Module):
         num_groups (int): number of groups for the GroupNorm
     """
 
-    def __init__(self, in_channels, out_channels, kernel_size=3,
-                 scale_factor=(2, 2), basic_module=DoubleConv, conv_layer_order='crg', num_groups=8):
+    def __init__(self, in_channels, out_channels, add_features, kernel_size=3,
+                 scale_factor=(2, 2), basic_module=ResBottle, conv_layer_order='crg', num_groups=8):
         super(Decoder, self).__init__()
-        if basic_module == DoubleConv:
-            # if DoubleConv is the basic_module use nearest neighbor interpolation for upsampling
-            self.upsample = None
-        else:
-            # otherwise use ConvTranspose2d (bear in mind your GPU memory)
-            # make sure that the output size reverses the MaxPool2d from the corresponding encoder
-            # (D_out = (D_in − 1) ×  stride[0] − 2 ×  padding[0] +  kernel_size[0] +  output_padding[0])
-            # also scale the number of channels from in_channels to out_channels so that summation joining
-            # works correctly
-            self.upsample = nn.ConvTranspose2d(in_channels,
-                                               out_channels,
-                                               kernel_size=kernel_size,
-                                               stride=scale_factor,
-                                               padding=1,
-                                               output_padding=1)
-            # adapt the number of in_channels for the ExtResNetBlock
-            in_channels = out_channels
 
-        self.basic_module = basic_module(in_channels, out_channels,
+        self.upsample = nn.ConvTranspose2d(in_channels,
+                                           in_channels,
+                                           kernel_size=2,
+                                           stride=scale_factor,
+                                           padding=0,
+                                           output_padding=0,
+                                           bias=False, groups=in_channels)
+
+        self.basic_module = basic_module(in_channels + add_features, out_channels,
                                          encoder=False,
                                          kernel_size=kernel_size,
                                          order=conv_layer_order,
                                          num_groups=num_groups)
 
     def forward(self, encoder_features, x):
-        if self.upsample is None:
-            # use nearest neighbor interpolation and concatenation joining
-            output_size = encoder_features.size()[2:]
-            x = F.interpolate(x, size=output_size, mode='nearest')
-            # concatenate encoder_features (encoder path) with the upsampled input across channel dimension
-            x = torch.cat((encoder_features, x), dim=1)
-        else:
-            # use ConvTranspose2d and summation joining
-            x = self.upsample(x)
-            x += encoder_features
-
+        # use ConvTranspose2d and summation joining
+        x = self.upsample(x)
+        x = torch.cat([encoder_features,x], dim=1)
         x = self.basic_module(x)
         return x
 
+def create_feature_maps(init_channel_number, number_of_fmaps, growth_rate=2.0 ):
 
-class FinalConv(nn.Sequential):
-    """
-    A module consisting of a convolution layer (e.g. Conv2d+ReLU+GroupNorm2d) and the final 1x1 convolution
-    which reduces the number of channels to 'out_channels'.
-    with the number of output channels 'out_channels // 2' and 'out_channels' respectively.
-    We use (Conv2d+ReLU+GroupNorm2d) by default.
-    This can be change however by providing the 'order' argument, e.g. in order
-    to change to Conv2d+BatchNorm2d+ReLU use order='cbr'.
-    Args:
-        in_channels (int): number of input channels
-        out_channels (int): number of output channels
-        kernel_size (int): size of the convolving kernel
-        order (string): determines the order of layers, e.g.
-            'cr' -> conv + ReLU
-            'crg' -> conv + ReLU + groupnorm
-        num_groups (int): number of groups for the GroupNorm
-    """
+    channel_number = init_channel_number
+    fmaps = []
+    fmaps.append(init_channel_number)
+    for k in range(number_of_fmaps-1):
+        channel_number = int( channel_number * growth_rate )
+        fmaps.append(channel_number)
 
-    def __init__(self, in_channels, out_channels, kernel_size=3, order='crg', num_groups=8):
-        super(FinalConv, self).__init__()
-
-        # conv1
-        self.add_module('SingleConv', SingleConv(in_channels, in_channels, kernel_size, order, num_groups))
-
-        # in the last layer a 1×1 convolution reduces the number of output channels to out_channels
-        final_conv = nn.Conv2d(in_channels, out_channels, 1)
-        self.add_module('final_conv', final_conv)
-
-def create_feature_maps(init_channel_number, number_of_fmaps):
-    return [init_channel_number * 2 ** k for k in range(number_of_fmaps)]
+    return fmaps
 
 class UNet2D(nn.Module):
     """
@@ -390,20 +316,24 @@ class UNet2D(nn.Module):
         num_groups (int): number of groups for the GroupNorm
     """
 
-    def __init__(self, in_channels, out_channels, final_activation='none', f_maps=64, layer_order='crg', num_groups=8,
-                 **kwargs):
+    def __init__(self, in_channels, out_channels, f_maps=64, layer_order='crg', num_groups=0,
+                 depth=4, layer_growth=2.0, residual=True, **kwargs):
         super(UNet2D, self).__init__()
 
         if isinstance(f_maps, int):
             # use 4 levels in the encoder path as suggested in the paper
-            f_maps = create_feature_maps(f_maps, number_of_fmaps=4)
+            f_maps = create_feature_maps(f_maps, number_of_fmaps=depth, growth_rate=layer_growth)
+
+        print(f_maps)
+
+        self.residual = residual
 
         # create encoder path consisting of Encoder modules. The length of the encoder is equal to `len(f_maps)`
         # uses DoubleConv as a basic_module for the Encoder
         encoders = []
         for i, out_feature_num in enumerate(f_maps):
             if i == 0:
-                encoder = Encoder(in_channels, out_feature_num, apply_pooling=False, basic_module=DoubleConv,
+                encoder = Encoder(in_channels, out_feature_num, downsample=False, basic_module=DoubleConv,
                                   conv_layer_order=layer_order, num_groups=num_groups)
             else:
                 encoder = Encoder(f_maps[i - 1], out_feature_num, basic_module=DoubleConv,
@@ -417,9 +347,10 @@ class UNet2D(nn.Module):
         decoders = []
         reversed_f_maps = list(reversed(f_maps))
         for i in range(len(reversed_f_maps) - 1):
-            in_feature_num = reversed_f_maps[i] + reversed_f_maps[i + 1]
-            out_feature_num = reversed_f_maps[i + 1]
-            decoder = Decoder(in_feature_num, out_feature_num, basic_module=DoubleConv,
+            in_feature_num = reversed_f_maps[i]
+            add_feature_num = reversed_f_maps[i + 1] # features from past layer
+            out_feature_num = reversed_f_maps[i + 1] # features from past layer
+            decoder = Decoder(in_feature_num, out_feature_num, add_feature_num, basic_module=DoubleConv,
                               conv_layer_order=layer_order, num_groups=num_groups)
             decoders.append(decoder)
 
@@ -427,15 +358,7 @@ class UNet2D(nn.Module):
 
         # in the last layer a 1×1 convolution reduces the number of output
         # channels to the number of labels
-        self.final_conv = nn.Conv2d(f_maps[0], out_channels, 1)
-
-        if final_activation == 'sigmoid':
-            self.final_activation = nn.Sigmoid()
-        elif final_activation == 'softmax':
-            self.final_activation = nn.Softmax(dim=1)
-        else:
-            self.final_activation = nn.Identity()
-
+        self.final_conv = nn.Conv2d(f_maps[0], out_channels, 1, bias=False)
 
     def forward(self, x):
 
@@ -462,13 +385,8 @@ class UNet2D(nn.Module):
         x = self.final_conv(x)
 
         # Keep skip to end and also downweight to help training
-        #x *= 0.05
-        #x += input
-
-        # apply final_activation (i.e. Sigmoid or Softmax) only for prediction. During training the network outputs
-        # logits and it's up to the user to normalize it before visualising with tensorboard or computing validation metric
-        if not self.training:
-            x = self.final_activation(x)
+        if self.residual:
+            x += input
 
         return x
 
