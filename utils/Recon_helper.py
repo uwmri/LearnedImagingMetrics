@@ -739,8 +739,8 @@ class MoDL(nn.Module):
 
 
         # Options for UNET
-        #self.denoiser = UNet2D(2, 2, final_activation='none', f_maps=8, layer_order='cr', num_groups=4)
-        self.denoiser = CNN_shortcut()
+        self.denoiser = UNet2D(2, 2, final_activation='none', f_maps=8, layer_order='cli')
+        #self.denoiser = CNN_shortcut()
         # self.denoiser = Projector(ENC=False)
 
 
