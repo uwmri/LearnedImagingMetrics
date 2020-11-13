@@ -37,6 +37,20 @@ if DGX:
     filepath_rankModel = Path('/raid/DGXUserDataRaid/cxt004/NYUbrain')
     filepath_train = Path('/raid/DGXUserDataRaid/cxt004/NYUbrain')
     filepath_val = Path('/raid/DGXUserDataRaid/cxt004/NYUbrain')
+
+    try:
+        import setproctitle
+        import argparse
+
+        parser = argparse.ArgumentParser()
+        args = parser.parse_args()
+
+        setproctitle.setproctitle(args.pname)
+        print(f'Setting program name to {args.pname}')
+    except:
+        print('setproctitle not installled,unavailable, or failed')
+
+
 else:
     filepath_rankModel = Path('I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020')
     filepath_train = Path("I:/NYUbrain")
