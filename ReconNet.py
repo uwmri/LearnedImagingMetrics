@@ -32,7 +32,7 @@ pinned_mempool = cupy.get_default_pinned_memory_pool()
 spdevice = sp.Device(0)
 
 # load RankNet
-DGX = False
+DGX = True
 if DGX:
     filepath_rankModel = Path('/raid/DGXUserDataRaid/cxt004/NYUbrain')
     filepath_train = Path('/raid/DGXUserDataRaid/cxt004/NYUbrain')
@@ -43,11 +43,11 @@ else:
     filepath_val = Path("I:/NYUbrain")
 
 log_dir = filepath_rankModel
-Ntrial = 7
+Ntrial = 8
 rank_channel =1
 rank_trained_on_mag = True
 BO = False
-logging.basicConfig(filename=os.path.join(log_dir,f'Recon_{Ntrial}.log'), filemode='w', level=logging.INFO)
+logging.basicConfig(filename=os.path.join(log_dir,f'Recon_{Ntrial}_{DGX}.log'), filemode='w', level=logging.INFO)
 
 #file_rankModel = os.path.join(filepath_rankModel, "RankClassifier16.pt")
 file_rankModel = os.path.join(filepath_rankModel, "RankClassifier2902_pretrained.pt")
@@ -103,9 +103,9 @@ logging.info(f'Load eval data from {filepath_val}')
 validationset = DataGeneratorRecon(filepath_val, file_val, mask, rank_trained_on_mag=True, data_type=smap_type)
 loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=False)
 
-# check a training dataset
-sneakpeek(trainingset, rank_trained_on_mag)
-sneakpeek(validationset, rank_trained_on_mag)
+# # check a training dataset
+# sneakpeek(trainingset, rank_trained_on_mag)
+# sneakpeek(validationset, rank_trained_on_mag)
 
 imSlShape = (BATCH_SIZE,) + (xres, yres)    # (1, 768, 396)
 
@@ -146,17 +146,17 @@ elif WHICH_LOSS == 'patchGAN':
 
 INNER_ITER = 10
 
-Nepoch = 10
+Nepoch = 50
 epochMSE = 0
 logging.info(f'MSE for first {epochMSE} epochs then switch to learned')
 lossT = np.zeros(Nepoch)
 lossV = np.zeros(Nepoch)
 
-Ntrain = 63
-Nval = 7
+Ntrain = 126
+Nval = 14
 
 # save some images during training
-out_name = os.path.join(log_dir,f'sneakpeek_training{Ntrial}.h5')
+out_name = os.path.join(log_dir,f'sneakpeek_training{Ntrial}_{DGX}.h5')
 try:
     os.remove(out_name)
 except OSError:
@@ -177,7 +177,7 @@ if BO:
     logging.info(f'BO, {best_parameters}')
 
 else:
-    LR = 1e-4
+    LR = 1e-6
     #optimizer = optim.SGD(ReconModel.parameters(), lr=LR, momentum=0.9)
     optimizer = optim.Adam(ReconModel.parameters(), lr=LR)
     logging.info(f'Adam, lr = {LR}')
@@ -234,11 +234,11 @@ for epoch in range(Nepoch):
         # im is on cuda, ([16, 396, 396, ch]) or on cuda [1, slice, 768, 396, ch] if DataIterator
         # kspaceU is on cpu ([1, 16, 20, 768, 396, 2]) or on cpu [1, slice, coil, 768, 396, 2] if DataIterator
 
-        # Disable memory pool for device memory (GPU)
-        cupy.cuda.set_allocator(None)
-
-        # Disable memory pool for pinned memory (CPU).
-        cupy.cuda.set_pinned_memory_allocator(None)
+        # # Disable memory pool for device memory (GPU)
+        # cupy.cuda.set_allocator(None)
+        #
+        # # Disable memory pool for pinned memory (CPU).
+        # cupy.cuda.set_pinned_memory_allocator(None)
 
         smaps = sp.to_device(smaps, device=spdevice)
         kspaceU = sp.to_device(kspaceU, device=spdevice)
@@ -248,6 +248,10 @@ for epoch in range(Nepoch):
         #kspaceU = sp.to_pytorch(kspaceU, requires_grad=False)
 
         im = torch.squeeze(im, dim=0)   # torch.Size([16, 768, 396, 1])
+
+        # im = im.cuda()
+        # kspaceU = xp.copy(kspaceU)
+        # smaps = xp.copy(smaps)
 
         # seems jsense and espirit wants (coil,h,w), can't do (sl, coil, h, w)
         redo_smaps = False
@@ -270,7 +274,7 @@ for epoch in range(Nepoch):
             for sl in range(Nslices):
                 t_sl = time.time()
                 smaps_sl = xp.copy(smaps[sl])                              # ndarray on cuda (20, 768, 396), complex64
-                im_sl = im[sl].clone().cuda()                             # tensor on cuda (768, 396, 2)
+                im_sl = im[sl].clone().cuda()                                               # tensor on cuda (768, 396, 2)
                 kspaceU_sl = xp.copy(kspaceU[sl])                            # ndarray (20, 768, 396)
                 with spdevice:
                     A = sp.mri.linop.Sense(smaps_sl, coil_batch_size=None, weights=mask_gpu)
@@ -488,11 +492,11 @@ for epoch in range(Nepoch):
         i += 1
         im = torch.squeeze(im, dim=0)
 
-        # Disable memory pool for device memory (GPU)
-        cupy.cuda.set_allocator(None)
-
-        # Disable memory pool for pinned memory (CPU).
-        cupy.cuda.set_pinned_memory_allocator(None)
+        # # Disable memory pool for device memory (GPU)
+        # cupy.cuda.set_allocator(None)
+        #
+        # # Disable memory pool for pinned memory (CPU).
+        # cupy.cuda.set_pinned_memory_allocator(None)
 
         smaps = sp.to_device(smaps, device=spdevice)
         kspaceU = sp.to_device(kspaceU, device=spdevice)
@@ -504,6 +508,9 @@ for epoch in range(Nepoch):
         smaps = chan2_complex(spdevice.xp.squeeze(smaps))
         Nslices = smaps.shape[0]
 
+        #im = im.clone().cuda()
+        # kspaceU = xp.copy(kspaceU)
+        # smaps = xp.copy(smaps)
 
         if ifSingleSlice:
             loss_temp = 0

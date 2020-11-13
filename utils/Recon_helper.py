@@ -335,20 +335,20 @@ class PerceptualLoss_VGG16(torch.nn.Module):
         self.std = torch.nn.Parameter(torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
 
     def forward(self, input, target):
-        # input and target both (Slice, 396, 396, 2)
-        # make the magnitude as the 3rd channel
+
+        # truth (1, 768, 396, 1). target (1,768, 396, 2)
         if input.ndim == 3:
             input = torch.unsqueeze(input, 0)
             target = torch.unsqueeze(target, 0)
 
         inputabs = torch.sqrt(input[:, :, :, 0] ** 2 + input[:, :, :, 1] ** 2)
         inputabs = torch.unsqueeze(inputabs, dim=3)
-        input = torch.cat((input, inputabs), dim=3)
+        input = torch.cat((inputabs, inputabs, inputabs), dim=3)
         shape3 = input.shape
 
-        targetabs = torch.sqrt(target[:, :, :, 0] ** 2 + target[:, :, :, 1] ** 2)
-        targetabs = torch.unsqueeze(targetabs, dim=3)
-        target = torch.cat((target, targetabs), dim=3)
+        # targetabs = torch.sqrt(target[:, :, :, 0] ** 2 + target[:, :, :, 1] ** 2)
+        # targetabs = torch.unsqueeze(targetabs, dim=3)
+        target = torch.cat((target, target, target), dim=3)
 
         # normalize to (0,1)
         input = input.view(input.shape[0], -1)
@@ -773,8 +773,14 @@ class MoDL(nn.Module):
 
             y_pred = y_pred.permute(0, -1, 1, 2).contiguous()
            
-            # UNet donoise
+            # Padding for UNet donoise
+            if isinstance(self.denoiser, UNet2D):
+                y_pred = nn.functional.pad(y_pred,(2,2), "constant", 0)
+
             y_pred = self.denoiser(y_pred)
+
+            # cropping for UNet
+            y_pred = y_pred[:,:,:,2:398]
 
             # # back to 2 channel
             y_pred = y_pred.permute(0, 2, 3, 1).contiguous()

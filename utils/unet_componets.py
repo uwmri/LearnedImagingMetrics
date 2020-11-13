@@ -47,7 +47,7 @@ def create_conv(in_channels, out_channels, kernel_size, order, num_groups, paddi
         elif char == 'c':
             # add learnable bias only in the absence of gatchnorm/groupnorm
             # bias = not ('g' in order or 'b' in order)
-            bias = not ('g' in order)
+            bias = False
             modules.append((f'conv{i}', conv2d(in_channels, out_channels, kernel_size, bias, padding=padding)))
             in_channels = out_channels
         elif char == 'C':
