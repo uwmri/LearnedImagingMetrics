@@ -30,9 +30,10 @@ mempool = cupy.get_default_memory_pool()
 pinned_mempool = cupy.get_default_pinned_memory_pool()
 
 spdevice = sp.Device(0)
+Ntrial = 9
 
 # load RankNet
-DGX = True
+DGX = False
 if DGX:
     filepath_rankModel = Path('/raid/DGXUserDataRaid/cxt004/NYUbrain')
     filepath_train = Path('/raid/DGXUserDataRaid/cxt004/NYUbrain')
@@ -43,6 +44,7 @@ if DGX:
         import argparse
 
         parser = argparse.ArgumentParser()
+        parser.add_argument('--pname', type=str, default=f'chenwei_metrics_{Ntrial}')
         args = parser.parse_args()
 
         setproctitle.setproctitle(args.pname)
@@ -57,7 +59,6 @@ else:
     filepath_val = Path("I:/NYUbrain")
 
 log_dir = filepath_rankModel
-Ntrial = 8
 rank_channel =1
 rank_trained_on_mag = True
 BO = False
@@ -88,7 +89,7 @@ Ncoils = 20
 xres = 768
 yres = 396
 
-acc = 16
+acc = 8
 logging.info(f'Acceleration = {acc}')
 # fixed sampling mask
 WHICH_MASK='poisson'
@@ -149,7 +150,7 @@ def train_evaluate_recon(parameterization):
 writer_train = SummaryWriter(f'runs/recon/train_{Ntrial}')
 writer_val = SummaryWriter(f'runs/recon/val_{Ntrial}')
 
-WHICH_LOSS = 'mse'
+WHICH_LOSS = 'learned'
 OneNet = False
 if WHICH_LOSS == 'perceptual':
     loss_perceptual = PerceptualLoss_VGG16()
@@ -166,11 +167,11 @@ logging.info(f'MSE for first {epochMSE} epochs then switch to learned')
 lossT = np.zeros(Nepoch)
 lossV = np.zeros(Nepoch)
 
-Ntrain = 126
-Nval = 14
+Ntrain = 252
+Nval = 28
 
 # save some images during training
-out_name = os.path.join(log_dir,f'sneakpeek_training{Ntrial}_{DGX}.h5')
+out_name = os.path.join(log_dir,f'sneakpeek_training{Ntrial}_KMJ.h5')
 try:
     os.remove(out_name)
 except OSError:
@@ -197,7 +198,7 @@ else:
     logging.info(f'Adam, lr = {LR}')
 
 logging.info('case averaged loss')
-logging.info('Denoiser = CNN_short, with 2 blocks')
+logging.info('Denoiser = Unet')
 logging.info(f'inner_iter = {INNER_ITER}')
 logging.info(f'{Ntrain} cases training, {Nval} cases validation')
 logging.info(f'loss = {WHICH_LOSS}')
