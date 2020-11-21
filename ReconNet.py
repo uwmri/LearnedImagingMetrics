@@ -58,6 +58,13 @@ else:
     filepath_train = Path("I:/NYUbrain")
     filepath_val = Path("I:/NYUbrain")
 
+# KMJ run
+filepath_train = Path('E:\LearnedImageMetric')
+filepath_val = Path('E:\LearnedImageMetric')
+filepath_rankModel = Path('E:\LearnedImageMetric\LearnedImagingMetrics_pytorch')
+import random
+Ntrial = random.randint(0,10000)
+
 log_dir = filepath_rankModel
 rank_channel =1
 rank_trained_on_mag = True
@@ -170,6 +177,10 @@ lossV = np.zeros(Nepoch)
 Ntrain = 252
 Nval = 28
 
+#Ntrain = 100
+#Nval = 1
+
+
 # save some images during training
 out_name = os.path.join(log_dir,f'sneakpeek_training{Ntrial}_KMJ.h5')
 try:
@@ -192,7 +203,7 @@ if BO:
     logging.info(f'BO, {best_parameters}')
 
 else:
-    LR = 1e-6
+    LR = 1e-4
     #optimizer = optim.SGD(ReconModel.parameters(), lr=LR, momentum=0.9)
     optimizer = optim.Adam(ReconModel.parameters(), lr=LR)
     logging.info(f'Adam, lr = {LR}')
@@ -209,6 +220,24 @@ logging.info(f'ifSingleSlice={ifSingleSlice}')
 
 xp = spdevice.xp
 
+
+
+import torch.linalg
+# Get the scale for Denoiser
+with torch.no_grad():
+    da = 0.0
+    for avg in range(10):
+        x = torch.randn((1, 2, yres, xres), device='cuda')
+        for iter in range(30):
+            ein = torch.linalg.norm( x)
+            y = ReconModel.call_denoiser(x)
+            eout = torch.linalg.norm( y)
+            x = y / eout
+            print(f'Scale {eout/ein}')
+        print(eout)
+        da += eout / 10
+    print(f'Denoiser scale = {da}')
+    ReconModel.set_denoiser_scale( 0.9 / da)
 
 for epoch in range(Nepoch):
 
@@ -283,9 +312,13 @@ for epoch in range(Nepoch):
         Nslices = smaps.shape[0]
         #print(f'Load batch {time.time()-t}, {Nslices} {smaps.shape}')
 
+
+        # Zero the gradients over all slices
+        optimizer.zero_grad()
+
         t = time.time()
+        t_case = t
         if ifSingleSlice:
-            loss_temp = 0
             for sl in range(Nslices):
                 t_sl = time.time()
                 smaps_sl = xp.copy(smaps[sl])                              # ndarray on cuda (20, 768, 396), complex64
@@ -293,9 +326,16 @@ for epoch in range(Nepoch):
                 kspaceU_sl = xp.copy(kspaceU[sl])                            # ndarray (20, 768, 396)
                 with spdevice:
                     A = sp.mri.linop.Sense(smaps_sl, coil_batch_size=None, weights=mask_gpu)
+                    Atruth = sp.mri.linop.Sense(smaps_sl, coil_batch_size=None)
                     Ah = A.H
                     # A ishape (768, 396), oshape (20, 768, 396)
                     # Ah ishape (20,768,396), oshape(768,396)
+
+                # Regenerate the truth
+                im_sl = Atruth.H * kspaceU_sl
+                im_sl = sp.to_pytorch(im_sl)
+                #im_sl = im_sl.permute(-1, 0, 1).contiguous()
+                #print(im_sl.shape)
 
                 A_torch = sp.to_pytorch_function(A, input_iscomplex=True, output_iscomplex=True)
                 Ah_torch = sp.to_pytorch_function(Ah, input_iscomplex=True, output_iscomplex=True)
@@ -304,12 +344,10 @@ for epoch in range(Nepoch):
 
                 t = time.time()
                 kspaceU_sl = sp.to_pytorch(kspaceU_sl)
-                optimizer.zero_grad()
 
                 for inner_iter in range(INNER_ITER):
 
                     imEst2 = ReconModel(imEst, kspaceU_sl, A_torch, Ah_torch)    # (768, 396, 2)
-
 
                     # # scale to ~same as truth
                     # y_pred_real = imEst2[..., 0].detach()
@@ -324,31 +362,30 @@ for epoch in range(Nepoch):
                     # imEst2[..., 1] *= scale_imag
                     # del y_pred_real, y_pred_imag
 
-
                     if WHICH_LOSS == 'mse':
-                        loss_temp = mseloss_fcn(imEst2, im_sl)
+                        loss_temp = mseloss_fcn(imEst2, im_sl) / INNER_ITER
                     elif WHICH_LOSS == 'perceptual':
-                        loss_temp = loss_perceptual(imEst2, im_sl)
+                        loss_temp = loss_perceptual(imEst2, im_sl) / INNER_ITER
                     elif WHICH_LOSS == 'patchGAN':
-                        loss_temp= loss_GAN(imEst2, im_sl, patchGAN)
+                        loss_temp= loss_GAN(imEst2, im_sl, patchGAN) / INNER_ITER
                     else:
                         if epoch < epochMSE:
-                            loss_temp = mseloss_fcn(imEst2, im_sl)
+                            loss_temp = mseloss_fcn(imEst2, im_sl) / INNER_ITER
                         else:
-                            loss_temp = learnedloss_fcn(imEst2, im_sl, score)
-                            loss_mse_tensor = mseloss_fcn(imEst2, im_sl).detach()
+                            loss_temp = learnedloss_fcn(imEst2, im_sl, score) / INNER_ITER
+                            loss_mse_tensor = mseloss_fcn(imEst2, im_sl).detach() / INNER_ITER
 
                     loss = loss_temp
                     del loss_temp
 
-                    if inner_iter == INNER_ITER-1:
-                        loss.backward()
-                    else:
-                        loss.backward(retain_graph=True)
+                    #loss.backward()
+                    #else:
+                    loss.backward(retain_graph=True)
                     # train_avg.update(loss.detach().item(), BATCH_SIZE)
                     imEst = imEst2
 
                     del imEst2
+                loss *= INNER_ITER
                 if WHICH_LOSS == 'learned':
                     with torch.no_grad():
                         loss_learnedT.append(loss.detach().item())
@@ -370,11 +407,13 @@ for epoch in range(Nepoch):
                 # print(f'truth_real min = {truth_min[0, 0, 0]}, truth_imag min = {truth_min[0, 0, 1]}')
                 # del y_pred_max, y_pred_min, truth_max, truth_min
 
-                print(f'case {i}, slice {sl}, took {time.time() - t_sl}s')
-
-                optimizer.step()
+                train_avg.update(loss.detach().item())
 
                 del smaps_sl, kspaceU_sl, im_sl
+            print(f'case {i}, took {time.time() - t_case}s, loss {loss.detach().item()}, avg = {train_avg.avg()}')
+
+            # Slice loop
+            optimizer.step()
 
             # case average loss
             #     loss_temp += loss_temp
@@ -449,17 +488,12 @@ for epoch in range(Nepoch):
                 exit()
 
 
-            print(f'{WHICH_LOSS} loss of batch {i}, epoch{epoch} is {loss} ')
             optimizer.step()
-
+            train_avg.update(loss.detach().item())
+            print(f'{WHICH_LOSS} loss of batch {i}, epoch{epoch} is {loss} , avg loss = {train_avg.avg()}')
 
             if epoch%10 == 0:
                 logging.info(f'Inner iteration took {time.time()-t}s')
-
-
-        train_avg.update(loss.detach().item(), n=BATCH_SIZE)
-
-
 
         if i % 10 ==0 :
             logging.info(f'Training Loss for batch {i} = {loss.detach().item()}')
@@ -528,7 +562,6 @@ for epoch in range(Nepoch):
         # smaps = xp.copy(smaps)
 
         if ifSingleSlice:
-            loss_temp = 0
             for sl in range(smaps.shape[0]):
                 smaps_sl = xp.copy(smaps[sl])
                 im_sl = im[sl].clone().cuda()
@@ -536,6 +569,13 @@ for epoch in range(Nepoch):
                 with spdevice:
                     A = sp.mri.linop.Sense(smaps_sl, coil_batch_size=None, weights=mask_gpu)
                     Ah = A.H
+                    Atruth = sp.mri.linop.Sense(smaps_sl, coil_batch_size=None)
+
+                # Regenerate the truth
+                im_sl = Atruth.H * kspaceU_sl
+                im_sl = sp.to_pytorch(im_sl)
+                #im_sl = im_sl.permute(-1, 0, 1).contiguous()
+                #print(im_sl.shape)
 
                 A_torch = sp.to_pytorch_function(A, input_iscomplex=True, output_iscomplex=True)
                 Ah_torch = sp.to_pytorch_function(Ah, input_iscomplex=True, output_iscomplex=True)
@@ -603,27 +643,29 @@ for epoch in range(Nepoch):
 
 
                 if i == 1 and sl == 4:
-                    truthplt = torch.squeeze(im_sl.cpu())
+                    truthplt = chan2_complex(torch.squeeze(im_sl.detach().cpu()))
                     perturbed = Ah_torch.apply(kspaceU_sl)
-                    noisyplt = torch.abs(chan2_complex(perturbed.detach().cpu()))
+                    noisyplt = chan2_complex(perturbed.detach().cpu())
                     del perturbed
                     temp = imEst
                     temp = temp.detach().cpu()
-                    imEstplt = torch.abs(chan2_complex(temp))
+                    imEstplt = chan2_complex(temp)
                     del temp
                     # truthplt = torch.unsqueeze(truthplt, 0)
                     # noisyplt = torch.unsqueeze(noisyplt, 0)
                     # imEstplt = torch.unsqueeze(imEstplt, 0)
-                    imEstfig = plt_recon(imEstplt)
+                    imEstfig = plt_recon(torch.abs(imEstplt))
                     writer_val.add_figure('Recon_val', imEstfig, epoch)
 
                     with h5py.File(out_name, 'a') as hf:
                         if epoch == 0:
-                            hf.create_dataset(f"{epoch}_truth", data=truthplt.numpy())
-                            hf.create_dataset(f"{epoch}_FT", data=noisyplt.numpy())
-                            hf.create_dataset(f"{epoch}_recon", data=imEstplt.numpy())
-                        else:
-                            hf.create_dataset(f"{epoch}_recon", data=imEstplt.numpy())
+                            hf.create_dataset(f"{epoch}_truth", data=np.abs(truthplt.numpy()))
+                            hf.create_dataset(f"{epoch}_FT", data=np.abs(noisyplt.numpy()))
+                            hf.create_dataset(f"p{epoch}_truth", data=np.angle(truthplt.numpy()))
+                            hf.create_dataset(f"p{epoch}_FT", data=np.angle(noisyplt.numpy()))
+
+                        hf.create_dataset(f"p{epoch}_recon", data=np.angle(imEstplt.numpy()))
+                        hf.create_dataset(f"{epoch}_recon", data=np.abs(imEstplt.numpy()))
                     del truthplt, noisyplt, imEstplt
 
                 del smaps_sl, kspaceU_sl, im_sl

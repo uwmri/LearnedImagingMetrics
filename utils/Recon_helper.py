@@ -117,7 +117,7 @@ class DataGeneratorRecon(Dataset):
         # kspace = kspace[:]  # array
         kspace = zero_pad4D(kspace)  # array (sl, coil, 768, 396)
         # mask_sl shape (768, 396)
-        kspace *= self.mask_sl
+        #kspace *= self.mask_sl
 
         max_truth = torch.unsqueeze(max_truth, -1)
         kspace = complex_2chan(kspace)  # (slice, coil, h, w, 2)
@@ -280,7 +280,8 @@ def learnedloss_fcn(output, target, scoreModel, rank_trained_on_mag=True):
         output = torch.unsqueeze(output, 0)
         target = torch.unsqueeze(target, 0)
     if rank_trained_on_mag and output.shape[-1] == 2:
-        output = torch.sqrt(torch.sum(output**2, axis=-1, keepdims=True))
+        output = torch.sqrt(torch.sum(output ** 2, axis=-1, keepdims=True))
+        target = torch.sqrt(torch.sum(target ** 2, axis=-1, keepdims=True))
 
     # output = crop_im(output)
     # target = crop_im(target)
@@ -734,15 +735,22 @@ class MoDL(nn.Module):
 
         self.inner_iter = inner_iter
         self.scale_layers = nn.Parameter(scale_init*torch.ones([inner_iter]), requires_grad=True)
-        self.lam1 = nn.Parameter(1.0*torch.ones([inner_iter]), requires_grad=True)
-        self.lam2 = nn.Parameter(0.05*torch.ones([inner_iter]), requires_grad=True)
+        self.lam1 = nn.Parameter(0.5*torch.ones([inner_iter]), requires_grad=True)
+        self.lam2 = nn.Parameter(0.5*torch.ones([inner_iter]), requires_grad=True)
 
 
         # Options for UNET
-        self.denoiser = UNet2D(2, 2, final_activation='none', f_maps=8, layer_order='cli')
+        self.denoiser = UNet2D(2, 2, depth=3, final_activation='none', f_maps=8, layer_order='cli')
         #self.denoiser = CNN_shortcut()
         # self.denoiser = Projector(ENC=False)
 
+    def call_denoiser(self, image):
+        image = self.denoiser(image)
+        return(image)
+
+    def set_denoiser_scale(self, scale):
+        self.lam2[:] = scale
+        self.lam1[:] = 1.0 - self.lam2
 
     def forward(self, image, kspace, encoding_op, decoding_op):
 
@@ -774,20 +782,36 @@ class MoDL(nn.Module):
             y_pred = y_pred.permute(0, -1, 1, 2).contiguous()
            
             # Padding for UNet donoise
-            if isinstance(self.denoiser, UNet2D):
-                y_pred = nn.functional.pad(y_pred,(2,2), "constant", 0)
+            #if isinstance(self.denoiser, UNet2D):
+            #    y_pred = nn.functional.pad(y_pred,(2,2), "constant", 0)
 
+            # Pad to prevent edge effects, circular pad to keep image statistics
+            target_size1 = 32 * math.ceil( (64 + y_pred.shape[-1]) / 32)
+            target_size2 = 32 * math.ceil( (64 + y_pred.shape[-2]) / 32)
+            #print(f'Target size {target_size1} {target_size2}')
+
+            pad_amount1 = (target_size1 - y_pred.shape[-1]) // 2
+            pad_amount2 = (target_size2 - y_pred.shape[-2]) // 2
+            #print(f'Target size {pad_amount1} {pad_amount2}')
+
+            #print(f'Target size = {target_size}, pad_amount {pad_amount} input = {y_pred.shape}')
+
+            pad_f = (pad_amount1,pad_amount1,pad_amount2, pad_amount2)
+            #print(pad_f)
+            y_pred = nn.functional.pad(y_pred,pad_f, "circular")
+            #print(y_pred.shape)
             y_pred = self.denoiser(y_pred)
 
             # cropping for UNet
-            y_pred = y_pred[:,:,:,2:398]
+            y_pred = y_pred[:,:,pad_amount2:-pad_amount2,pad_amount1:-pad_amount1]
 
             # # back to 2 channel
             y_pred = y_pred.permute(0, 2, 3, 1).contiguous()
             if dim==3:
                 y_pred = torch.squeeze(y_pred)
 
-            y_pred = self.lam1[i]*image +self.lam2[i]*y_pred
+            #self.lam1[i] * image +
+            y_pred = self.lam2[i]*y_pred
 
         return y_pred
 
