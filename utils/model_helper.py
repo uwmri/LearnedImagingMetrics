@@ -190,6 +190,9 @@ class L2cnn(nn.Module):
         ssim = 2.0 - self.ssim_op(x, truth)
 
         diff = input - truth
+        # if train on 2chan (real and imag) images
+        diff = torch.sqrt(diff[:,0,:,:]**2+diff[:,1,:,:]**2)
+        diff = diff.unsqueeze_(1)
 
         # Mean square error
         mse = self.layer_mse(diff)

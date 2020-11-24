@@ -780,7 +780,8 @@ class MoDL(nn.Module):
             y_pred = self.denoiser(y_pred)
 
             # cropping for UNet
-            y_pred = y_pred[:,:,:,2:398]
+            if isinstance(self.denoiser, UNet2D):
+                y_pred = y_pred[:,:,:,2:398]
 
             # # back to 2 channel
             y_pred = y_pred.permute(0, 2, 3, 1).contiguous()

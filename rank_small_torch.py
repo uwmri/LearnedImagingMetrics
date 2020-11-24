@@ -20,7 +20,7 @@ except:
 from utils.model_helper import *
 from utils.utils_DL import *
 
-train_on_mag = True
+train_on_mag = False    # False: L2CNN trained on abs(im-truth), True: train on abs(im)-abs(truth)
 shuffle_observers = True
 MOBILE = False
 EFF = False
@@ -30,7 +30,7 @@ ResumeTrain = True
 CLIP = False
 SAMPLER = False
 WeightedLoss = False
-Pretrain = 'pretrained'   # pretraining or pretrained or none
+Pretrain = 'pretrained'   # pretraining(train on corrupted/truth pair) or pretrained (for actual training) or none
 
 trainScoreandMSE = True    # train score based classifier and mse(im1)-mse(im2) based classifier at the same time
 
@@ -52,7 +52,7 @@ if Pretrain == 'pretraining':
 
 else:
     names = []
-    filepath_csv = Path('I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020')
+    filepath_csv = Path('V:\LearnedImageMetric\ImagePairs_Pack_04032020')
     os.chdir(filepath_csv)
 
     files_csv = os.listdir(filepath_csv)
@@ -140,7 +140,7 @@ if Pretrain == 'pretraining':
 
 
 else:
-    filepath_images = Path('I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020')
+    filepath_images = Path('V:\LearnedImageMetric\ImagePairs_Pack_04032020')
     file ='TRAINING_IMAGES_04032020.h5'
     file_images = os.path.join(filepath_images, file)
     hf = h5.File(name=file_images, mode='r')
@@ -277,7 +277,7 @@ elif EFF:
 elif RESNET:
     ranknet = ResNet2(BasicBlock, [2,2,2,2], for_denoise=False)  # Less than ResNet18
 else:
-    ranknet = L2cnn(channels_in=X_1.shape[-3])
+    ranknet = L2cnn(channels_in=1)
 
 # Print summary
 torchsummary.summary(ranknet, [(X_1.shape[-3], maxMatSize, maxMatSize)
@@ -300,8 +300,8 @@ def train_evaluate(parameterization):
 
 if ResumeTrain:
     # load RankNet
-    filepath_rankModel = Path('I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020')
-    file_rankModel = os.path.join(filepath_rankModel, "RankClassifier1785_pretrained.pt")
+    filepath_rankModel = Path('V:\LearnedImageMetric')
+    file_rankModel = os.path.join(filepath_rankModel, "RankClassifier8085_pretraining.pt")
     classifier = Classifier(ranknet)
     #classifier.rank.register_backward_hook(printgradnorm)
     loss_func = nn.CrossEntropyLoss(weight=weight)
@@ -315,7 +315,7 @@ if ResumeTrain:
     optimizer.load_state_dict(state['optimizer'])
 
     if trainScoreandMSE:
-        file_rankModelMSE = os.path.join(filepath_rankModel, "RankClassifier4177_pretraining_MSE.pt")
+        file_rankModelMSE = os.path.join(filepath_rankModel, "RankClassifier8085_pretraining_MSE.pt")
         mse_module = MSEmodule()
         classifierMSE = Classifier(mse_module)
         stateMSE = torch.load(file_rankModelMSE)
@@ -335,7 +335,7 @@ else:
 
     classifier = Classifier(ranknet)
     if trainScoreandMSE:
-        mse_module = MSEmodule()              
+        mse_module = MSEmodule()
         classifierMSE = Classifier(mse_module)
 
     if BO:
@@ -510,7 +510,8 @@ for epoch in range(Nepoch):
     score_mse_figureT = plt_scoreVsMse(scorelistT, mselistT)
     corrT, pT = pearsonr(scorelistT, mselistT)
     writer_train.add_figure('Score_vs_mse', score_mse_figureT, epoch)
-    writer_train.add_scalar('Pearson Corr and p-value', {'Corr':corrT, 'p-value':pT}, epoch)
+    writer_train.add_scalar('PearsonCorr', corrT, epoch)
+    writer_train.add_scalar('p-value', pT, epoch)
 
     # validation
 
@@ -572,8 +573,8 @@ for epoch in range(Nepoch):
 
     # linear correlation
     corrV, pV = pearsonr(scorelistV, mselistV)
-    writer_val.add_scalars('Pearson Corr and p-value', {'Corr': corrV, 'p-value': pV}, epoch)
-
+    writer_val.add_scalar('PearsonCorr',corrV, epoch)
+    writer_val.add_scalar('p-value', corrV, epoch)
         # accV[epoch] = 100 * correct / total
 
     #print('Epoch = %d : Loss Eval = %f , Loss Train = %f' % (epoch, eval_avg.avg(), train_avg.avg()))
@@ -623,11 +624,11 @@ for epoch in range(Nepoch):
         torch.save(stateMSE, os.path.join(log_dir, f'RankClassifier{Ntrial}_{Pretrain}_MSE.pt'))
 
     with h5py.File(score_mse_file, 'a') as hf:
-        hf.create_dataset(f'scoreT_epoch{Nepoch}', data=scorelistT)
-        hf.create_dataset(f'scoreV_epoch{Nepoch}', data=scorelistV)
+        hf.create_dataset(f'scoreT_epoch{epoch}', data=scorelistT)
+        hf.create_dataset(f'scoreV_epoch{epoch}', data=scorelistV)
         if trainScoreandMSE:
-            hf.create_dataset(f'mseV_epoch{Nepoch}', data=mselistV)
-            hf.create_dataset(f'mseT_epoch{Nepoch}', data=mselistT)
+            hf.create_dataset(f'mseV_epoch{epoch}', data=mselistV)
+            hf.create_dataset(f'mseT_epoch{epoch}', data=mselistT)
 
 # if trainScoreandMSE:
 #     acc_endT = np.array(acc_endT)
@@ -665,4 +666,5 @@ for epoch in range(Nepoch):
 #     plt.show()
 #
 #
+
 
