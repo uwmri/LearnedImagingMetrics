@@ -58,6 +58,11 @@ else:
     filepath_train = Path("I:/NYUbrain")
     filepath_val = Path("I:/NYUbrain")
 
+    # On Kevins machine
+    filepath_rankModel = Path('E:\LearnedImageMetric\ImagePairs_Pack_04032020')
+    filepath_train = Path("Q:\LearnedImageMetric")
+    filepath_val = Path("Q:\LearnedImageMetric")
+
 log_dir = filepath_rankModel
 rank_channel =1
 rank_trained_on_mag = False
@@ -65,6 +70,7 @@ BO = False
 logging.basicConfig(filename=os.path.join(log_dir,f'Recon_{Ntrial}_{DGX}.log'), filemode='w', level=logging.INFO)
 
 #file_rankModel = os.path.join(filepath_rankModel, "RankClassifier16.pt")
+
 file_rankModel = os.path.join(filepath_rankModel, "RankClassifier1359_pretrained.pt")
 
 os.chdir(filepath_rankModel)
@@ -169,6 +175,10 @@ lossV = np.zeros(Nepoch)
 
 Ntrain = 252
 Nval = 28
+
+Ntrain = 25
+Nval = 2
+
 
 # save some images during training
 out_name = os.path.join(log_dir,f'sneakpeek_training{Ntrial}_KMJ.h5')
@@ -294,8 +304,12 @@ for epoch in range(Nepoch):
                 with spdevice:
                     A = sp.mri.linop.Sense(smaps_sl, coil_batch_size=None, weights=mask_gpu)
                     Ah = A.H
+                    Atruth = sp.mri.linop.Sense(smaps_sl, coil_batch_size=None)
                     # A ishape (768, 396), oshape (20, 768, 396)
                     # Ah ishape (20,768,396), oshape(768,396)
+
+                # Get truth
+                im_sl = sp.to_pytorch( Atruth.H*kspaceU_sl, requires_grad=True)
 
                 A_torch = sp.to_pytorch_function(A, input_iscomplex=True, output_iscomplex=True)
                 Ah_torch = sp.to_pytorch_function(Ah, input_iscomplex=True, output_iscomplex=True)
@@ -325,6 +339,7 @@ for epoch in range(Nepoch):
                     # del y_pred_real, y_pred_imag
 
 
+
                     if WHICH_LOSS == 'mse':
                         loss_temp = mseloss_fcn(imEst2, im_sl)
                     elif WHICH_LOSS == 'perceptual':
@@ -347,8 +362,8 @@ for epoch in range(Nepoch):
                         loss.backward(retain_graph=True)
                     # train_avg.update(loss.detach().item(), BATCH_SIZE)
                     imEst = imEst2
-
                     del imEst2
+
                 if WHICH_LOSS == 'learned':
                     with torch.no_grad():
                         loss_learnedT.append(loss.detach().item())
@@ -421,7 +436,9 @@ for epoch in range(Nepoch):
                 elif WHICH_LOSS == 'patchGAN':
                     loss = loss_GAN(imEst2, im, patchGAN)
                 else:
+
                     loss = learnedloss_fcn(imEst2, im, score, rank_trained_on_mag=rank_trained_on_mag)
+
                     torch.cuda.empty_cache()
 
                 loss.backward(retain_graph=True)
@@ -537,6 +554,11 @@ for epoch in range(Nepoch):
                     A = sp.mri.linop.Sense(smaps_sl, coil_batch_size=None, weights=mask_gpu)
                     Ah = A.H
 
+                    Atruth = sp.mri.linop.Sense(smaps_sl, coil_batch_size=None)
+
+                # Get truth
+                im_sl = sp.to_pytorch(Atruth.H * kspaceU_sl, requires_grad=False)
+
                 A_torch = sp.to_pytorch_function(A, input_iscomplex=True, output_iscomplex=True)
                 Ah_torch = sp.to_pytorch_function(Ah, input_iscomplex=True, output_iscomplex=True)
 
@@ -588,7 +610,9 @@ for epoch in range(Nepoch):
                             loss_temp = mseloss_fcn(imEst2, im_sl)
                         else:
                             loss_mse_tensor = mseloss_fcn(imEst2, im_sl).detach()
+
                             loss_temp = learnedloss_fcn(imEst2, im_sl, score, rank_trained_on_mag=rank_trained_on_mag)
+
                     loss = loss_temp
                     imEst = imEst2
 
@@ -670,7 +694,9 @@ for epoch in range(Nepoch):
                 elif WHICH_LOSS == 'patchGAN':
                     loss = loss_GAN(imEst2, im, patchGAN)
                 else:
+
                     loss = learnedloss_fcn(imEst2, im, score, rank_trained_on_mag=rank_trained_on_mag)
+
                     torch.cuda.empty_cache()
 
                 imEst = imEst2

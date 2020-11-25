@@ -279,6 +279,7 @@ def learnedloss_fcn(output, target, scoreModel, rank_trained_on_mag=False):
     if output.ndim == 3:
         output = torch.unsqueeze(output, 0)
         target = torch.unsqueeze(target, 0)
+
     if rank_trained_on_mag and output.shape[-1] == 2:
         output = torch.sqrt(torch.sum(output**2, axis=-1, keepdims=True))
 
@@ -295,8 +296,10 @@ def learnedloss_fcn(output, target, scoreModel, rank_trained_on_mag=False):
     #     zeros = torch.zeros(((Nslice, 1,) + output.shape[2:]), dtype=output.dtype)
     #     zeros = zeros.cuda()
     #     output = torch.cat((output, zeros), dim=1)
+
     #
     #     target = torch.cat((target, zeros), dim=1)      # (batch=1, 3, 396, 396)
+
 
 
     delta = 0
