@@ -62,7 +62,8 @@ else:
     filepath_rankModel = Path('E:\LearnedImageMetric\ImagePairs_Pack_04032020')
     filepath_train = Path("Q:\LearnedImageMetric")
     filepath_val = Path("Q:\LearnedImageMetric")
-
+import random
+Ntrial = random.randint(0,10000)
 log_dir = filepath_rankModel
 rank_channel =1
 rank_trained_on_mag = True
@@ -115,7 +116,7 @@ mask_gpu = sp.to_device(mask, spdevice)
 
 # Data generator
 BATCH_SIZE = 1
-prefetch_data = False
+prefetch_data = True
 logging.info(f'Load train data from {filepath_train}')
 trainingset = DataGeneratorRecon(filepath_train, file_train, mask, rank_trained_on_mag=True,data_type=smap_type)
 loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=True)
@@ -157,6 +158,7 @@ writer_train = SummaryWriter(f'runs/recon/train_{Ntrial}')
 writer_val = SummaryWriter(f'runs/recon/val_{Ntrial}')
 
 WHICH_LOSS = 'learned'
+#WHICH_LOSS = 'mse'
 OneNet = False
 if WHICH_LOSS == 'perceptual':
     loss_perceptual = PerceptualLoss_VGG16()
@@ -165,9 +167,10 @@ elif WHICH_LOSS == 'patchGAN':
     patchGAN = NLayerDiscriminator(input_nc=2)
     patchGAN.cuda()
 
-INNER_ITER = 10
 
-Nepoch = 50
+INNER_ITER = 1
+
+Nepoch = 100
 epochMSE = 0
 logging.info(f'MSE for first {epochMSE} epochs then switch to learned')
 lossT = np.zeros(Nepoch)
@@ -202,7 +205,7 @@ if BO:
     logging.info(f'BO, {best_parameters}')
 
 else:
-    LR = 1e-6
+    LR = 1e-4
     #optimizer = optim.SGD(ReconModel.parameters(), lr=LR, momentum=0.9)
     optimizer = optim.Adam(ReconModel.parameters(), lr=LR)
     logging.info(f'Adam, lr = {LR}')
@@ -293,9 +296,17 @@ for epoch in range(Nepoch):
         Nslices = smaps.shape[0]
         #print(f'Load batch {time.time()-t}, {Nslices} {smaps.shape}')
 
+
+        # Zero the gradients over all slices
+        optimizer.zero_grad()
+
         t = time.time()
+        t_case = t
         if ifSingleSlice:
-            loss_temp = 0
+
+            # Zero the gradients over all slices
+            optimizer.zero_grad()
+
             for sl in range(Nslices):
                 t_sl = time.time()
                 smaps_sl = xp.copy(smaps[sl])                              # ndarray on cuda (20, 768, 396), complex64
@@ -390,14 +401,11 @@ for epoch in range(Nepoch):
 
                 del smaps_sl, kspaceU_sl, im_sl
 
-            # case average loss
-            #     loss_temp += loss_temp
-            # loss_temp /= Nslices
-            # loss = loss_temp
-            # loss.backward(retain_graph=True)
+                train_avg.update( loss.detach().item())
+                # Slice loop
+                optimizer.step()
 
-            # optimizer.step()
-
+            print(f'case {i}, took {time.time() - t_case}s, loss {loss.detach().item()}, avg = {train_avg.avg()}')
 
         else:
             A = sp.linop.Diag(
