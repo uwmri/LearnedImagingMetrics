@@ -52,7 +52,7 @@ if Pretrain == 'pretraining':
 
 else:
     names = []
-    filepath_csv = Path('V:\LearnedImageMetric\ImagePairs_Pack_04032020')
+    filepath_csv = Path('E:\LearnedImageMetric\ImagePairs_Pack_04032020')
     os.chdir(filepath_csv)
 
     files_csv = os.listdir(filepath_csv)
@@ -99,7 +99,7 @@ Labels = np.zeros(NRANKS, dtype=np.int32)
 
 if Pretrain == 'pretraining':
     filepath_images = Path("I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_05062020")
-    path2 = Path("I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_05072020")
+    path2 = Path("I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_05062020")
     file = 'TRAINING_IMAGES_v7.h5'
     file1 = os.path.join(filepath_images, file)
     file2 = os.path.join(path2, file)
@@ -140,7 +140,7 @@ if Pretrain == 'pretraining':
 
 
 else:
-    filepath_images = Path('V:\LearnedImageMetric\ImagePairs_Pack_04032020')
+    filepath_images = Path('E:\LearnedImageMetric\ImagePairs_Pack_04032020')
     file ='TRAINING_IMAGES_04032020.h5'
     file_images = os.path.join(filepath_images, file)
     hf = h5.File(name=file_images, mode='r')
@@ -300,7 +300,7 @@ def train_evaluate(parameterization):
 
 if ResumeTrain:
     # load RankNet
-    filepath_rankModel = Path('V:\LearnedImageMetric')
+    filepath_rankModel = Path('E:\LearnedImageMetric')
     file_rankModel = os.path.join(filepath_rankModel, "RankClassifier8085_pretraining.pt")
     classifier = Classifier(ranknet)
     #classifier.rank.register_backward_hook(printgradnorm)
