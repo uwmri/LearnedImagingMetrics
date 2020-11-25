@@ -33,7 +33,7 @@ class SubtractArray(sp.linop.Linop):
 
 class DataGeneratorRecon(Dataset):
 
-    def __init__(self,path_root, h5file, mask_sl, rank_trained_on_mag=True, data_type=None):
+    def __init__(self,path_root, h5file, mask_sl, rank_trained_on_mag=False, data_type=None):
 
         '''
         input: mask (768, 396) complex64
@@ -274,7 +274,7 @@ def loss_fcn_onenet(noisy, output, target, projector, encoder, discriminator, di
 
 
 # learned metrics loss
-def learnedloss_fcn(output, target, scoreModel, rank_trained_on_mag=True):
+def learnedloss_fcn(output, target, scoreModel, rank_trained_on_mag=False):
 
     if output.ndim == 3:
         output = torch.unsqueeze(output, 0)
@@ -289,13 +289,15 @@ def learnedloss_fcn(output, target, scoreModel, rank_trained_on_mag=True):
 
     Nslice = output.shape[0]
 
-    if not rank_trained_on_mag:
-        # add a zero channel since ranknet expect 3chan
-        zeros = torch.zeros(((Nslice, 1,) + output.shape[2:]), dtype=output.dtype)
-        zeros = zeros.cuda()
-        output = torch.cat((output, zeros), dim=1)
 
-        target = torch.cat((target, zeros), dim=1)      # (batch=1, 3, 396, 396)
+    # if not rank_trained_on_mag:
+    #     # add a zero channel since ranknet expect 3chan
+    #     zeros = torch.zeros(((Nslice, 1,) + output.shape[2:]), dtype=output.dtype)
+    #     zeros = zeros.cuda()
+    #     output = torch.cat((output, zeros), dim=1)
+    #
+    #     target = torch.cat((target, zeros), dim=1)      # (batch=1, 3, 396, 396)
+
 
     delta = 0
     for sl in range(Nslice):
@@ -726,8 +728,7 @@ class ScaleLayer(nn.Module):
 
 class MoDL(nn.Module):
     '''output: image (sl, 768, 396, 2) '''
-    # TODO: projector has dimension issue. 768*396 -> 764*396 ->764*396...
-    # TODO: How to save the encoder and projector during training MoDL for loss calc
+
     # def __init__(self, inner_iter=10):
     def __init__(self, scale_init=1.0, inner_iter=1):
         super(MoDL, self).__init__()

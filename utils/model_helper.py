@@ -191,7 +191,7 @@ class L2cnn(nn.Module):
 
         diff = input - truth
         # if train on 2chan (real and imag) images
-        diff = torch.sqrt(diff[:,0,:,:]**2+diff[:,1,:,:]**2)
+        diff = (diff[:,0,:,:]**2+diff[:,1,:,:]**2)**0.5
         diff = diff.unsqueeze_(1)
 
         # Mean square error
