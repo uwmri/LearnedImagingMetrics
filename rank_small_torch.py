@@ -20,17 +20,17 @@ except:
 from utils.model_helper import *
 from utils.utils_DL import *
 
-train_on_mag = True
+train_on_mag = False    # False: L2CNN trained on abs(im-truth), True: train on abs(im)-abs(truth)
 shuffle_observers = True
 MOBILE = False
 EFF = False
 BO = False
 RESNET = False
-ResumeTrain = True
+ResumeTrain = False
 CLIP = False
 SAMPLER = False
 WeightedLoss = False
-Pretrain = 'pretrained'   # pretraining or pretrained or none
+Pretrain = 'pretrained'   # pretraining(train on corrupted/truth pair) or pretrained (for actual training) or none
 
 trainScoreandMSE = True    # train score based classifier and mse(im1)-mse(im2) based classifier at the same time
 
@@ -52,7 +52,7 @@ if Pretrain == 'pretraining':
 
 else:
     names = []
-    filepath_csv = Path('I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020')
+    filepath_csv = Path('E:\LearnedImageMetric\ImagePairs_Pack_04032020')
     os.chdir(filepath_csv)
 
     files_csv = os.listdir(filepath_csv)
@@ -99,7 +99,7 @@ Labels = np.zeros(NRANKS, dtype=np.int32)
 
 if Pretrain == 'pretraining':
     filepath_images = Path("I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_05062020")
-    path2 = Path("I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_05072020")
+    path2 = Path("I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_05062020")
     file = 'TRAINING_IMAGES_v7.h5'
     file1 = os.path.join(filepath_images, file)
     file2 = os.path.join(path2, file)
@@ -140,7 +140,7 @@ if Pretrain == 'pretraining':
 
 
 else:
-    filepath_images = Path('I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020')
+    filepath_images = Path('E:\LearnedImageMetric\ImagePairs_Pack_04032020')
     file ='TRAINING_IMAGES_04032020.h5'
     file_images = os.path.join(filepath_images, file)
     hf = h5.File(name=file_images, mode='r')
@@ -227,23 +227,23 @@ Labels_cnnV = Labels[ntrain:]
 
 
 # Data generator
-BATCH_SIZE = 16
+BATCH_SIZE = 32
 
 if SAMPLER:
     # deal with imbalanced class
     samplerT = get_sampler(Labels_cnnT)
     samplerV = get_sampler(Labels_cnnV)
     trainingset = DataGenerator_rank(X_1, X_2, X_T, Labels_cnnT, idT, augmentation=True, pad_channels=0)
-    loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=False, sampler=samplerT)
+    loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=False, sampler=samplerT, drop_last=True)
 
     validationset = DataGenerator_rank(X_1, X_2, X_T, Labels_cnnV, idV, augmentation=False, pad_channels=0)
-    loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=False, sampler=samplerV)
+    loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=False, sampler=samplerV, drop_last=True)
 else:
     trainingset = DataGenerator_rank(X_1, X_2, X_T, Labels_cnnT, idT, augmentation=True, pad_channels=0)
-    loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=True)
+    loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=True, drop_last=True)
 
     validationset = DataGenerator_rank(X_1, X_2, X_T, Labels_cnnV, idV, augmentation=False, pad_channels=0)
-    loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=True)
+    loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=True, drop_last=True)
 
 if WeightedLoss:
     weight = get_class_weights(Labels)
@@ -277,7 +277,7 @@ elif EFF:
 elif RESNET:
     ranknet = ResNet2(BasicBlock, [2,2,2,2], for_denoise=False)  # Less than ResNet18
 else:
-    ranknet = L2cnn(channels_in=X_1.shape[-3])
+    ranknet = L2cnn(channels_in=1)
 
 # Print summary
 torchsummary.summary(ranknet, [(X_1.shape[-3], maxMatSize, maxMatSize)
@@ -300,8 +300,8 @@ def train_evaluate(parameterization):
 
 if ResumeTrain:
     # load RankNet
-    filepath_rankModel = Path('I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020')
-    file_rankModel = os.path.join(filepath_rankModel, "RankClassifier1785_pretrained.pt")
+    filepath_rankModel = Path('E:\LearnedImageMetric')
+    file_rankModel = os.path.join(filepath_rankModel, "RankClassifier8085_pretraining.pt")
     classifier = Classifier(ranknet)
     #classifier.rank.register_backward_hook(printgradnorm)
     loss_func = nn.CrossEntropyLoss(weight=weight)
@@ -310,12 +310,11 @@ if ResumeTrain:
     classifier.load_state_dict(state['state_dict'], strict=True)
     classifier.cuda();
 
-
-    optimizer = optim.Adam(classifier.parameters(), lr=1e-5)
+    optimizer = optim.AdamW(classifier.parameters(), lr=1e-5)
     optimizer.load_state_dict(state['optimizer'])
 
     if trainScoreandMSE:
-        file_rankModelMSE = os.path.join(filepath_rankModel, "RankClassifier4177_pretraining_MSE.pt")
+        file_rankModelMSE = os.path.join(filepath_rankModel, "RankClassifier8085_pretraining_MSE.pt")
         mse_module = MSEmodule()
         classifierMSE = Classifier(mse_module)
         stateMSE = torch.load(file_rankModelMSE)
@@ -335,7 +334,7 @@ else:
 
     classifier = Classifier(ranknet)
     if trainScoreandMSE:
-        mse_module = MSEmodule()              
+        mse_module = MSEmodule()
         classifierMSE = Classifier(mse_module)
 
     if BO:
@@ -358,12 +357,13 @@ else:
         # get best paramters and initialize optimizier here manually
 
         #optimizer = optim.SGD(classifier.parameters(), lr=0.003152130338485237, momentum=0.27102874871343374)
-        learning_rate = 1e-3
+        learning_rate = 1e-5
         optimizer = optim.Adam(classifier.parameters(), lr=learning_rate)
+
         logging.info(f'Adam, lr={learning_rate}')
         if trainScoreandMSE:
             #optimizerMSE = optim.SGD(classifierMSE.parameters(), lr=0.00097, momentum=0.556)
-            optimizerMSE = optim.Adam(classifierMSE.parameters(), lr=learning_rate)
+            optimizerMSE = optim.AdamW(classifierMSE.parameters(), lr=1e-3)
 
     #classifier.rank.register_backward_hook(printgradnorm)
 
@@ -372,14 +372,12 @@ else:
     if trainScoreandMSE:
         classifierMSE.cuda();
 
-
-
 # Training
-
 from random import randrange
 Ntrial = randrange(10000)
 
 log_dir = filepath_images
+print(f'Logging to {log_dir}')
 writer_train = SummaryWriter(os.path.join(log_dir,f'runs/rank/train_{Ntrial}'))
 writer_val = SummaryWriter(os.path.join(log_dir,f'runs/rank/val_{Ntrial}'))
 
@@ -387,7 +385,7 @@ logging.basicConfig(filename=os.path.join(log_dir,f'runs/rank/ranking_{Ntrial}.l
 logging.info('With L2cnn, SSIM and MSE fused, symetric classifier')
 score_mse_file = os.path.join(f'score_mse_file_{Ntrial}.h5')
 
-Nepoch = 250
+Nepoch = 400
 
 lossT = np.zeros(Nepoch)
 lossV = np.zeros(Nepoch)
@@ -428,8 +426,11 @@ for epoch in range(Nepoch):
 
         classifierMSE.train()
 
+
     # training
     classifier.train()
+    if epoch < 5:
+        classifier.rank.eval()
 
     for i, data in enumerate(loader_T, 0):
 
@@ -438,11 +439,16 @@ for epoch in range(Nepoch):
         im1, im2, imt = im1.cuda(), im2.cuda(), imt.cuda()
         labels = labels.to(device, dtype=torch.long)
 
-        # classifier
-        delta = classifier(im1, im2, imt)
+        # classifier and scores for each image
+        delta, score1, score2 = classifier(im1, im2, imt)
 
-        # loss
+        mean_score = torch.mean(score1) + torch.mean(score2)
+        #print(f'Score = {mean_score}')
+        #loss_scale = (0.5*mean_score - 1.0)**2
+        #print(f'Loss Score = {loss_scale}')
+
         loss = loss_func(delta, labels)
+
         train_avg.update(loss.item(), n=BATCH_SIZE)  # here is total loss of all batches
 
         # acc
@@ -469,18 +475,13 @@ for epoch in range(Nepoch):
 
         # train on MSE
         if trainScoreandMSE:
-            deltaMSE = classifierMSE(im1, im2, imt)
+            deltaMSE, mse1, mse2  = classifierMSE(im1, im2, imt)
             lossMSE = loss_func(deltaMSE, labels)
             train_avgMSE.update(lossMSE.item(), n=BATCH_SIZE)  # here is total loss of all batches
 
             # acc
-            accMSE = acc_calc(deltaMSE, labels)
+            accMSE = acc_calc(deltaMSE, labels, BatchSize=BATCH_SIZE)
             train_accMSE.update(accMSE, n=1)
-
-
-#             if i % 30 == 0:
-#                 print(f'Acc trained on mse {train_accMSE.avg()}')
-
 
             # zero the parameter gradients, backward and update
             optimizerMSE.zero_grad()
@@ -491,16 +492,10 @@ for epoch in range(Nepoch):
 
             optimizerMSE.step()
 
+        # get the score for a plot
         with torch.no_grad():
-            score1 = classifier.rank(im1, imt)
-            score1 = torch.abs(score1)
-            score2 = classifier.rank(im2, imt)
-            score2 = torch.abs(score2)
-            scorelistT.append(score1.cpu().numpy())
-            scorelistT.append(score2.cpu().numpy())
-
-            mse1 = torch.mean((torch.abs(im1 - imt) ** 2), dim=(1, 2, 3))
-            mse2 = torch.mean((torch.abs(im2 - imt) ** 2), dim=(1, 2, 3))
+            scorelistT.append(score1.detach().cpu().numpy())
+            scorelistT.append(score2.detach().cpu().numpy())
 
             mselistT.append(mse1.cpu().numpy())
             mselistT.append(mse2.cpu().numpy())
@@ -510,10 +505,11 @@ for epoch in range(Nepoch):
     score_mse_figureT = plt_scoreVsMse(scorelistT, mselistT)
     corrT, pT = pearsonr(scorelistT, mselistT)
     writer_train.add_figure('Score_vs_mse', score_mse_figureT, epoch)
-    writer_train.add_scalar('Pearson Corr and p-value', {'Corr':corrT, 'p-value':pT}, epoch)
+    writer_train.add_scalar('PearsonCorr', corrT, epoch)
+    writer_train.add_scalar('p-value', pT, epoch)
 
     # validation
-
+    classifier.eval()
     with torch.no_grad():
         correct = 0
         total = 0
@@ -526,7 +522,7 @@ for epoch in range(Nepoch):
             labels = labels.to(device, dtype=torch.long)
 
             # forward
-            delta = classifier(im1, im2, imt)
+            delta, score1, score2 = classifier(im1, im2, imt)
 
             # loss
             loss = loss_func(delta, labels)
@@ -541,29 +537,24 @@ for epoch in range(Nepoch):
             # _, predictedV = torch.max(delta.data, 1)
             # total += labels.size(0)
             # correct += (predictedV == labels).sum().item()
+            # mse-based classifier
+            if trainScoreandMSE:
+                deltaMSE, mse1, mse2 = classifierMSE(im1, im2, imt)
+                lossMSE = loss_func(deltaMSE, labels)
+                eval_avgMSE.update(lossMSE.item(), n=BATCH_SIZE)
+
+                accMSE = acc_calc(deltaMSE, labels, BatchSize=BATCH_SIZE)
+                eval_accMSE.update(accMSE, n=1)
+
 
             # get scores and mse
-            score1 = classifier.rank(im1, imt)
-            score1 = torch.abs(score1)
-            score2 = classifier.rank(im2, imt)
-            score2 = torch.abs(score2)
             scorelistV.append(score1.cpu().numpy())
             scorelistV.append(score2.cpu().numpy())
-
-            mse1 = torch.mean((torch.abs(im1 - imt) ** 2), dim=(1, 2, 3))
-            mse2 = torch.mean((torch.abs(im2 - imt) ** 2), dim=(1, 2, 3))
 
             mselistV.append(mse1.cpu().numpy())
             mselistV.append(mse2.cpu().numpy())
 
-            # mse-based classifier
-            if trainScoreandMSE:
-                deltaMSE = classifierMSE(im1, im2, imt)
-                lossMSE = loss_func(deltaMSE, labels)
-                eval_avgMSE.update(lossMSE.item(), n=BATCH_SIZE)
 
-                accMSE = acc_calc(deltaMSE, labels, BatchSize=BATCH_SIZE * 2)
-                eval_accMSE.update(accMSE, n=1)
 
     scorelistV = np.concatenate(scorelistV).ravel()
     mselistV = np.concatenate(mselistV).ravel()
@@ -572,15 +563,12 @@ for epoch in range(Nepoch):
 
     # linear correlation
     corrV, pV = pearsonr(scorelistV, mselistV)
-    writer_val.add_scalars('Pearson Corr and p-value', {'Corr': corrV, 'p-value': pV}, epoch)
-
+    writer_val.add_scalar('PearsonCorr',corrV, epoch)
+    writer_val.add_scalar('p-value', corrV, epoch)
         # accV[epoch] = 100 * correct / total
 
     #print('Epoch = %d : Loss Eval = %f , Loss Train = %f' % (epoch, eval_avg.avg(), train_avg.avg()))
     print(f'Epoch = {epoch:03d}, Loss = {eval_avg.avg()}, Loss train = {train_avg.avg()}, Acc = {eval_acc.avg()}, Acc train = {train_acc.avg()}')
-
-    if trainScoreandMSE:
-        print(f'MSE: Loss = {eval_avgMSE.avg()}, Loss train = {train_avgMSE.avg()}, Acc = {eval_accMSE.avg()}, Acc train = {train_accMSE.avg()}')
 
     lossT[epoch] = train_avg.avg()
     lossV[epoch] = eval_avg.avg()
@@ -595,15 +583,10 @@ for epoch in range(Nepoch):
     if trainScoreandMSE:
         print(f'MSE: Loss = {eval_avgMSE.avg()}, Loss train = {train_avgMSE.avg()}, Acc = {eval_accMSE.avg()}, Acc train = {train_accMSE.avg()}')
 
-        writer_val.add_scalar('LossMSE', eval_avgMSE.avg(),
-                              epoch)
-        writer_train.add_scalar('LossMSE', train_avgMSE.avg(),
-                                epoch)
-
-        writer_val.add_scalar('AccMSE', eval_accMSE.avg(),
-                              epoch)
-        writer_train.add_scalar('AccMSE', train_accMSE.avg(),
-                                epoch)
+        writer_val.add_scalar('LossMSE', eval_avgMSE.avg(), epoch)
+        writer_train.add_scalar('LossMSE', train_avgMSE.avg(), epoch)
+        writer_val.add_scalar('AccMSE', eval_accMSE.avg(), epoch)
+        writer_train.add_scalar('AccMSE', train_accMSE.avg(), epoch)
 
 
     # save models
@@ -623,11 +606,11 @@ for epoch in range(Nepoch):
         torch.save(stateMSE, os.path.join(log_dir, f'RankClassifier{Ntrial}_{Pretrain}_MSE.pt'))
 
     with h5py.File(score_mse_file, 'a') as hf:
-        hf.create_dataset(f'scoreT_epoch{Nepoch}', data=scorelistT)
-        hf.create_dataset(f'scoreV_epoch{Nepoch}', data=scorelistV)
+        hf.create_dataset(f'scoreT_epoch{epoch}', data=scorelistT)
+        hf.create_dataset(f'scoreV_epoch{epoch}', data=scorelistV)
         if trainScoreandMSE:
-            hf.create_dataset(f'mseV_epoch{Nepoch}', data=mselistV)
-            hf.create_dataset(f'mseT_epoch{Nepoch}', data=mselistT)
+            hf.create_dataset(f'mseV_epoch{epoch}', data=mselistV)
+            hf.create_dataset(f'mseT_epoch{epoch}', data=mselistT)
 
 # if trainScoreandMSE:
 #     acc_endT = np.array(acc_endT)
@@ -665,4 +648,5 @@ for epoch in range(Nepoch):
 #     plt.show()
 #
 #
+
 

@@ -33,7 +33,7 @@ class SubtractArray(sp.linop.Linop):
 
 class DataGeneratorRecon(Dataset):
 
-    def __init__(self,path_root, h5file, mask_sl, rank_trained_on_mag=True, data_type=None):
+    def __init__(self,path_root, h5file, mask_sl, rank_trained_on_mag=False, data_type=None):
 
         '''
         input: mask (768, 396) complex64
@@ -274,14 +274,14 @@ def loss_fcn_onenet(noisy, output, target, projector, encoder, discriminator, di
 
 
 # learned metrics loss
-def learnedloss_fcn(output, target, scoreModel, rank_trained_on_mag=True):
+def learnedloss_fcn(output, target, scoreModel, rank_trained_on_mag=False):
 
     if output.ndim == 3:
         output = torch.unsqueeze(output, 0)
         target = torch.unsqueeze(target, 0)
+
     if rank_trained_on_mag and output.shape[-1] == 2:
-        output = torch.sqrt(torch.sum(output ** 2, axis=-1, keepdims=True))
-        target = torch.sqrt(torch.sum(target ** 2, axis=-1, keepdims=True))
+        output = torch.sqrt(torch.sum(output**2, axis=-1, keepdims=True))
 
     # output = crop_im(output)
     # target = crop_im(target)
@@ -290,25 +290,54 @@ def learnedloss_fcn(output, target, scoreModel, rank_trained_on_mag=True):
 
     Nslice = output.shape[0]
 
-    if not rank_trained_on_mag:
-        # add a zero channel since ranknet expect 3chan
-        zeros = torch.zeros(((Nslice, 1,) + output.shape[2:]), dtype=output.dtype)
-        zeros = zeros.cuda()
-        output = torch.cat((output, zeros), dim=1)
 
-        target = torch.cat((target, zeros), dim=1)      # (batch=1, 3, 396, 396)
+    # if not rank_trained_on_mag:
+    #     # add a zero channel since ranknet expect 3chan
+    #     zeros = torch.zeros(((Nslice, 1,) + output.shape[2:]), dtype=output.dtype)
+    #     zeros = zeros.cuda()
+    #     output = torch.cat((output, zeros), dim=1)
+
+    #
+    #     target = torch.cat((target, zeros), dim=1)      # (batch=1, 3, 396, 396)
+
+
 
     delta = 0
     for sl in range(Nslice):
 
-        #print(sl)
-        output_sl = torch.unsqueeze(output[sl],0)
-        target_sl = torch.unsqueeze(target[sl],0)   # (1,ch,396,396)
+        for do_trans in [True, False]:
 
-        delta_sl = scoreModel(output_sl, target_sl)
-        delta += delta_sl
+            if do_trans:
+                output_sl = torch.unsqueeze(output[sl], 0)
+                target_sl = torch.unsqueeze(target[sl], 0)
+            else:
+                output_sl = torch.unsqueeze(output[sl], 0).permute(0,1,3,2)
+                target_sl = torch.unsqueeze(target[sl], 0).permute(0,1,3,2)
+
+            delta_sl = scoreModel(output_sl, target_sl)
+            delta += delta_sl
+
+            # Flip Up/Dn
+            output_sl2 = torch.flip(output_sl, dims=(-1,))
+            target_sl2 = torch.flip(target_sl, dims=(-1,))
+            delta_sl = scoreModel(output_sl2, target_sl2)
+            delta += delta_sl
+
+            # Flip L/R
+            output_sl2 = torch.flip(output_sl, dims=(-2,))
+            target_sl2 = torch.flip(target_sl, dims=(-2,))
+            delta_sl = scoreModel(output_sl2, target_sl2)
+            delta += delta_sl
+
+            # Flip Both
+            output_sl2 = torch.flip(output_sl, dims=(-2,-1))
+            target_sl2 = torch.flip(target_sl, dims=(-2,-1))
+            delta_sl = scoreModel(output_sl2, target_sl2)
+            delta += delta_sl
+
+
         #torch.cuda.empty_cache()
-    delta /= Nslice
+    delta /= Nslice * 8
     return delta
 
 
@@ -727,8 +756,7 @@ class ScaleLayer(nn.Module):
 
 class MoDL(nn.Module):
     '''output: image (sl, 768, 396, 2) '''
-    # TODO: projector has dimension issue. 768*396 -> 764*396 ->764*396...
-    # TODO: How to save the encoder and projector during training MoDL for loss calc
+
     # def __init__(self, inner_iter=10):
     def __init__(self, scale_init=1.0, inner_iter=1):
         super(MoDL, self).__init__()
@@ -738,13 +766,13 @@ class MoDL(nn.Module):
         self.lam1 = nn.Parameter(0.5*torch.ones([inner_iter]), requires_grad=True)
         self.lam2 = nn.Parameter(0.5*torch.ones([inner_iter]), requires_grad=True)
 
-
         # Options for UNET
-        self.denoiser = UNet2D(2, 2, depth=3, final_activation='none', f_maps=8, layer_order='cli')
+        self.denoiser = UNet2D(2, 2, depth=3, final_activation='none', f_maps=16, layer_order='cr')
         #self.denoiser = CNN_shortcut()
         # self.denoiser = Projector(ENC=False)
 
     def call_denoiser(self, image):
+
         image = self.denoiser(image)
         return(image)
 
@@ -754,14 +782,6 @@ class MoDL(nn.Module):
 
     def forward(self, image, kspace, encoding_op, decoding_op):
 
-        # Initial guess
-        # image = decoding_op.apply(x)
-        # image = torch.zeros([1, 768, 396, 2], dtype=torch.float32)
-        # image = image.cuda()
-
-        # zeros = torch.zeros(((1,) + image.shape[:-1]), dtype=image.dtype)  # torch.Size([1, slice, 768, 396])
-        # zeros = zeros.permute(1,0,2,3)
-        # zeros = zeros.cuda()
         for i in range(self.inner_iter):
             # Steepest descent
 
@@ -810,10 +830,12 @@ class MoDL(nn.Module):
             if dim==3:
                 y_pred = torch.squeeze(y_pred)
 
-            #self.lam1[i] * image +
-            y_pred = self.lam2[i]*y_pred
+            #y_pred = self.lam1[i]*image +self.lam2[i]*y_pred
 
-        return y_pred
+            # Return Image
+            image = self.lam2[i]*y_pred
+
+        return image
 
 
 class MoDL_CG(nn.Module):

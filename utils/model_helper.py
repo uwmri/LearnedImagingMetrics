@@ -136,24 +136,89 @@ class conv_bn(nn.Module):
         x = self.relu(x)
         return x
 
+
+
+import torch.nn.utils.weight_norm as wn
+
+class VarNorm2d(nn.Module):
+    def __init__(self):
+        super(VarNorm2d,self).__init__()
+
+class VarNorm2d(nn.BatchNorm2d):
+    def __init__(self, num_features, eps=1e-5, momentum=0.05, affine=True, track_running_stats=True):
+        super(VarNorm2d, self).__init__(num_features, eps, momentum, affine, track_running_stats)
+
+    def forward(self, input):
+        self._check_input_dim(input)
+
+        exponential_average_factor = 0.0
+
+        if self.training and self.track_running_stats:
+            if self.num_batches_tracked is not None:
+                self.num_batches_tracked += 1
+                if self.momentum is None:  # use cumulative moving average
+                    exponential_average_factor = 1.0 / float(self.num_batches_tracked)
+                else:  # use exponential moving average
+                    exponential_average_factor = self.momentum
+
+        # calculate running estimates
+        if self.training:
+            # use biased var in train
+            var = input.var([0, 2, 3], unbiased=False)
+            n = input.numel() / input.size(1)
+            with torch.no_grad():
+                # update running_var with unbiased var
+                self.running_var = exponential_average_factor * var * n / (n - 1) \
+                                   + (1 - exponential_average_factor) * self.running_var
+        else:
+            var = self.running_var
+
+        input = input / (torch.sqrt(var[None, :, None, None] + self.eps))
+        if self.affine:
+            input = input * self.weight[None, :, None, None]
+
+        return input
+
+
+
 class L2cnnBlock(nn.Module):
-    def __init__(self, channels_in=64, channels_out=64, pool_rate=2, bias=False):
+    def __init__(self, channels_in=64, channels_out=64, pool_rate=2, bias=False, batch_norm=False, activation=True):
         super(L2cnnBlock, self).__init__()
 
-        self.block = nn.Sequential(nn.Conv2d( channels_in, channels_out, kernel_size=3, padding=1, stride=1, bias=bias),
-                                    nn.BatchNorm2d(channels_out),
-                                    nn.ReLU(inplace=True),
-                                    nn.Conv2d(channels_out, channels_out, kernel_size=3, padding=1, stride=1, bias=bias),
-                                    nn.BatchNorm2d(channels_out),
-                                    nn.ReLU(inplace=True))
-        self.shortcut = nn.Sequential(nn.Conv2d( channels_in, channels_out, kernel_size=1, padding=0, stride=1, bias=bias),
-                                    nn.BatchNorm2d(channels_out))
-        self.pool = nn.Sequential(nn.ReLU(inplace=True), nn.AvgPool2d(pool_rate))
+        if activation:
+            self.act_func = nn.ReLU(inplace=True)
+        else:
+            self.act_func = nn.Identity()
+
+        if batch_norm:
+            self.conv1 = nn.Conv2d( channels_in, channels_out, kernel_size=3, padding=1, stride=1, bias=bias)
+            self.bn1 =  nn.BatchNorm2d(channels_out)
+            self.conv2 = nn.Conv2d(channels_out, channels_out, kernel_size=3, padding=1, stride=1, bias=bias)
+            self.bn2 = nn.BatchNorm2d(channels_out)
+            self.shortcut = nn.Conv2d( channels_in, channels_out, kernel_size=1, padding=0, stride=1, bias=bias)
+        else:
+            self.conv1 = nn.Conv2d(channels_in, channels_out, kernel_size=3, padding=1, stride=1, bias=bias)
+            self.conv2 = nn.Conv2d(channels_out, channels_out, kernel_size=3, padding=1, stride=1, bias=bias)
+            self.shortcut = nn.Conv2d(channels_in, channels_out, kernel_size=1, padding=0, stride=1, bias=bias)
+            self.bn1 = VarNorm2d(channels_out)
+            self.bn2 = VarNorm2d(channels_out)
+
+        self.pool = nn.AvgPool2d(pool_rate)
+        self.batch_norm = batch_norm
 
     def forward(self,x):
-        x = self.block(x) + self.shortcut(x)
+
+        shortcut = self.shortcut(x)
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.act_func(x)
+        x = self.conv2(x)
+        x = self.bn2(x)
+        x = x + shortcut
+        x = self.act_func(x)
         x = self.pool(x)
         return x
+
 
 
 class L2cnn(nn.Module):
@@ -164,10 +229,10 @@ class L2cnn(nn.Module):
         channels_out = channel_base
 
         # Connect to output using a linear combination
-        self.weight_mse = torch.nn.Parameter(torch.tensor([1000.0]).view(1,1))
+        self.weight_mse = torch.nn.Parameter(torch.tensor([1.0]).view(1,1))
         self.weight_cnn = torch.nn.Parameter(torch.tensor([1.0]).view(1, 1))
         self.weight_ssim = torch.nn.Parameter(torch.tensor([1.0]).view(1, 1))
-
+        self.scale_weight = nn.Parameter(torch.ones([group_depth]), requires_grad=True)
         self.ssim_op = SSIM( window_size=11, size_average=False, val_range=1)
 
         self.layers = nn.ModuleList()
@@ -181,29 +246,31 @@ class L2cnn(nn.Module):
 
     def layer_mse(self, x):
         y = x.view(x.shape[0], -1)
-        return torch.mean(y**2, dim=1, keepdim=True)
+        return 1e3*torch.sum(y**2, dim=1, keepdim=True)**0.5
 
     def forward(self, input, truth):
         x = input.clone()
 
         # SSIM (range is -1 to 1)
-        ssim = 2.0 - self.ssim_op(x, truth)
+        #ssim = 2.0 - self.ssim_op(x, truth)
 
         diff = input - truth
+        # if train on 2chan (real and imag) images
+
+        diff_sq = torch.sum( diff ** 2, dim=1, keepdim=True)
+        diff_mag = diff_sq ** (0.5)
 
         # Mean square error
-        mse = self.layer_mse(diff)
+        #mse = self.layer_mse(diff_mag)
 
-        # Convolutional pathway
+        # Convolutional pathway with MSE at multiple scales
         for l in self.layers:
-            diff = l(diff)
-        cnn_score = self.layer_mse(diff)
+            diff_mag = l(diff_mag)
+        cnn_score = self.layer_mse(diff_mag)
 
-        #x = torch.reshape(x,(x.shape[0],-1))
-        #x = x**2
-        #score = torch.mean(x, dim=1)
-        score = torch.abs(self.weight_ssim)*ssim + torch.abs(self.weight_mse)*mse + torch.abs(self.weight_cnn)*cnn_score
-        # score = torch.abs(score)
+        # Combine scores
+        #score = torch.abs(self.weight_ssim)*ssim + torch.abs(self.weight_mse)*mse + torch.abs(self.weight_cnn)*cnn_score
+        score = cnn_score
 
         return score
 
@@ -597,7 +664,8 @@ class MSEmodule(nn.Module):
     def forward(self, x, truth):
         y = x - truth
         y = y.view(y.shape[0], -1)
-        return torch.sqrt(torch.sum(y**2, dim=1, keepdim=True))
+        truth = truth.view(truth.shape[0], -1)
+        return torch.sum(y**2, dim=1, keepdim=True)**0.5
 
 
 class Classifier(nn.Module):
@@ -618,11 +686,21 @@ class Classifier(nn.Module):
 
     def forward(self, image1, image2, imaget):
 
-        score1 = self.rank(image1, imaget)
-        score2 = self.rank(image2, imaget)
+        #score1 = self.rank(image1, imaget)
+        #score2 = self.rank(image2, imaget)
 
-        score1 = score1.view(score1.shape[0], -1)
-        score2 = score2.view(score2.shape[0], -1)
+        # Combine the images for batch norm operations
+        images_combined = torch.cat([image1, image2], dim=0)
+        truth_combined = torch.cat([imaget, imaget], dim=0)
+
+        # Calculate scores
+        scores_combined = self.rank(images_combined, truth_combined)
+        scores_combined = scores_combined.view(scores_combined.shape[0],-1)
+        score1 = scores_combined[:image1.shape[0], ...]
+        score2 = scores_combined[image1.shape[0]:, ...]
+
+        #score1 = score1.view(score1.shape[0], -1)
+        #score2 = score2.view(score2.shape[0], -1)
 
 
         # Feed difference to classifier
@@ -639,7 +717,7 @@ class Classifier(nn.Module):
         d = torch.cat([px, gx, pnx],dim=1)
         d = F.softmax(d, dim=1)      # (BatchSize, 3)
 
-        return d
+        return d, score1, score2
 
 
 #backward hook
