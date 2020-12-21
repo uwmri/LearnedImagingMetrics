@@ -743,10 +743,17 @@ class MoDL(nn.Module):
 
 
         # Options for UNET
-        self.denoiser = UNet2D(2, 2, final_activation='none', f_maps=8, layer_order='cli')
+        self.denoiser = UNet2D(2, 2, depth=3, final_activation='none', f_maps=32, layer_order='cli')
         #self.denoiser = CNN_shortcut()
         # self.denoiser = Projector(ENC=False)
 
+    def call_denoiser(self, image):
+        image = self.denoiser(image)
+        return(image)
+
+    def set_denoiser_scale(self, scale):
+        self.lam2[:] = scale
+        self.lam1[:] = 1.0 - self.lam2
 
     def forward(self, image, kspace, encoding_op, decoding_op):
 
