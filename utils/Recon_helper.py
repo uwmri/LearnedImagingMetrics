@@ -117,7 +117,7 @@ class DataGeneratorRecon(Dataset):
         # kspace = kspace[:]  # array
         kspace = zero_pad4D(kspace)  # array (sl, coil, 768, 396)
         # mask_sl shape (768, 396)
-        kspace *= self.mask_sl
+        #kspace *= self.mask_sl
 
         max_truth = torch.unsqueeze(max_truth, -1)
         kspace = complex_2chan(kspace)  # (slice, coil, h, w, 2)
@@ -305,14 +305,39 @@ def learnedloss_fcn(output, target, scoreModel, rank_trained_on_mag=False):
     delta = 0
     for sl in range(Nslice):
 
-        #print(sl)
-        output_sl = torch.unsqueeze(output[sl],0)
-        target_sl = torch.unsqueeze(target[sl],0)   # (1,ch,396,396)
+        for do_trans in [True, False]:
 
-        delta_sl = scoreModel(output_sl, target_sl)
-        delta += delta_sl
+            if do_trans:
+                output_sl = torch.unsqueeze(output[sl], 0)
+                target_sl = torch.unsqueeze(target[sl], 0)
+            else:
+                output_sl = torch.unsqueeze(output[sl], 0).permute(0,1,3,2)
+                target_sl = torch.unsqueeze(target[sl], 0).permute(0,1,3,2)
+
+            delta_sl = scoreModel(output_sl, target_sl)
+            delta += delta_sl
+
+            # Flip Up/Dn
+            output_sl2 = torch.flip(output_sl, dims=(-1,))
+            target_sl2 = torch.flip(target_sl, dims=(-1,))
+            delta_sl = scoreModel(output_sl2, target_sl2)
+            delta += delta_sl
+
+            # Flip L/R
+            output_sl2 = torch.flip(output_sl, dims=(-2,))
+            target_sl2 = torch.flip(target_sl, dims=(-2,))
+            delta_sl = scoreModel(output_sl2, target_sl2)
+            delta += delta_sl
+
+            # Flip Both
+            output_sl2 = torch.flip(output_sl, dims=(-2,-1))
+            target_sl2 = torch.flip(target_sl, dims=(-2,-1))
+            delta_sl = scoreModel(output_sl2, target_sl2)
+            delta += delta_sl
+
+
         #torch.cuda.empty_cache()
-    delta /= Nslice
+    delta /= Nslice * 8
     return delta
 
 
@@ -738,12 +763,13 @@ class MoDL(nn.Module):
 
         self.inner_iter = inner_iter
         self.scale_layers = nn.Parameter(scale_init*torch.ones([inner_iter]), requires_grad=True)
-        self.lam1 = nn.Parameter(1.0*torch.ones([inner_iter]), requires_grad=True)
-        self.lam2 = nn.Parameter(0.05*torch.ones([inner_iter]), requires_grad=True)
-
+        self.lam1 = nn.Parameter(0.5*torch.ones([inner_iter]), requires_grad=True)
+        self.lam2 = nn.Parameter(0.5*torch.ones([inner_iter]), requires_grad=True)
 
         # Options for UNET
-        self.denoiser = UNet2D(2, 2, depth=3, final_activation='none', f_maps=32, layer_order='cli')
+
+        self.denoiser = UNet2D(2, 2, depth=3, final_activation='none', f_maps=16, layer_order='cr')
+
         #self.denoiser = CNN_shortcut()
         # self.denoiser = Projector(ENC=False)
 
@@ -757,14 +783,6 @@ class MoDL(nn.Module):
 
     def forward(self, image, kspace, encoding_op, decoding_op):
 
-        # Initial guess
-        # image = decoding_op.apply(x)
-        # image = torch.zeros([1, 768, 396, 2], dtype=torch.float32)
-        # image = image.cuda()
-
-        # zeros = torch.zeros(((1,) + image.shape[:-1]), dtype=image.dtype)  # torch.Size([1, slice, 768, 396])
-        # zeros = zeros.permute(1,0,2,3)
-        # zeros = zeros.cuda()
         for i in range(self.inner_iter):
             # Steepest descent
 
@@ -785,23 +803,42 @@ class MoDL(nn.Module):
             y_pred = y_pred.permute(0, -1, 1, 2).contiguous()
            
             # Padding for UNet donoise
-            if isinstance(self.denoiser, UNet2D):
-                y_pred = nn.functional.pad(y_pred,(2,2), "constant", 0)
+            #if isinstance(self.denoiser, UNet2D):
+            #    y_pred = nn.functional.pad(y_pred,(2,2), "constant", 0)
 
+            # Pad to prevent edge effects, circular pad to keep image statistics
+            target_size1 = 32 * math.ceil( (64 + y_pred.shape[-1]) / 32)
+            target_size2 = 32 * math.ceil( (64 + y_pred.shape[-2]) / 32)
+            #print(f'Target size {target_size1} {target_size2}')
+
+            pad_amount1 = (target_size1 - y_pred.shape[-1]) // 2
+            pad_amount2 = (target_size2 - y_pred.shape[-2]) // 2
+            #print(f'Target size {pad_amount1} {pad_amount2}')
+
+            #print(f'Target size = {target_size}, pad_amount {pad_amount} input = {y_pred.shape}')
+
+            pad_f = (pad_amount1,pad_amount1,pad_amount2, pad_amount2)
+            #print(pad_f)
+            y_pred = nn.functional.pad(y_pred,pad_f, "circular")
+            #print(y_pred.shape)
             y_pred = self.denoiser(y_pred)
 
             # cropping for UNet
-            if isinstance(self.denoiser, UNet2D):
-                y_pred = y_pred[:,:,:,2:398]
+
+            y_pred = y_pred[:,:,pad_amount2:-pad_amount2,pad_amount1:-pad_amount1]
+
 
             # # back to 2 channel
             y_pred = y_pred.permute(0, 2, 3, 1).contiguous()
             if dim==3:
                 y_pred = torch.squeeze(y_pred)
 
-            y_pred = self.lam1[i]*image +self.lam2[i]*y_pred
+            #y_pred = self.lam1[i]*image +self.lam2[i]*y_pred
 
-        return y_pred
+            # Return Image
+            image = self.lam2[i]*y_pred
+
+        return image
 
 
 class MoDL_CG(nn.Module):

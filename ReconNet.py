@@ -63,19 +63,23 @@ else:
     filepath_train = Path("Q:\LearnedImageMetric")
     filepath_val = Path("Q:\LearnedImageMetric")
 
+
     # Chenweis machine
     filepath_rankModel = Path('I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020')
     filepath_train = Path("I:/NYUbrain")
     filepath_val = Path("I:/NYUbrain")
 log_dir = filepath_rankModel
 rank_channel =1
+
 rank_trained_on_mag = False
 BO = False
 logging.basicConfig(filename=os.path.join(log_dir,f'Recon_{Ntrial}_{DGX}.log'), filemode='w', level=logging.INFO)
 
 #file_rankModel = os.path.join(filepath_rankModel, "RankClassifier16.pt")
 
-file_rankModel = os.path.join(filepath_rankModel, "RankClassifier1359_pretrained.pt")
+
+file_rankModel = os.path.join(filepath_rankModel, "RankClassifier9706_pretrained.pt")
+
 
 os.chdir(filepath_rankModel)
 
@@ -99,7 +103,7 @@ Ncoils = 20
 xres = 768
 yres = 396
 
-acc = 8
+acc = 16
 logging.info(f'Acceleration = {acc}')
 # fixed sampling mask
 WHICH_MASK='poisson'
@@ -135,7 +139,7 @@ loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=Fals
 imSlShape = (BATCH_SIZE,) + (xres, yres)    # (1, 768, 396)
 
 UNROLL = True
-ReconModel = MoDL()
+ReconModel = MoDL(inner_iter=10)
 ReconModel.cuda()
 
 # torchsummary.summary(ReconModel.denoiser, input_size=(2,768,396), batch_size=16)
@@ -161,6 +165,7 @@ writer_train = SummaryWriter(f'runs/recon/train_{Ntrial}')
 writer_val = SummaryWriter(f'runs/recon/val_{Ntrial}')
 
 WHICH_LOSS = 'learned'
+#WHICH_LOSS = 'mse'
 OneNet = False
 if WHICH_LOSS == 'perceptual':
     loss_perceptual = PerceptualLoss_VGG16()
@@ -169,9 +174,10 @@ elif WHICH_LOSS == 'patchGAN':
     patchGAN = NLayerDiscriminator(input_nc=2)
     patchGAN.cuda()
 
-INNER_ITER = 10
 
-Nepoch = 50
+INNER_ITER = 1
+
+Nepoch = 100
 epochMSE = 0
 logging.info(f'MSE for first {epochMSE} epochs then switch to learned')
 lossT = np.zeros(Nepoch)
@@ -180,8 +186,9 @@ lossV = np.zeros(Nepoch)
 Ntrain = 252
 Nval = 28
 
-Ntrain = 25
-Nval = 2
+
+#Ntrain = 10
+#Nval = 1
 
 
 # save some images during training
@@ -206,7 +213,7 @@ if BO:
     logging.info(f'BO, {best_parameters}')
 
 else:
-    LR = 1e-6
+    LR = 1e-4
     #optimizer = optim.SGD(ReconModel.parameters(), lr=LR, momentum=0.9)
     optimizer = optim.Adam(ReconModel.parameters(), lr=LR)
     logging.info(f'Adam, lr = {LR}')
@@ -223,6 +230,22 @@ logging.info(f'ifSingleSlice={ifSingleSlice}')
 
 xp = spdevice.xp
 
+import torch.linalg
+# Get the scale for Denoiser
+with torch.no_grad():
+    da = 0.0
+    for avg in range(10):
+        x = torch.randn((1, 2, yres, xres), device='cuda')
+        for iter in range(30):
+            ein = torch.linalg.norm( x)
+            y = ReconModel.call_denoiser(x)
+            eout = torch.linalg.norm( y)
+            x = y / eout
+            #print(f'Scale {eout/ein}')
+        print(eout)
+        da += eout / 10
+    print(f'Denoiser scale = {da}')
+    ReconModel.set_denoiser_scale( 0.9 / da)
 
 for epoch in range(Nepoch):
 
@@ -253,22 +276,6 @@ for epoch in range(Nepoch):
     while kspaceU is not None:
         i += 1
 
-
-        # smaps is cupy/numpy [1, slice, coil, 768, 396]
-        # im is on torch, ([16, 396, 396, 2])
-        # kspaceU is on torch ([16, 20, 768, 396, 2])
-
-
-        # smaps is torch tensor on cpu [1, slice, coil, 768, 396, 2] (both prefetcher and iterator)
-        # im is on cuda, ([16, 396, 396, ch]) or on cuda [1, slice, 768, 396, ch] if DataIterator
-        # kspaceU is on cpu ([1, 16, 20, 768, 396, 2]) or on cpu [1, slice, coil, 768, 396, 2] if DataIterator
-
-        # # Disable memory pool for device memory (GPU)
-        # cupy.cuda.set_allocator(None)
-        #
-        # # Disable memory pool for pinned memory (CPU).
-        # cupy.cuda.set_pinned_memory_allocator(None)
-
         smaps = sp.to_device(smaps, device=spdevice)
         kspaceU = sp.to_device(kspaceU, device=spdevice)
 
@@ -277,10 +284,6 @@ for epoch in range(Nepoch):
         #kspaceU = sp.to_pytorch(kspaceU, requires_grad=False)
 
         im = torch.squeeze(im, dim=0)   # torch.Size([16, 768, 396, 1])
-
-        # im = im.cuda()
-        # kspaceU = xp.copy(kspaceU)
-        # smaps = xp.copy(smaps)
 
         # seems jsense and espirit wants (coil,h,w), can't do (sl, coil, h, w)
         redo_smaps = False
@@ -297,9 +300,17 @@ for epoch in range(Nepoch):
         Nslices = smaps.shape[0]
         #print(f'Load batch {time.time()-t}, {Nslices} {smaps.shape}')
 
+
+        # Zero the gradients over all slices
+        optimizer.zero_grad()
+
         t = time.time()
+        t_case = t
         if ifSingleSlice:
-            loss_temp = 0
+
+            # Zero the gradients over all slices
+            optimizer.zero_grad()
+            loss_avg = 0.0
             for sl in range(Nslices):
                 t_sl = time.time()
                 smaps_sl = xp.copy(smaps[sl])                              # ndarray on cuda (20, 768, 396), complex64
@@ -322,12 +333,10 @@ for epoch in range(Nepoch):
 
                 t = time.time()
                 kspaceU_sl = sp.to_pytorch(kspaceU_sl)
-                optimizer.zero_grad()
 
                 for inner_iter in range(INNER_ITER):
 
                     imEst2 = ReconModel(imEst, kspaceU_sl, A_torch, Ah_torch)    # (768, 396, 2)
-
 
                     # # scale to ~same as truth
                     # y_pred_real = imEst2[..., 0].detach()
@@ -341,6 +350,7 @@ for epoch in range(Nepoch):
                     # imEst2[..., 0] *= scale_real
                     # imEst2[..., 1] *= scale_imag
                     # del y_pred_real, y_pred_imag
+
 
 
 
@@ -358,51 +368,30 @@ for epoch in range(Nepoch):
                             loss_mse_tensor = mseloss_fcn(imEst2, im_sl).detach()
 
                     loss = loss_temp
-                    del loss_temp
 
-                    if inner_iter == INNER_ITER-1:
-                        loss.backward()
-                    else:
-                        loss.backward(retain_graph=True)
+                    #loss.backward()
+                    #else:
+
+                    loss.backward(retain_graph=True)
                     # train_avg.update(loss.detach().item(), BATCH_SIZE)
                     imEst = imEst2
                     del imEst2
+
 
                 if WHICH_LOSS == 'learned':
                     with torch.no_grad():
                         loss_learnedT.append(loss.detach().item())
                         loss_mseT.append(float(loss_mse_tensor))
 
-
-                # y_pred_max, _ = torch.max(imEst.detach(), dim=0, keepdim=True)
-                # y_pred_max, _ = torch.max(y_pred_max, dim=1, keepdim=True)
-                # truth_max, _ = torch.max(im_sl.detach(), dim=0, keepdim=True)
-                # truth_max, _ = torch.max(truth_max, dim=1, keepdim=True)
-                # y_pred_min, _ = torch.min(imEst.detach(), dim=0, keepdim=True)
-                # y_pred_min, _ = torch.min(y_pred_min, dim=1, keepdim=True)
-                # truth_min, _ = torch.min(im_sl.detach(), dim=0, keepdim=True)
-                # truth_min, _ = torch.min(truth_min, dim=1, keepdim=True)
-                #
-                # print(f'y_pred_real max = {y_pred_max[0, 0, 0]}, y_pred_imag max = {y_pred_max[0, 0, 1]}')
-                # print(f'truth_real max = {truth_max[0, 0, 0]}, truth_imag max = {truth_max[0, 0, 1]}')
-                # print(f'y_pred_real min = {y_pred_min[0, 0, 0]}, y_pred_imag min = {y_pred_min[0, 0, 1]}')
-                # print(f'truth_real min = {truth_min[0, 0, 0]}, truth_imag min = {truth_min[0, 0, 1]}')
-                # del y_pred_max, y_pred_min, truth_max, truth_min
-
-                print(f'case {i}, slice {sl}, took {time.time() - t_sl}s')
-
-                optimizer.step()
+                loss_avg += loss.detach().item() / Nslices
+                train_avg.update(loss.detach().item())
 
                 del smaps_sl, kspaceU_sl, im_sl
 
-            # case average loss
-            #     loss_temp += loss_temp
-            # loss_temp /= Nslices
-            # loss = loss_temp
-            # loss.backward(retain_graph=True)
+            # Slice loop
+            optimizer.step()
 
-            # optimizer.step()
-
+            print(f'case {i}, took {time.time() - t_case}s, loss {loss_avg}, avg = {train_avg.avg()}')
 
         else:
             A = sp.linop.Diag(
@@ -434,7 +423,7 @@ for epoch in range(Nepoch):
                 imEst2 = ReconModel(imEst, kspaceU, SENSE_torch, SENSEH_torch)
                 if WHICH_LOSS == 'mse':
                     loss = mseloss_fcn(imEst2, im)
-                    print(f'mse loss of batch {i} at inner_iter{inner_iter}, epoch{epoch} is {loss} ')
+                    #print(f'mse loss of batch {i} at inner_iter{inner_iter}, epoch{epoch} is {loss} ')
                 elif WHICH_LOSS == 'perceptual':
                     loss = loss_perceptual(imEst2, im)
                 elif WHICH_LOSS == 'patchGAN':
@@ -470,20 +459,9 @@ for epoch in range(Nepoch):
                 exit()
 
 
-            print(f'{WHICH_LOSS} loss of batch {i}, epoch{epoch} is {loss} ')
             optimizer.step()
-
-
-            if epoch%10 == 0:
-                logging.info(f'Inner iteration took {time.time()-t}s')
-
-
-        train_avg.update(loss.detach().item(), n=BATCH_SIZE)
-
-
-
-        if i % 10 ==0 :
-            logging.info(f'Training Loss for batch {i} = {loss.detach().item()}')
+            train_avg.update(loss.detach().item())
+            print(f'{WHICH_LOSS} loss of batch {i}, epoch{epoch} is {loss} , avg loss = {train_avg.avg()}')
 
         if i == Ntrain:
             break
@@ -528,12 +506,6 @@ for epoch in range(Nepoch):
         i += 1
         im = torch.squeeze(im, dim=0)
 
-        # # Disable memory pool for device memory (GPU)
-        # cupy.cuda.set_allocator(None)
-        #
-        # # Disable memory pool for pinned memory (CPU).
-        # cupy.cuda.set_pinned_memory_allocator(None)
-
         smaps = sp.to_device(smaps, device=spdevice)
         kspaceU = sp.to_device(kspaceU, device=spdevice)
 
@@ -544,12 +516,7 @@ for epoch in range(Nepoch):
         smaps = chan2_complex(spdevice.xp.squeeze(smaps))
         Nslices = smaps.shape[0]
 
-        #im = im.clone().cuda()
-        # kspaceU = xp.copy(kspaceU)
-        # smaps = xp.copy(smaps)
-
         if ifSingleSlice:
-            loss_temp = 0
             for sl in range(smaps.shape[0]):
                 smaps_sl = xp.copy(smaps[sl])
                 im_sl = im[sl].clone().cuda()
@@ -573,35 +540,6 @@ for epoch in range(Nepoch):
                 kspaceU_sl = sp.to_pytorch(kspaceU_sl)
                 for inner_iter in range(INNER_ITER):
                     imEst2 = ReconModel(imEst, kspaceU_sl, A_torch, Ah_torch)
-
-                    # # scale to ~same as truth
-                    # y_pred_real = imEst2[..., 0].detach()
-                    # y_pred_imag = imEst2[..., 1].detach()
-                    # scale_real = torch.sum(torch.transpose(y_pred_real, 0, 1) @ im_sl[..., 0].detach()) / \
-                    #              torch.sum(torch.transpose(y_pred_real, 0, 1) @ y_pred_real)
-                    # scale_imag = torch.sum(torch.transpose(-y_pred_imag, 0, 1) @ im_sl[..., 0].detach()) / \
-                    #              torch.sum(torch.transpose(-y_pred_imag, 0, 1) @ y_pred_real)
-                    # # print(scale_imag.requires_grad)
-                    # # print(f'scale real = {scale_real}, scale_imag = {scale_imag}')
-                    # imEst2[..., 0] *= scale_real
-                    # imEst2[..., 1] *= scale_imag
-                    # del y_pred_real, y_pred_imag
-                    #
-                    # y_pred_max, _ = torch.max(imEst.detach(), dim=0, keepdim=True)
-                    # y_pred_max, _ = torch.max(y_pred_max, dim=1, keepdim=True)
-                    # truth_max, _ = torch.max(im_sl.detach(), dim=0, keepdim=True)
-                    # truth_max, _ = torch.max(truth_max, dim=1, keepdim=True)
-                    # y_pred_min, _ = torch.min(imEst.detach(), dim=0, keepdim=True)
-                    # y_pred_min, _ = torch.min(y_pred_min, dim=1, keepdim=True)
-                    # truth_min, _ = torch.min(im_sl.detach(), dim=0, keepdim=True)
-                    # truth_min, _ = torch.min(truth_min, dim=1, keepdim=True)
-                    #
-                    # print(f'y_pred_real max = {y_pred_max[0, 0, 0]}, y_pred_imag max = {y_pred_max[0, 0, 1]}')
-                    # print(f'truth_real max = {truth_max[0, 0, 0]}, truth_imag max = {truth_max[0, 0, 1]}')
-                    # print(f'y_pred_real min = {y_pred_min[0, 0, 0]}, y_pred_imag min = {y_pred_min[0, 0, 1]}')
-                    # print(f'truth_real min = {truth_min[0, 0, 0]}, truth_imag min = {truth_min[0, 0, 1]}')
-                    # del y_pred_max, y_pred_min, truth_max, truth_min
-
 
                     if WHICH_LOSS == 'mse':
                         loss_temp = mseloss_fcn(imEst2, im_sl)
@@ -631,27 +569,29 @@ for epoch in range(Nepoch):
 
 
                 if i == 1 and sl == 4:
-                    truthplt = torch.squeeze(im_sl.cpu())
+                    truthplt = chan2_complex(torch.squeeze(im_sl.detach().cpu()))
                     perturbed = Ah_torch.apply(kspaceU_sl)
-                    noisyplt = torch.abs(chan2_complex(perturbed.detach().cpu()))
+                    noisyplt = chan2_complex(perturbed.detach().cpu())
                     del perturbed
                     temp = imEst
                     temp = temp.detach().cpu()
-                    imEstplt = torch.abs(chan2_complex(temp))
+                    imEstplt = chan2_complex(temp)
                     del temp
                     # truthplt = torch.unsqueeze(truthplt, 0)
                     # noisyplt = torch.unsqueeze(noisyplt, 0)
                     # imEstplt = torch.unsqueeze(imEstplt, 0)
-                    imEstfig = plt_recon(imEstplt)
+                    imEstfig = plt_recon(torch.abs(imEstplt))
                     writer_val.add_figure('Recon_val', imEstfig, epoch)
 
                     with h5py.File(out_name, 'a') as hf:
                         if epoch == 0:
-                            hf.create_dataset(f"{epoch}_truth", data=truthplt.numpy())
-                            hf.create_dataset(f"{epoch}_FT", data=noisyplt.numpy())
-                            hf.create_dataset(f"{epoch}_recon", data=imEstplt.numpy())
-                        else:
-                            hf.create_dataset(f"{epoch}_recon", data=imEstplt.numpy())
+                            hf.create_dataset(f"{epoch}_truth", data=np.abs(truthplt.numpy()))
+                            hf.create_dataset(f"{epoch}_FT", data=np.abs(noisyplt.numpy()))
+                            hf.create_dataset(f"p{epoch}_truth", data=np.angle(truthplt.numpy()))
+                            hf.create_dataset(f"p{epoch}_FT", data=np.angle(noisyplt.numpy()))
+
+                        hf.create_dataset(f"p{epoch}_recon", data=np.angle(imEstplt.numpy()))
+                        hf.create_dataset(f"{epoch}_recon", data=np.abs(imEstplt.numpy()))
                     del truthplt, noisyplt, imEstplt
 
                 del smaps_sl, kspaceU_sl, im_sl

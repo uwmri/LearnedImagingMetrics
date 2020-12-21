@@ -221,11 +221,12 @@ class Encoder(nn.Module):
                                          order=conv_layer_order,
                                          num_groups=num_groups)
         if downsample:
-            self.downsample = nn.Conv2d(in_channels,
-                                               in_channels,
-                                               kernel_size=2,
-                                               stride=scale_factor,
-                                               padding=0, bias=False, groups=in_channels)
+            # self.downsample = nn.Conv2d(in_channels,
+            #                                    in_channels,
+            #                                    kernel_size=3,
+            #                                    stride=scale_factor,
+            #                                    padding=0, bias=False, groups=in_channels)
+            self.downsample = nn.AvgPool2d(scale_factor)
         else:
             self.downsample = nn.Identity()
 
@@ -258,13 +259,14 @@ class Decoder(nn.Module):
                  scale_factor=(2, 2), basic_module=ResBottle, conv_layer_order='crg', num_groups=8):
         super(Decoder, self).__init__()
 
-        self.upsample = nn.ConvTranspose2d(in_channels,
-                                           in_channels,
-                                           kernel_size=2,
-                                           stride=scale_factor,
-                                           padding=0,
-                                           output_padding=0,
-                                           bias=False, groups=in_channels)
+        # self.upsample = nn.ConvTranspose2d(in_channels,
+        #                                    in_channels,
+        #                                    kernel_size=3,
+        #                                    stride=scale_factor,
+        #                                    padding=1,
+        #                                    output_padding=0,
+        #                                    bias=False, groups=in_channels)
+        self.upsample = nn.UpsamplingBilinear2d(scale_factor=scale_factor)
 
         self.basic_module = basic_module(in_channels + add_features, out_channels,
                                          encoder=False,

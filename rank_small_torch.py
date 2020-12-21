@@ -26,7 +26,7 @@ MOBILE = False
 EFF = False
 BO = False
 RESNET = False
-ResumeTrain = True
+ResumeTrain = False
 CLIP = False
 SAMPLER = False
 WeightedLoss = False
@@ -227,23 +227,23 @@ Labels_cnnV = Labels[ntrain:]
 
 
 # Data generator
-BATCH_SIZE = 16
+BATCH_SIZE = 32
 
 if SAMPLER:
     # deal with imbalanced class
     samplerT = get_sampler(Labels_cnnT)
     samplerV = get_sampler(Labels_cnnV)
     trainingset = DataGenerator_rank(X_1, X_2, X_T, Labels_cnnT, idT, augmentation=True, pad_channels=0)
-    loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=False, sampler=samplerT)
+    loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=False, sampler=samplerT, drop_last=True)
 
     validationset = DataGenerator_rank(X_1, X_2, X_T, Labels_cnnV, idV, augmentation=False, pad_channels=0)
-    loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=False, sampler=samplerV)
+    loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=False, sampler=samplerV, drop_last=True)
 else:
     trainingset = DataGenerator_rank(X_1, X_2, X_T, Labels_cnnT, idT, augmentation=True, pad_channels=0)
-    loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=True)
+    loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=True, drop_last=True)
 
     validationset = DataGenerator_rank(X_1, X_2, X_T, Labels_cnnV, idV, augmentation=False, pad_channels=0)
-    loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=True)
+    loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=True, drop_last=True)
 
 if WeightedLoss:
     weight = get_class_weights(Labels)
@@ -310,8 +310,7 @@ if ResumeTrain:
     classifier.load_state_dict(state['state_dict'], strict=True)
     classifier.cuda();
 
-
-    optimizer = optim.Adam(classifier.parameters(), lr=1e-5)
+    optimizer = optim.AdamW(classifier.parameters(), lr=1e-5)
     optimizer.load_state_dict(state['optimizer'])
 
     if trainScoreandMSE:
@@ -358,12 +357,13 @@ else:
         # get best paramters and initialize optimizier here manually
 
         #optimizer = optim.SGD(classifier.parameters(), lr=0.003152130338485237, momentum=0.27102874871343374)
-        learning_rate = 1e-3
+        learning_rate = 1e-5
         optimizer = optim.Adam(classifier.parameters(), lr=learning_rate)
+
         logging.info(f'Adam, lr={learning_rate}')
         if trainScoreandMSE:
             #optimizerMSE = optim.SGD(classifierMSE.parameters(), lr=0.00097, momentum=0.556)
-            optimizerMSE = optim.Adam(classifierMSE.parameters(), lr=learning_rate)
+            optimizerMSE = optim.AdamW(classifierMSE.parameters(), lr=1e-3)
 
     #classifier.rank.register_backward_hook(printgradnorm)
 
@@ -372,14 +372,12 @@ else:
     if trainScoreandMSE:
         classifierMSE.cuda();
 
-
-
 # Training
-
 from random import randrange
 Ntrial = randrange(10000)
 
 log_dir = filepath_images
+print(f'Logging to {log_dir}')
 writer_train = SummaryWriter(os.path.join(log_dir,f'runs/rank/train_{Ntrial}'))
 writer_val = SummaryWriter(os.path.join(log_dir,f'runs/rank/val_{Ntrial}'))
 
@@ -387,7 +385,7 @@ logging.basicConfig(filename=os.path.join(log_dir,f'runs/rank/ranking_{Ntrial}.l
 logging.info('With L2cnn, SSIM and MSE fused, symetric classifier')
 score_mse_file = os.path.join(f'score_mse_file_{Ntrial}.h5')
 
-Nepoch = 250
+Nepoch = 400
 
 lossT = np.zeros(Nepoch)
 lossV = np.zeros(Nepoch)
@@ -428,8 +426,11 @@ for epoch in range(Nepoch):
 
         classifierMSE.train()
 
+
     # training
     classifier.train()
+    if epoch < 5:
+        classifier.rank.eval()
 
     for i, data in enumerate(loader_T, 0):
 
@@ -438,11 +439,16 @@ for epoch in range(Nepoch):
         im1, im2, imt = im1.cuda(), im2.cuda(), imt.cuda()
         labels = labels.to(device, dtype=torch.long)
 
-        # classifier
-        delta = classifier(im1, im2, imt)
+        # classifier and scores for each image
+        delta, score1, score2 = classifier(im1, im2, imt)
 
-        # loss
+        mean_score = torch.mean(score1) + torch.mean(score2)
+        #print(f'Score = {mean_score}')
+        #loss_scale = (0.5*mean_score - 1.0)**2
+        #print(f'Loss Score = {loss_scale}')
+
         loss = loss_func(delta, labels)
+
         train_avg.update(loss.item(), n=BATCH_SIZE)  # here is total loss of all batches
 
         # acc
@@ -469,18 +475,13 @@ for epoch in range(Nepoch):
 
         # train on MSE
         if trainScoreandMSE:
-            deltaMSE = classifierMSE(im1, im2, imt)
+            deltaMSE, mse1, mse2  = classifierMSE(im1, im2, imt)
             lossMSE = loss_func(deltaMSE, labels)
             train_avgMSE.update(lossMSE.item(), n=BATCH_SIZE)  # here is total loss of all batches
 
             # acc
-            accMSE = acc_calc(deltaMSE, labels)
+            accMSE = acc_calc(deltaMSE, labels, BatchSize=BATCH_SIZE)
             train_accMSE.update(accMSE, n=1)
-
-
-#             if i % 30 == 0:
-#                 print(f'Acc trained on mse {train_accMSE.avg()}')
-
 
             # zero the parameter gradients, backward and update
             optimizerMSE.zero_grad()
@@ -491,16 +492,10 @@ for epoch in range(Nepoch):
 
             optimizerMSE.step()
 
+        # get the score for a plot
         with torch.no_grad():
-            score1 = classifier.rank(im1, imt)
-            score1 = torch.abs(score1)
-            score2 = classifier.rank(im2, imt)
-            score2 = torch.abs(score2)
-            scorelistT.append(score1.cpu().numpy())
-            scorelistT.append(score2.cpu().numpy())
-
-            mse1 = torch.mean((torch.abs(im1 - imt) ** 2), dim=(1, 2, 3))
-            mse2 = torch.mean((torch.abs(im2 - imt) ** 2), dim=(1, 2, 3))
+            scorelistT.append(score1.detach().cpu().numpy())
+            scorelistT.append(score2.detach().cpu().numpy())
 
             mselistT.append(mse1.cpu().numpy())
             mselistT.append(mse2.cpu().numpy())
@@ -514,7 +509,7 @@ for epoch in range(Nepoch):
     writer_train.add_scalar('p-value', pT, epoch)
 
     # validation
-
+    classifier.eval()
     with torch.no_grad():
         correct = 0
         total = 0
@@ -527,7 +522,7 @@ for epoch in range(Nepoch):
             labels = labels.to(device, dtype=torch.long)
 
             # forward
-            delta = classifier(im1, im2, imt)
+            delta, score1, score2 = classifier(im1, im2, imt)
 
             # loss
             loss = loss_func(delta, labels)
@@ -542,29 +537,24 @@ for epoch in range(Nepoch):
             # _, predictedV = torch.max(delta.data, 1)
             # total += labels.size(0)
             # correct += (predictedV == labels).sum().item()
+            # mse-based classifier
+            if trainScoreandMSE:
+                deltaMSE, mse1, mse2 = classifierMSE(im1, im2, imt)
+                lossMSE = loss_func(deltaMSE, labels)
+                eval_avgMSE.update(lossMSE.item(), n=BATCH_SIZE)
+
+                accMSE = acc_calc(deltaMSE, labels, BatchSize=BATCH_SIZE)
+                eval_accMSE.update(accMSE, n=1)
+
 
             # get scores and mse
-            score1 = classifier.rank(im1, imt)
-            score1 = torch.abs(score1)
-            score2 = classifier.rank(im2, imt)
-            score2 = torch.abs(score2)
             scorelistV.append(score1.cpu().numpy())
             scorelistV.append(score2.cpu().numpy())
-
-            mse1 = torch.mean((torch.abs(im1 - imt) ** 2), dim=(1, 2, 3))
-            mse2 = torch.mean((torch.abs(im2 - imt) ** 2), dim=(1, 2, 3))
 
             mselistV.append(mse1.cpu().numpy())
             mselistV.append(mse2.cpu().numpy())
 
-            # mse-based classifier
-            if trainScoreandMSE:
-                deltaMSE = classifierMSE(im1, im2, imt)
-                lossMSE = loss_func(deltaMSE, labels)
-                eval_avgMSE.update(lossMSE.item(), n=BATCH_SIZE)
 
-                accMSE = acc_calc(deltaMSE, labels, BatchSize=BATCH_SIZE * 2)
-                eval_accMSE.update(accMSE, n=1)
 
     scorelistV = np.concatenate(scorelistV).ravel()
     mselistV = np.concatenate(mselistV).ravel()
@@ -580,9 +570,6 @@ for epoch in range(Nepoch):
     #print('Epoch = %d : Loss Eval = %f , Loss Train = %f' % (epoch, eval_avg.avg(), train_avg.avg()))
     print(f'Epoch = {epoch:03d}, Loss = {eval_avg.avg()}, Loss train = {train_avg.avg()}, Acc = {eval_acc.avg()}, Acc train = {train_acc.avg()}')
 
-    if trainScoreandMSE:
-        print(f'MSE: Loss = {eval_avgMSE.avg()}, Loss train = {train_avgMSE.avg()}, Acc = {eval_accMSE.avg()}, Acc train = {train_accMSE.avg()}')
-
     lossT[epoch] = train_avg.avg()
     lossV[epoch] = eval_avg.avg()
 
@@ -596,15 +583,10 @@ for epoch in range(Nepoch):
     if trainScoreandMSE:
         print(f'MSE: Loss = {eval_avgMSE.avg()}, Loss train = {train_avgMSE.avg()}, Acc = {eval_accMSE.avg()}, Acc train = {train_accMSE.avg()}')
 
-        writer_val.add_scalar('LossMSE', eval_avgMSE.avg(),
-                              epoch)
-        writer_train.add_scalar('LossMSE', train_avgMSE.avg(),
-                                epoch)
-
-        writer_val.add_scalar('AccMSE', eval_accMSE.avg(),
-                              epoch)
-        writer_train.add_scalar('AccMSE', train_accMSE.avg(),
-                                epoch)
+        writer_val.add_scalar('LossMSE', eval_avgMSE.avg(), epoch)
+        writer_train.add_scalar('LossMSE', train_avgMSE.avg(), epoch)
+        writer_val.add_scalar('AccMSE', eval_accMSE.avg(), epoch)
+        writer_train.add_scalar('AccMSE', train_accMSE.avg(), epoch)
 
 
     # save models
