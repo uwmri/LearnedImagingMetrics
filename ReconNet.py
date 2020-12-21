@@ -63,6 +63,10 @@ else:
     filepath_train = Path("Q:\LearnedImageMetric")
     filepath_val = Path("Q:\LearnedImageMetric")
 
+    # Chenweis machine
+    filepath_rankModel = Path('I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020')
+    filepath_train = Path("I:/NYUbrain")
+    filepath_val = Path("I:/NYUbrain")
 log_dir = filepath_rankModel
 rank_channel =1
 rank_trained_on_mag = False
