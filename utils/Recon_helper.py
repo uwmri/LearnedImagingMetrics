@@ -767,12 +767,13 @@ class MoDL(nn.Module):
         self.lam2 = nn.Parameter(0.5*torch.ones([inner_iter]), requires_grad=True)
 
         # Options for UNET
+
         self.denoiser = UNet2D(2, 2, depth=3, final_activation='none', f_maps=16, layer_order='cr')
+
         #self.denoiser = CNN_shortcut()
         # self.denoiser = Projector(ENC=False)
 
     def call_denoiser(self, image):
-
         image = self.denoiser(image)
         return(image)
 
@@ -823,7 +824,9 @@ class MoDL(nn.Module):
             y_pred = self.denoiser(y_pred)
 
             # cropping for UNet
+
             y_pred = y_pred[:,:,pad_amount2:-pad_amount2,pad_amount1:-pad_amount1]
+
 
             # # back to 2 channel
             y_pred = y_pred.permute(0, 2, 3, 1).contiguous()

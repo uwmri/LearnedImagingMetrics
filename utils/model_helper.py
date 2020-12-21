@@ -257,11 +257,13 @@ class L2cnn(nn.Module):
         diff = input - truth
         # if train on 2chan (real and imag) images
 
+
         diff_sq = torch.sum( diff ** 2, dim=1, keepdim=True)
         diff_mag = diff_sq ** (0.5)
 
         # Mean square error
         #mse = self.layer_mse(diff_mag)
+
 
         # Convolutional pathway with MSE at multiple scales
         for l in self.layers:
