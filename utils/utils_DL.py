@@ -54,7 +54,7 @@ class RunningAverage:
         return self.sum / self.count
 
 
-def plt_scoreVsMse(scorelist, mselist):
+def plt_scoreVsMse(scorelist, mselist, xname='Learned Score', yname='MSE', add_regression=False):
     """
 
     :param scorelistT: 1d np array on cpu(N minibatches*batchsize, )
@@ -66,10 +66,20 @@ def plt_scoreVsMse(scorelist, mselist):
     figure = plt.figure(figsize=(10,10))
     ax = plt.gca()
     plt.scatter(scorelist, mselist,s=150, alpha=0.3)
+
+    # Add regression
+    if add_regression:
+        from scipy import stats
+        slope, intercept, r_value, p_value, std_err = stats.linregress(scorelist, mselist)
+        x = np.linspace( 0, np.max(scorelist),100)
+        line = slope * x + intercept
+        plt.plot(x, line, 'k', label='y={:.2f}x+{:.2f}'.format(slope, intercept), linewidth=5)
+        end
+
     plt.xlim([0, 2*np.median(scorelist)])
     plt.ylim([0, 2*np.median(mselist)])
-    plt.xlabel('Score', fontsize=24)
-    plt.ylabel('MSE', fontsize=24)
+    plt.xlabel(xname, fontsize=24)
+    plt.ylabel(yname, fontsize=24)
     ax.tick_params(axis='both', which='major', labelsize=20)
     plt.ticklabel_format(axis='both', style='sci', scilimits=(0,0))
     ax.xaxis.get_offset_text().set_fontsize(24)
@@ -78,21 +88,22 @@ def plt_scoreVsMse(scorelist, mselist):
     return figure
 
 
-def plt_loss_learnedVsMse(loss_learned, loss_mse):
+def plt_loss_learnedVsMse(loss_learned, loss_mse, xname='Learned Loss', yname='MSE'):
 
     figure = plt.figure(figsize=(10,10))
     ax = plt.gca()
     plt.scatter(loss_learned, loss_mse,s=150, alpha=0.3)
     plt.xlim([0, 2*np.median(loss_learned)])
     plt.ylim([0, 2*np.median(loss_mse)])
-    plt.xlabel('Learned loss', fontsize=24)
-    plt.ylabel('MSE loss', fontsize=24)
+    plt.xlabel(xname, fontsize=24)
+    plt.ylabel(yname, fontsize=24)
     ax.tick_params(axis='both', which='major', labelsize=20)
     plt.ticklabel_format(axis='both', style='sci', scilimits=(0,0))
     ax.xaxis.get_offset_text().set_fontsize(24)
     ax.yaxis.get_offset_text().set_fontsize(24)
 
     return figure
+
 
 
 def plt_recon(recon):

@@ -758,7 +758,7 @@ class MoDL(nn.Module):
     '''output: image (sl, 768, 396, 2) '''
 
     # def __init__(self, inner_iter=10):
-    def __init__(self, scale_init=1.0, inner_iter=1):
+    def __init__(self, scale_init=1.0, inner_iter=1, sequential=False):
         super(MoDL, self).__init__()
 
         self.inner_iter = inner_iter
@@ -767,12 +767,13 @@ class MoDL(nn.Module):
         self.lam2 = nn.Parameter(0.5*torch.ones([inner_iter]), requires_grad=True)
 
         # Options for UNET
-        self.denoiser = UNet2D(2, 2, depth=3, final_activation='none', f_maps=16, layer_order='cr')
+        self.denoiser = UNet2D(2, 2, depth=3, final_activation='none', f_maps=32, layer_order='cr')
         #self.denoiser = CNN_shortcut()
         # self.denoiser = Projector(ENC=False)
 
     def call_denoiser(self, image):
 
+        image = self.denoiser(image)
         image = self.denoiser(image)
         return(image)
 
@@ -830,7 +831,7 @@ class MoDL(nn.Module):
             if dim==3:
                 y_pred = torch.squeeze(y_pred)
 
-            #y_pred = self.lam1[i]*image +self.lam2[i]*y_pred
+            #image = self.lam1[i]*image + self.lam2[i]*y_pred
 
             # Return Image
             image = self.lam2[i]*y_pred
