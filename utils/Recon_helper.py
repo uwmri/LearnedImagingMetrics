@@ -772,7 +772,6 @@ class MoDL(nn.Module):
         # self.denoiser = Projector(ENC=False)
 
     def call_denoiser(self, image):
-
         image = self.denoiser(image)
         image = self.denoiser(image)
         return(image)
@@ -824,7 +823,9 @@ class MoDL(nn.Module):
             y_pred = self.denoiser(y_pred)
 
             # cropping for UNet
+
             y_pred = y_pred[:,:,pad_amount2:-pad_amount2,pad_amount1:-pad_amount1]
+
 
             # # back to 2 channel
             y_pred = y_pred.permute(0, 2, 3, 1).contiguous()

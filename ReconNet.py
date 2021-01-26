@@ -69,18 +69,27 @@ else:
     filepath_rankModel = Path('E:/LearnedImageMetric/ImagePairs_Pack_04032020')
     filepath_train = Path("Q:/LearnedImageMetric")
     filepath_val = Path("Q:/LearnedImageMetric")
-import random
 
+    # Chenweis machine
+    filepath_rankModel = Path('I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020')
+    filepath_train = Path("I:/NYUbrain")
+    filepath_val = Path("I:/NYUbrain")
+
+
+import random
 Ntrial = random.randint(0, 10000)
 log_dir = filepath_rankModel
-rank_channel = 1
+rank_channel =1
+
 rank_trained_on_mag = False
 BO = False
 logging.basicConfig(filename=os.path.join(log_dir, f'Recon_{Ntrial}_{DGX}.log'), filemode='w', level=logging.INFO)
 
 # file_rankModel = os.path.join(filepath_rankModel, "RankClassifier16.pt")
 
+
 file_rankModel = os.path.join(filepath_rankModel, "RankClassifier9706_pretrained.pt")
+
 
 os.chdir(filepath_rankModel)
 
@@ -374,6 +383,22 @@ for epoch in range(Nepoch):
                 for inner_iter in range(INNER_ITER):
 
                     imEst2 = ReconModel(imEst, kspaceU_sl, A_torch, Ah_torch)  # (768, 396, 2)
+
+                    # # scale to ~same as truth
+                    # y_pred_real = imEst2[..., 0].detach()
+                    # y_pred_imag = imEst2[..., 1].detach()
+                    # scale_real = torch.sum(torch.transpose(y_pred_real, 0, 1) @ im_sl[..., 0].detach()) / \
+                    #              torch.sum(torch.transpose(y_pred_real, 0, 1) @ y_pred_real)
+                    # scale_imag = torch.sum(torch.transpose(-y_pred_imag, 0, 1) @ im_sl[..., 0].detach()) / \
+                    #              torch.sum(torch.transpose(-y_pred_imag, 0, 1) @ y_pred_real)
+                    # # print(scale_imag.requires_grad)
+                    # # print(f'scale real = {scale_real}, scale_imag = {scale_imag}')
+                    # imEst2[..., 0] *= scale_real
+                    # imEst2[..., 1] *= scale_imag
+                    # del y_pred_real, y_pred_imag
+
+
+
 
                     if WHICH_LOSS == 'mse':
                         loss_temp = mseloss_fcn(imEst2, im_sl)
