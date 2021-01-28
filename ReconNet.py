@@ -3,6 +3,7 @@ import torchvision
 import torch.optim as optim
 import torchsummary
 from torch.utils.tensorboard import SummaryWriter
+
 try:
     from ax.service.managed_loop import optimize
 except:
@@ -17,20 +18,26 @@ import logging
 import time
 import sigpy as sp
 import sigpy.mri as mri
+from pathlib import Path
+import os
+import h5py
 
 # from fastMRI.data import transforms as T
 
-from utils.Recon_helper import *
-from utils.CreateImagePairs import find, get_smaps, get_truth
-from utils.utils_DL import *
+from .utils.Recon_helper import *
+from .utils.model_helper import *
+from .utils import *
+from .utils.CreateImagePairs import get_smaps, get_truth
+from .utils.utils_DL import *
+from random import randrange
 
 
 mempool = cupy.get_default_memory_pool()
 pinned_mempool = cupy.get_default_pinned_memory_pool()
 
 spdevice = sp.Device(0)
-from random import randrange
-Ntrial =  randrange(10000)
+
+Ntrial = randrange(10000)
 
 # load RankNet
 DGX = False
@@ -54,28 +61,33 @@ if DGX:
 
 
 else:
-    filepath_rankModel = Path('I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020')
+    filepath_rankModel = Path('I:/code/LearnedImagingMetrics_pytorch/Rank_NYU/ImagePairs_Pack_04032020')
     filepath_train = Path("I:/NYUbrain")
     filepath_val = Path("I:/NYUbrain")
 
     # On Kevins machine
-    filepath_rankModel = Path('E:\LearnedImageMetric\ImagePairs_Pack_04032020')
-    filepath_train = Path("Q:\LearnedImageMetric")
-    filepath_val = Path("Q:\LearnedImageMetric")
-
+    filepath_rankModel = Path('E:/LearnedImageMetric/ImagePairs_Pack_04032020')
+    filepath_train = Path("Q:/LearnedImageMetric")
+    filepath_val = Path("Q:/LearnedImageMetric")
 
     # Chenweis machine
     filepath_rankModel = Path('I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020')
     filepath_train = Path("I:/NYUbrain")
     filepath_val = Path("I:/NYUbrain")
+
+
+import random
+Ntrial = random.randint(0, 10000)
 log_dir = filepath_rankModel
 rank_channel =1
 
 rank_trained_on_mag = False
 BO = False
+
 logging.basicConfig(filename=os.path.join(log_dir,f'Recon_{Ntrial}_dgx{DGX}.log'), filemode='w', level=logging.INFO)
 
-#file_rankModel = os.path.join(filepath_rankModel, "RankClassifier16.pt")
+
+# file_rankModel = os.path.join(filepath_rankModel, "RankClassifier16.pt")
 
 
 file_rankModel = os.path.join(filepath_rankModel, "RankClassifier9575_pretrained.pt")
@@ -102,44 +114,81 @@ smap_type = 'smap16'
 Ncoils = 20
 xres = 768
 yres = 396
+act_xres = 512
+act_yres = 256
+
 
 acc = 32
+
 logging.info(f'Acceleration = {acc}')
 # fixed sampling mask
-WHICH_MASK='poisson'
-if WHICH_MASK=='poisson':
-    mask = mri.poisson((xres, yres), accel=acc, crop_corner=True, return_density=False, dtype='float32')
-elif WHICH_MASK=='randLines':
+WHICH_MASK = 'poisson'
+
+if WHICH_MASK == 'poisson':
+    # Sample elipsoid to not be overly optimistic
+    mask = mri.poisson((act_xres, act_yres), accel=acc * 2, calib=(0, 0), crop_corner=True, return_density=False,
+                       dtype='float32', vds_factor=0.5)
+    pady = int(.5 * (yres - mask.shape[1]))
+    padx = int(.5 * (xres - mask.shape[0]))
+    print(mask.shape)
+    print(f'padx = {(padx, xres - padx - mask.shape[0])}, {(pady, yres - pady - mask.shape[1])}')
+    pad = ((padx, xres - padx - mask.shape[0]), (pady, yres - pady - mask.shape[1]))
+    mask = np.pad(mask, pad, 'constant', constant_values=0)
+    print(mask.shape)
+
+elif WHICH_MASK == 'randLines':
     length_center = 20
-    num_peri = int((xres*yres/acc-xres*length_center)/xres)
-    acquired_center = np.arange((yres-2)/2-(length_center/2-1),yres/2+length_center/2, step=1, dtype='int')
-    acquired_peri = np.random.randint(0,(yres-1), num_peri, dtype='int')
+    num_peri = int((xres * yres / acc - xres * length_center) / xres)
+    acquired_center = np.arange((yres - 2) / 2 - (length_center / 2 - 1), yres / 2 + length_center / 2, step=1,
+                                dtype='int')
+    acquired_peri = np.random.randint(0, (yres - 1), num_peri, dtype='int')
     mask = np.zeros((xres, yres), dtype=np.float32)
-    mask[:,acquired_center] = 1
-    mask[:,acquired_peri] = 1
+    mask[:, acquired_center] = 1
+    mask[:, acquired_peri] = 1
 else:
     mask = np.ones((xres, yres), dtype=np.float32)
+
+[kx, ky] = np.meshgrid(np.linspace(-1, 1, act_xres), np.linspace(-1, 1, act_yres), indexing='ij')
+kr = (kx ** 2 + ky ** 2) ** 0.5
+mask_truth = (1 / (1 + np.exp((np.abs(kr) - 0.9) / 0.1))).astype(np.float32)
+mask_truth = np.pad(mask_truth, pad, 'constant', constant_values=0)
+# print(mask_truth.shape)
+
+plt.figure()
+plt.imshow(mask_truth)
+plt.show()
+
+plt.figure()
+plt.imshow(mask)
+plt.show()
+
+mask_truth = sp.to_device(mask_truth, spdevice)  # Square here to account for sqrt in SENSE operator
 mask_gpu = sp.to_device(mask, spdevice)
 
 # Data generator
 BATCH_SIZE = 1
 prefetch_data = False
 logging.info(f'Load train data from {filepath_train}')
-trainingset = DataGeneratorRecon(filepath_train, file_train, mask, rank_trained_on_mag=rank_trained_on_mag,data_type=smap_type)
+trainingset = DataGeneratorRecon(filepath_train, file_train, mask, rank_trained_on_mag=rank_trained_on_mag,
+                                 data_type=smap_type)
 loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=True)
 
 logging.info(f'Load eval data from {filepath_val}')
-validationset = DataGeneratorRecon(filepath_val, file_val, mask, rank_trained_on_mag=rank_trained_on_mag, data_type=smap_type)
+validationset = DataGeneratorRecon(filepath_val, file_val, mask, rank_trained_on_mag=rank_trained_on_mag,
+                                   data_type=smap_type)
 loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=False)
+
+print(f'Training data has {len(trainingset)}')
+print(f'Validation data has {len(validationset)}')
 
 # # check a training dataset
 # sneakpeek(trainingset, rank_trained_on_mag)
 # sneakpeek(validationset, rank_trained_on_mag)
 
-imSlShape = (BATCH_SIZE,) + (xres, yres)    # (1, 768, 396)
+imSlShape = (BATCH_SIZE,) + (xres, yres)  # (1, 768, 396)
 
 UNROLL = True
-ReconModel = MoDL(inner_iter=10)
+ReconModel = MoDL(inner_iter=1)
 ReconModel.cuda()
 
 # torchsummary.summary(ReconModel.denoiser, input_size=(2,768,396), batch_size=16)
@@ -147,10 +196,12 @@ ReconModel.cuda()
 
 # for BO
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-def train_evaluate_recon(parameterization):
 
+
+def train_evaluate_recon(parameterization):
     net = ReconModel
-    net = train_modRecon(net=net, train_loader=loader_T, mask_gpu=mask_gpu, parameters=parameterization, dtype=torch.float, device=device)
+    net = train_modRecon(net=net, train_loader=loader_T, mask_gpu=mask_gpu, parameters=parameterization,
+                         dtype=torch.float, device=device)
     return evaluate_modRecon(
         net=net,
         data_loader=loader_V,
@@ -164,8 +215,10 @@ def train_evaluate_recon(parameterization):
 writer_train = SummaryWriter(f'runs/recon/train_{Ntrial}')
 writer_val = SummaryWriter(f'runs/recon/val_{Ntrial}')
 
-WHICH_LOSS = 'mse'
+
+WHICH_LOSS = 'learned'
 #WHICH_LOSS = 'mse'
+
 OneNet = False
 if WHICH_LOSS == 'perceptual':
     loss_perceptual = PerceptualLoss_VGG16()
@@ -173,7 +226,6 @@ if WHICH_LOSS == 'perceptual':
 elif WHICH_LOSS == 'patchGAN':
     patchGAN = NLayerDiscriminator(input_nc=2)
     patchGAN.cuda()
-
 
 INNER_ITER = 1
 
@@ -186,13 +238,13 @@ lossV = np.zeros(Nepoch)
 Ntrain = 10
 Nval = 1
 
-
-#Ntrain = 10
-#Nval = 1
-
+Ntrain = 10
+Nval = 1
 
 # save some images during training
+
 out_name = os.path.join(log_dir,f'sneakpeek_training{Ntrial}.h5')
+
 try:
     os.remove(out_name)
 except OSError:
@@ -213,8 +265,11 @@ if BO:
     logging.info(f'BO, {best_parameters}')
 
 else:
-    LR = 1e-3
-    #optimizer = optim.SGD(ReconModel.parameters(), lr=LR, momentum=0.9)
+
+    LR = 1e-4
+    # LR = 1e-5
+
+    # optimizer = optim.SGD(ReconModel.parameters(), lr=LR, momentum=0.9)
     optimizer = optim.Adam(ReconModel.parameters(), lr=LR)
     logging.info(f'Adam, lr = {LR}')
 
@@ -231,21 +286,22 @@ logging.info(f'ifSingleSlice={ifSingleSlice}')
 xp = spdevice.xp
 
 import torch.linalg
+
 # Get the scale for Denoiser
 with torch.no_grad():
     da = 0.0
     for avg in range(10):
         x = torch.randn((1, 2, yres, xres), device='cuda')
         for iter in range(30):
-            ein = torch.linalg.norm( x)
+            ein = torch.linalg.norm(x)
             y = ReconModel.call_denoiser(x)
-            eout = torch.linalg.norm( y)
+            eout = torch.linalg.norm(y)
             x = y / eout
-            #print(f'Scale {eout/ein}')
+            # print(f'Scale {eout/ein}')
         print(eout)
         da += eout / 10
     print(f'Denoiser scale = {da}')
-    ReconModel.set_denoiser_scale( 0.9 / da)
+    # ReconModel.set_denoiser_scale( 0.9 / da)
 
 for epoch in range(Nepoch):
 
@@ -280,10 +336,10 @@ for epoch in range(Nepoch):
         kspaceU = sp.to_device(kspaceU, device=spdevice)
 
         smaps = spdevice.xp.squeeze(smaps)
-        kspaceU = chan2_complex(spdevice.xp.squeeze(kspaceU))      # cupy array on cuda
-        #kspaceU = sp.to_pytorch(kspaceU, requires_grad=False)
+        kspaceU = chan2_complex(spdevice.xp.squeeze(kspaceU))  # cupy array on cuda
+        # kspaceU = sp.to_pytorch(kspaceU, requires_grad=False)
 
-        im = torch.squeeze(im, dim=0)   # torch.Size([16, 768, 396, 1])
+        im = torch.squeeze(im, dim=0)  # torch.Size([16, 768, 396, 1])
 
         # seems jsense and espirit wants (coil,h,w), can't do (sl, coil, h, w)
         redo_smaps = False
@@ -298,8 +354,7 @@ for epoch in range(Nepoch):
 
         smaps = chan2_complex(spdevice.xp.squeeze(smaps))  # (slice, coil, 768, 396)
         Nslices = smaps.shape[0]
-        #print(f'Load batch {time.time()-t}, {Nslices} {smaps.shape}')
-
+        # print(f'Load batch {time.time()-t}, {Nslices} {smaps.shape}')
 
         # Zero the gradients over all slices
         optimizer.zero_grad()
@@ -313,9 +368,9 @@ for epoch in range(Nepoch):
             loss_avg = 0.0
             for sl in range(Nslices):
                 t_sl = time.time()
-                smaps_sl = xp.copy(smaps[sl])                              # ndarray on cuda (20, 768, 396), complex64
-                im_sl = im[sl].clone().cuda()                                               # tensor on cuda (768, 396, 2)
-                kspaceU_sl = xp.copy(kspaceU[sl])                            # ndarray (20, 768, 396)
+                smaps_sl = xp.copy(smaps[sl])  # ndarray on cuda (20, 768, 396), complex64
+                im_sl = im[sl].clone().cuda()  # tensor on cuda (768, 396, 2)
+                kspaceU_sl = xp.copy(kspaceU[sl])  # ndarray (20, 768, 396)
                 with spdevice:
                     A = sp.mri.linop.Sense(smaps_sl, coil_batch_size=None, weights=mask_gpu)
                     Ah = A.H
@@ -324,7 +379,7 @@ for epoch in range(Nepoch):
                     # Ah ishape (20,768,396), oshape(768,396)
 
                 # Get truth
-                im_sl = sp.to_pytorch( Atruth.H*kspaceU_sl, requires_grad=True)
+                im_sl = sp.to_pytorch(Atruth.H * (kspaceU_sl * mask_truth), requires_grad=True)
 
                 A_torch = sp.to_pytorch_function(A, input_iscomplex=True, output_iscomplex=True)
                 Ah_torch = sp.to_pytorch_function(Ah, input_iscomplex=True, output_iscomplex=True)
@@ -336,7 +391,7 @@ for epoch in range(Nepoch):
 
                 for inner_iter in range(INNER_ITER):
 
-                    imEst2 = ReconModel(imEst, kspaceU_sl, A_torch, Ah_torch)    # (768, 396, 2)
+                    imEst2 = ReconModel(imEst, kspaceU_sl, A_torch, Ah_torch)  # (768, 396, 2)
 
                     # # scale to ~same as truth
                     # y_pred_real = imEst2[..., 0].detach()
@@ -359,7 +414,7 @@ for epoch in range(Nepoch):
                     elif WHICH_LOSS == 'perceptual':
                         loss_temp = loss_perceptual(imEst2, im_sl)
                     elif WHICH_LOSS == 'patchGAN':
-                        loss_temp= loss_GAN(imEst2, im_sl, patchGAN)
+                        loss_temp = loss_GAN(imEst2, im_sl, patchGAN)
                     else:
                         if epoch < epochMSE:
                             loss_temp = mseloss_fcn(imEst2, im_sl)
@@ -369,14 +424,13 @@ for epoch in range(Nepoch):
 
                     loss = loss_temp
 
-                    #loss.backward()
-                    #else:
+                    # loss.backward()
+                    # else:
 
                     loss.backward(retain_graph=True)
                     # train_avg.update(loss.detach().item(), BATCH_SIZE)
                     imEst = imEst2
                     del imEst2
-
 
                 if WHICH_LOSS == 'learned':
                     with torch.no_grad():
@@ -408,14 +462,11 @@ for epoch in range(Nepoch):
             SENSE_torch = sp.to_pytorch_function(SENSE, input_iscomplex=True, output_iscomplex=True)
             SENSEH_torch = sp.to_pytorch_function(SENSEH, input_iscomplex=True, output_iscomplex=True)
 
-
             imEst = 0.0 * sp.to_pytorch(SENSEH * kspaceU, requires_grad=False)
             im_iter = []
             im_grad = []
 
-
             kspaceU = sp.to_pytorch(kspaceU, requires_grad=False)
-
 
             t = time.time()
             optimizer.zero_grad()
@@ -423,7 +474,7 @@ for epoch in range(Nepoch):
                 imEst2 = ReconModel(imEst, kspaceU, SENSE_torch, SENSEH_torch)
                 if WHICH_LOSS == 'mse':
                     loss = mseloss_fcn(imEst2, im)
-                    #print(f'mse loss of batch {i} at inner_iter{inner_iter}, epoch{epoch} is {loss} ')
+                    # print(f'mse loss of batch {i} at inner_iter{inner_iter}, epoch{epoch} is {loss} ')
                 elif WHICH_LOSS == 'perceptual':
                     loss = loss_perceptual(imEst2, im)
                 elif WHICH_LOSS == 'patchGAN':
@@ -438,12 +489,12 @@ for epoch in range(Nepoch):
                 train_avg.update(loss.item(), n=BATCH_SIZE)
 
                 imEst = imEst2
-                im_iter.append( imEst.cpu().detach().numpy())
-                im_iter.append( imEst.cpu().detach().numpy())
+                im_iter.append(imEst.cpu().detach().numpy())
+                im_iter.append(imEst.cpu().detach().numpy())
 
             check_loop = False
             if check_loop:
-                imS = SENSEH*kspaceU
+                imS = SENSEH * kspaceU
                 imS = sp.to_device(imS, sp.cpu_device)
                 plt.figure()
                 plt.imshow(np.abs(imS[2]))
@@ -457,7 +508,6 @@ for epoch in range(Nepoch):
                     plt.imshow(np.abs(chan2_complex(img[2])))
                     plt.show()
                 exit()
-
 
             optimizer.step()
             train_avg.update(loss.detach().item())
@@ -528,11 +578,10 @@ for epoch in range(Nepoch):
                     Atruth = sp.mri.linop.Sense(smaps_sl, coil_batch_size=None)
 
                 # Get truth
-                im_sl = sp.to_pytorch(Atruth.H * kspaceU_sl, requires_grad=False)
+                im_sl = sp.to_pytorch(Atruth.H * (kspaceU_sl * mask_truth), requires_grad=False)
 
                 A_torch = sp.to_pytorch_function(A, input_iscomplex=True, output_iscomplex=True)
                 Ah_torch = sp.to_pytorch_function(Ah, input_iscomplex=True, output_iscomplex=True)
-
 
                 imEst = 0.0 * sp.to_pytorch(Ah * kspaceU_sl, requires_grad=False)
 
@@ -566,7 +615,6 @@ for epoch in range(Nepoch):
                     with torch.no_grad():
                         loss_learnedV.append(loss.detach().item())
                         loss_mseV.append(float(loss_mse_tensor))
-
 
                 if i == 1 and sl == 4:
                     truthplt = chan2_complex(torch.squeeze(im_sl.detach().cpu()))
@@ -632,7 +680,7 @@ for epoch in range(Nepoch):
             SENSEH_torch = sp.to_pytorch_function(SENSEH, input_iscomplex=True, output_iscomplex=True)
 
             # Initial guess
-            #imEst = 0 * SENSEH_torch.apply(kspaceU)
+            # imEst = 0 * SENSEH_torch.apply(kspaceU)
 
             imEst = 0.0 * sp.to_pytorch(SENSEH * kspaceU, requires_grad=False)
 
@@ -675,7 +723,7 @@ for epoch in range(Nepoch):
                     if epoch == 0:
                         hf.create_dataset(f"{epoch}_truth", data=torch.unsqueeze(truthplt[2], 0).numpy())
                         hf.create_dataset(f"{epoch}_FT", data=torch.unsqueeze(noisyplt[2], 0).numpy())
-                        hf.create_dataset(f"{epoch}_recon", data=torch.unsqueeze(imEstplt[2],0).numpy())
+                        hf.create_dataset(f"{epoch}_recon", data=torch.unsqueeze(imEstplt[2], 0).numpy())
                     else:
                         hf.create_dataset(f"{epoch}_recon", data=torch.unsqueeze(imEstplt[2], 0).numpy())
 
@@ -695,14 +743,15 @@ for epoch in range(Nepoch):
         # print(f'--------------------------------after val case {i}, epoch {epoch}------------------------------------')
         # print_mem()
 
+    logging.info(
+        f'epoch {epoch} took {(time.time() - tt) / 60} min, Loss train = {train_avg.avg()}, Loss eval = {eval_avg.avg()}')
 
-    logging.info(f'epoch {epoch} took {(time.time() - tt)/60} min, Loss train = {train_avg.avg()}, Loss eval = {eval_avg.avg()}')
-    #torch.cuda.empty_cache()
+    # torch.cuda.empty_cache()
 
     writer_val.add_scalar('Loss', eval_avg.avg(), epoch)
     writer_train.add_scalar('Loss', train_avg.avg(), epoch)
 
-    logging.info('Epoch = %d : Loss Eval = %f , Loss Train = %f' % (epoch, eval_avg.avg(), train_avg.avg()))
+    # logging.info('Epoch = %d : Loss Eval = %f , Loss Train = %f' % (epoch, eval_avg.avg(), train_avg.avg()))
     lossT[epoch] = train_avg.avg()
     lossV[epoch] = eval_avg.avg()
 
@@ -718,4 +767,12 @@ for epoch in range(Nepoch):
         lossplotV = plt_scoreVsMse(loss_learnedV, loss_mseV)
         writer_val.add_figure('Loss_learned_vs_mse', lossplotV, epoch)
 
-
+    # save models
+    state = {
+        'state_dict': ReconModel.state_dict(),
+        'optimizer': optimizer.state_dict(),
+        'epoch': epoch,
+        'loss_train': lossT,
+        'loss_cal': lossV
+    }
+    torch.save(state, os.path.join(log_dir, f'Recon{Ntrial}_{WHICH_LOSS}_{epoch}.pt'))

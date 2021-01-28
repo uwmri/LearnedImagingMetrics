@@ -33,6 +33,7 @@ WeightedLoss = False
 Pretrain = 'pretrained'   # pretraining(train on corrupted/truth pair) or pretrained (for actual training) or none
 
 trainScoreandMSE = True    # train score based classifier and mse(im1)-mse(im2) based classifier at the same time
+trainScoreandSSIM = True    # train score based classifier and mse(im1)-mse(im2) based classifier at the same time
 
 maxMatSize = 396  # largest matrix size seems to be 396
 if Pretrain == 'pretraining':
@@ -48,7 +49,6 @@ if Pretrain == 'pretraining':
     ranks = np.zeros((NEXAMPLES, 3), dtype=np.int)
     ranks[:,1] = 1
     ranks[:, 2] = np.arange(NEXAMPLES,  dtype=np.int)
-
 
 else:
     names = []
@@ -69,6 +69,20 @@ else:
             for row in readCSV:
                 ranks.append(row)
     ranks = np.array(ranks, dtype=np.int)
+
+# make sure to use consensus
+import scipy.stats
+uranks_id = np.unique(ranks[:,2])
+new_ranks = np.zeros((len(uranks_id),3), ranks.dtype)
+for count, i in enumerate(uranks_id):
+    print('Use rank {i}')
+    idx = ranks[:,2] == i
+    vals = ranks[idx]
+    print(vals)
+    m,c = scipy.stats.mode(vals)
+    new_ranks[count,:] = m
+ranks = new_ranks
+
 
 NRANKS = ranks.shape[0]
 
@@ -221,13 +235,12 @@ ntrain = int(0.9 * NRANKS)
 id = ranks[:,2] - 1
 idT = id[:ntrain]
 idV = id[ntrain:]
-
+print(f'Train on {len(idT)}, eval on {len(idV)} ')
 Labels_cnnT = Labels[:ntrain]
 Labels_cnnV = Labels[ntrain:]
 
-
 # Data generator
-BATCH_SIZE = 32
+BATCH_SIZE = 24
 
 if SAMPLER:
     # deal with imbalanced class
@@ -243,7 +256,7 @@ else:
     loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=True, drop_last=True)
 
     validationset = DataGenerator_rank(X_1, X_2, X_T, Labels_cnnV, idV, augmentation=False, pad_channels=0)
-    loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=True, drop_last=True)
+    loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=False, drop_last=True)
 
 if WeightedLoss:
     weight = get_class_weights(Labels)
@@ -280,6 +293,7 @@ else:
     ranknet = L2cnn(channels_in=1)
 
 # Print summary
+print(ranknet)
 torchsummary.summary(ranknet, [(X_1.shape[-3], maxMatSize, maxMatSize)
                               ,(X_1.shape[-3], maxMatSize, maxMatSize)], device="cpu")
 
@@ -308,7 +322,7 @@ if ResumeTrain:
 
     state = torch.load(file_rankModel)
     classifier.load_state_dict(state['state_dict'], strict=True)
-    classifier.cuda();
+    classifier.cuda()
 
     optimizer = optim.AdamW(classifier.parameters(), lr=1e-5)
     optimizer.load_state_dict(state['optimizer'])
@@ -320,15 +334,10 @@ if ResumeTrain:
         stateMSE = torch.load(file_rankModelMSE)
         classifierMSE.load_state_dict(stateMSE['state_dict'], strict=True)
 
-        classifierMSE.cuda();
+        classifierMSE.cuda()
 
         optimizerMSE = optim.Adam(classifierMSE.parameters(), lr=1e-5)
         optimizerMSE.load_state_dict(stateMSE['optimizer'])
-
-        # mse_module = MSEmodule()
-        # classifierMSE = Classifier(mse_module)
-        # optimizerMSE = optim.Adam(classifierMSE.parameters(), lr=1e-5)
-
 
 else:
 
@@ -336,6 +345,10 @@ else:
     if trainScoreandMSE:
         mse_module = MSEmodule()
         classifierMSE = Classifier(mse_module)
+
+    if trainScoreandSSIM:
+        ssim_module = SSIM()
+        classifierSSIM = Classifier(ssim_module)
 
     if BO:
         best_parameters, values, experiment, model = optimize(
@@ -358,20 +371,41 @@ else:
 
         #optimizer = optim.SGD(classifier.parameters(), lr=0.003152130338485237, momentum=0.27102874871343374)
         learning_rate = 1e-5
-        optimizer = optim.Adam(classifier.parameters(), lr=learning_rate)
+
+        optimizer = optim.Adam([
+            {'params': classifier.f.parameters()},
+            {'params': classifier.g.parameters()},
+            {'params': classifier.rank.parameters(), 'lr': learning_rate}
+        ], lr=1e-3)
 
         logging.info(f'Adam, lr={learning_rate}')
         if trainScoreandMSE:
-            #optimizerMSE = optim.SGD(classifierMSE.parameters(), lr=0.00097, momentum=0.556)
-            optimizerMSE = optim.AdamW(classifierMSE.parameters(), lr=1e-3)
+            optimizerMSE = optim.Adam([
+                {'params': classifierMSE.f.parameters()},
+                {'params': classifierMSE.g.parameters()},
+                {'params': classifierMSE.rank.parameters(), 'lr': 1e-3}
+            ], lr=1e-3)
+
+        if trainScoreandSSIM:
+            optimizerSSIM = optim.Adam([
+                {'params': classifierSSIM.f.parameters()},
+                {'params': classifierSSIM.g.parameters()},
+                {'params': classifierSSIM.rank.parameters(), 'lr': 1e-3}
+            ], lr=1e-3)
+
 
     #classifier.rank.register_backward_hook(printgradnorm)
 
     loss_func = nn.CrossEntropyLoss(weight=weight)
+
     #loss_func = nn.MultiMarginLoss()
     classifier.cuda();
+
     if trainScoreandMSE:
-        classifierMSE.cuda();
+        classifierMSE.cuda()
+
+    if trainScoreandSSIM:
+        classifierSSIM.cuda()
 
 # Training
 from random import randrange
@@ -386,22 +420,29 @@ logging.basicConfig(filename=os.path.join(log_dir,f'runs/rank/ranking_{Ntrial}.l
 logging.info('With L2cnn classifier')
 score_mse_file = os.path.join(f'score_mse_file_{Ntrial}.h5')
 
-Nepoch = 1
+
+Nepoch = 200
+
 
 lossT = np.zeros(Nepoch)
 lossV = np.zeros(Nepoch)
-# accT = np.zeros(Nepoch)
 
 # keep track of acc of all batches at last epoch
 acc_endT = []
 acc_end_mseT = []
+acc_end_ssimT = []
+
 diff_scoreT = []
 diff_mseT = []
+diff_ssimT = []
 
 acc_endV = []
 acc_end_mseV = []
+acc_end_ssimV = []
+
 diff_scoreV = []
 diff_mseV = []
+diff_ssimV = []
 
 for epoch in range(Nepoch):
 
@@ -418,6 +459,8 @@ for epoch in range(Nepoch):
     scorelistV = []
     mselistT = []
     mselistV = []
+    ssimlistT = []
+    ssimlistV = []
 
     if trainScoreandMSE:
         train_avgMSE = RunningAverage()
@@ -427,11 +470,16 @@ for epoch in range(Nepoch):
 
         classifierMSE.train()
 
+    if trainScoreandSSIM:
+        train_avgSSIM = RunningAverage()
+        eval_avgSSIM = RunningAverage()
+        train_accSSIM = RunningAcc()
+        eval_accSSIM = RunningAcc()
+
+        classifierSSIM.train()
 
     # training
     classifier.train()
-    if epoch < 5:
-        classifier.rank.eval()
 
     for i, data in enumerate(loader_T, 0):
 
@@ -442,18 +490,22 @@ for epoch in range(Nepoch):
 
         # classifier and scores for each image
         delta, score1, score2 = classifier(im1, im2, imt)
-        print(f'delta shape {delta.shape}')
-        print(f'label shape {labels.shape}')
+
+        # print(f'delta shape {delta.shape}')
+        # print(f'label shape {labels.shape}')
         mean_score = torch.mean(score1) + torch.mean(score2)
         # print(f'Score1, score2, mean_score = {score1}, {score2}, {mean_score}')
+
         #loss_scale = (0.5*mean_score - 1.0)**2
         #print(f'Loss Score = {loss_scale}')
 
+        # Cross entropy
         loss = loss_func(delta, labels)
 
+        # Track loss
         train_avg.update(loss.item(), n=BATCH_SIZE)  # here is total loss of all batches
 
-        # acc
+        # Track accuracy
         acc = acc_calc(delta, labels, BatchSize=BATCH_SIZE)
         #print(f'Training: acc of minibatch {i} is {acc}')
         train_acc.update(acc, n=1)
@@ -474,7 +526,6 @@ for epoch in range(Nepoch):
 
         optimizer.step()
 
-
         # train on MSE
         if trainScoreandMSE:
             deltaMSE, mse1, mse2  = classifierMSE(im1, im2, imt)
@@ -494,27 +545,64 @@ for epoch in range(Nepoch):
 
             optimizerMSE.step()
 
+        # train on SSIM
+        if trainScoreandSSIM:
+            deltaSSIM, ssim1, ssim2  = classifierSSIM(im1, im2, imt)
+            lossSSIM = loss_func(deltaSSIM, labels)
+            train_avgSSIM.update(lossSSIM.item(), n=BATCH_SIZE)  # here is total loss of all batches
+
+            # acc
+            accSSIM = acc_calc(deltaSSIM, labels, BatchSize=BATCH_SIZE)
+            train_accSSIM.update(accSSIM, n=1)
+
+            # zero the parameter gradients, backward and update
+            optimizerSSIM.zero_grad()
+            lossSSIM.backward()
+            if CLIP:
+                clipping_value = 1e-2  # arbitrary value of your choosing
+                torch.nn.utils.clip_grad_norm_(classifierSSIM.parameters(), clipping_value)
+
+            optimizerSSIM.step()
+
         # get the score for a plot
         with torch.no_grad():
             scorelistT.append(score1.detach().cpu().numpy())
             scorelistT.append(score2.detach().cpu().numpy())
 
-            mselistT.append(mse1.cpu().numpy())
-            mselistT.append(mse2.cpu().numpy())
+            if trainScoreandMSE:
+                mselistT.append(mse1.cpu().numpy())
+                mselistT.append(mse2.cpu().numpy())
+
+            if trainScoreandSSIM:
+                ssimlistT.append(ssim1.cpu().numpy())
+                ssimlistT.append(ssim2.cpu().numpy())
 
     scorelistT = np.concatenate(scorelistT).ravel()
-    mselistT = np.concatenate(mselistT).ravel()
-    score_mse_figureT = plt_scoreVsMse(scorelistT, mselistT)
-    corrT, pT = pearsonr(scorelistT, mselistT)
-    writer_train.add_figure('Score_vs_mse', score_mse_figureT, epoch)
-    writer_train.add_scalar('PearsonCorr', corrT, epoch)
-    writer_train.add_scalar('p-value', pT, epoch)
+
+    if trainScoreandMSE:
+        mselistT = np.concatenate(mselistT).ravel()
+        score_mse_figureT = plt_scoreVsMse(scorelistT, mselistT)
+        corrT, pT = pearsonr(scorelistT, mselistT)
+        writer_train.add_figure('Score_vs_mse', score_mse_figureT, epoch)
+        writer_train.add_scalar('PearsonCorr', corrT, epoch)
+        writer_train.add_scalar('p-value', pT, epoch)
+
+    if trainScoreandSSIM:
+        ssimlistT = np.concatenate(ssimlistT).ravel()
+        score_ssim_figureT = plt_scoreVsMse(scorelistT, 1.0 - ssimlistT, yname='1.0 - SSIM')
+        corrT, pT = pearsonr(scorelistT, ssimlistT)
+        writer_train.add_figure('Score_vs_ssim', score_ssim_figureT, epoch)
+        writer_train.add_scalar('PearsonCorr_SSIM', corrT, epoch)
+        writer_train.add_scalar('p-value_SSIM', pT, epoch)
 
     # validation
     classifier.eval()
+    if trainScoreandMSE:
+        classifierMSE.eval()
+    if trainScoreandSSIM:
+        classifierSSIM.eval()
+
     with torch.no_grad():
-        correct = 0
-        total = 0
         for i, data in enumerate(loader_V, 0):
 
             # get the inputs
@@ -535,10 +623,6 @@ for epoch in range(Nepoch):
             # print(f'Val: acc of minibatch {i} is {acc}')
             eval_acc.update(acc, n=1)
 
-            # # accuracy
-            # _, predictedV = torch.max(delta.data, 1)
-            # total += labels.size(0)
-            # correct += (predictedV == labels).sum().item()
             # mse-based classifier
             if trainScoreandMSE:
                 deltaMSE, mse1, mse2 = classifierMSE(im1, im2, imt)
@@ -548,26 +632,53 @@ for epoch in range(Nepoch):
                 accMSE = acc_calc(deltaMSE, labels, BatchSize=BATCH_SIZE)
                 eval_accMSE.update(accMSE, n=1)
 
+                mselistV.append(mse1.cpu().numpy())
+                mselistV.append(mse2.cpu().numpy())
+
+            if trainScoreandSSIM:
+                deltaSSIM, ssim1, ssim2 = classifierSSIM(im1, im2, imt)
+                lossSSIM = loss_func(deltaSSIM, labels)
+                eval_avgSSIM.update(lossSSIM.item(), n=BATCH_SIZE)
+
+                accSSIM = acc_calc(deltaSSIM, labels, BatchSize=BATCH_SIZE)
+                eval_accSSIM.update(accSSIM, n=1)
+
+                ssimlistV.append(ssim1.cpu().numpy())
+                ssimlistV.append(ssim2.cpu().numpy())
 
             # get scores and mse
             scorelistV.append(score1.cpu().numpy())
             scorelistV.append(score2.cpu().numpy())
 
-            mselistV.append(mse1.cpu().numpy())
-            mselistV.append(mse2.cpu().numpy())
-
-
-
     scorelistV = np.concatenate(scorelistV).ravel()
-    mselistV = np.concatenate(mselistV).ravel()
-    score_mse_figureV = plt_scoreVsMse(scorelistV, mselistV)
-    writer_val.add_figure('Score_vs_mse', score_mse_figureV, epoch)
 
-    # linear correlation
-    corrV, pV = pearsonr(scorelistV, mselistV)
-    writer_val.add_scalar('PearsonCorr',corrV, epoch)
-    writer_val.add_scalar('p-value', corrV, epoch)
-        # accV[epoch] = 100 * correct / total
+    if trainScoreandMSE:
+        mselistV = np.concatenate(mselistV).ravel()
+        score_mse_figureV = plt_scoreVsMse(scorelistV, mselistV)
+        writer_val.add_figure('Score_vs_mse', score_mse_figureV, epoch)
+
+        # linear correlation
+        corrV, pV = pearsonr(scorelistV, mselistV)
+        writer_val.add_scalar('PearsonCorr',corrV, epoch)
+        writer_val.add_scalar('p-value', corrV, epoch)
+
+    if trainScoreandSSIM:
+        ssimlistV = np.concatenate(ssimlistV).ravel()
+        score_ssim_figureV = plt_scoreVsMse(scorelistV, 1.0  - ssimlistV, yname='1.0 - SSIM')
+        writer_val.add_figure('Score_vs_ssim', score_ssim_figureV, epoch)
+
+        # linear correlation
+        corrV, pV = pearsonr(scorelistV, ssimlistV)
+        writer_val.add_scalar('PearsonCorr_SSIM',corrV, epoch)
+        writer_val.add_scalar('p-value_SSIM', corrV, epoch)
+
+    if trainScoreandSSIM and trainScoreandMSE:
+        mse_ssim_figureV = plt_scoreVsMse(mselistV, 1.0 - ssimlistV, xname='MSE', yname='1.0 - SSIM')
+        writer_val.add_figure('MSE_vs_ssim', mse_ssim_figureV, epoch)
+
+        # linear correlation
+        corrV, pV = pearsonr(mselistV, ssimlistV)
+        writer_val.add_scalar('PearsonCorr_SSIM_MSE',corrV, epoch)
 
     #print('Epoch = %d : Loss Eval = %f , Loss Train = %f' % (epoch, eval_avg.avg(), train_avg.avg()))
     print(f'Epoch = {epoch:03d}, Loss = {eval_avg.avg()}, Loss train = {train_avg.avg()}, Acc = {eval_acc.avg()}, Acc train = {train_acc.avg()}')
@@ -590,6 +701,13 @@ for epoch in range(Nepoch):
         writer_val.add_scalar('AccMSE', eval_accMSE.avg(), epoch)
         writer_train.add_scalar('AccMSE', train_accMSE.avg(), epoch)
 
+    if trainScoreandSSIM:
+        print(f'SSIM: Loss = {eval_avgSSIM.avg()}, Loss train = {train_avgSSIM.avg()}, Acc = {eval_accSSIM.avg()}, Acc train = {train_accSSIM.avg()}')
+
+        writer_val.add_scalar('LossSSIM', eval_avgSSIM.avg(), epoch)
+        writer_train.add_scalar('LossSSIM', train_avgSSIM.avg(), epoch)
+        writer_val.add_scalar('AccSSIM', eval_accSSIM.avg(), epoch)
+        writer_train.add_scalar('AccSSIM', train_accSSIM.avg(), epoch)
 
     # save models
     state = {
@@ -607,48 +725,23 @@ for epoch in range(Nepoch):
         }
         torch.save(stateMSE, os.path.join(log_dir, f'RankClassifier{Ntrial}_{Pretrain}_MSE.pt'))
 
+    if trainScoreandSSIM:
+        stateSSIM = {
+            'state_dict': classifierSSIM.state_dict(),
+            'optimizer': optimizerSSIM.state_dict(),
+            'epoch': epoch
+        }
+        torch.save(stateSSIM, os.path.join(log_dir, f'RankClassifier{Ntrial}_{Pretrain}_SSIM.pt'))
+
     with h5py.File(score_mse_file, 'a') as hf:
         hf.create_dataset(f'scoreT_epoch{epoch}', data=scorelistT)
         hf.create_dataset(f'scoreV_epoch{epoch}', data=scorelistV)
         if trainScoreandMSE:
             hf.create_dataset(f'mseV_epoch{epoch}', data=mselistV)
             hf.create_dataset(f'mseT_epoch{epoch}', data=mselistT)
+        if trainScoreandSSIM:
+            hf.create_dataset(f'ssimV_epoch{epoch}', data=ssimlistV)
+            hf.create_dataset(f'ssimT_epoch{epoch}', data=ssimlistT)
 
-# if trainScoreandMSE:
-#     acc_endT = np.array(acc_endT)
-#     acc_end_mseT = np.array(acc_end_mseT)
-#     diff_mseT = np.array(diff_mseT)
-#     diff_scoreT = np.array(diff_scoreT)
-#
-#     acc_endV = np.array(acc_endV)
-#     acc_end_mseV = np.array(acc_end_mseV)
-#     diff_mseV = np.array(diff_mseV)
-#     diff_scoreV = np.array(diff_scoreV)
-#
-#     plt.plot(acc_endV, acc_end_mseV, '.')
-#     plt.title(f'Validation accuracies of minibatches at epoch = {Nepoch}')
-#     plt.show()
-#
-#     plt.plot(acc_endT, acc_end_mseT, '.')
-#     plt.title(f'Training accuracies of minibatches at epoch = {Nepoch}')
-#     plt.show()
-#
-#     plt.plot(diff_mseT, acc_end_mseT, '.')
-#     plt.title(f'Training accuracy vs MSE at epoch = {Nepoch}')
-#     plt.show()
-#
-#     plt.plot(diff_mseV, acc_end_mseV, '.')
-#     plt.title(f'Validation accuracy vs MSE at epoch = {Nepoch}')
-#     plt.show()
-#
-#     plt.plot(diff_scoreT, acc_endT, '.')
-#     plt.title(f'Training accuracy vs score difference at epoch = {Nepoch}')
-#     plt.show()
-#
-#     plt.plot(diff_scoreV, acc_endV, '.')
-#     plt.title(f'Validation accuracy vs score difference at epoch = {Nepoch}')
-#     plt.show()
-#
-#
 
 
