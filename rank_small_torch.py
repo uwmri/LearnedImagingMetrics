@@ -21,12 +21,12 @@ from utils.model_helper import *
 from utils.utils_DL import *
 
 train_on_mag = False    # False: L2CNN trained on abs(im-truth), True: train on abs(im)-abs(truth)
-shuffle_observers = True
+shuffle_observers = False
 MOBILE = False
 EFF = False
 BO = False
 RESNET = False
-ResumeTrain = False
+ResumeTrain = True
 CLIP = False
 SAMPLER = False
 WeightedLoss = False
@@ -52,12 +52,12 @@ if Pretrain == 'pretraining':
 
 else:
     names = []
-    filepath_csv = Path('E:\LearnedImageMetric\ImagePairs_Pack_04032020')
+    filepath_csv = Path('I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020')
     os.chdir(filepath_csv)
 
     files_csv = os.listdir(filepath_csv)
     for file in files_csv:
-        if fnmatch.fnmatch(file, '*consensus.csv'):
+        if fnmatch.fnmatch(file, 'ranks_consensus_01252021.csv'):
             names.append(os.path.join(filepath_csv, file))
 
     # Load the ranks
@@ -113,7 +113,7 @@ Labels = np.zeros(NRANKS, dtype=np.int32)
 
 if Pretrain == 'pretraining':
     filepath_images = Path("I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_05062020")
-    path2 = Path("I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_05062020")
+    path2 = Path("I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_05072020")
     file = 'TRAINING_IMAGES_v7.h5'
     file1 = os.path.join(filepath_images, file)
     file2 = os.path.join(path2, file)
@@ -154,7 +154,7 @@ if Pretrain == 'pretraining':
 
 
 else:
-    filepath_images = Path('E:\LearnedImageMetric\ImagePairs_Pack_04032020')
+    filepath_images = Path('I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020')
     file ='TRAINING_IMAGES_04032020.h5'
     file_images = os.path.join(filepath_images, file)
     hf = h5.File(name=file_images, mode='r')
@@ -314,8 +314,8 @@ def train_evaluate(parameterization):
 
 if ResumeTrain:
     # load RankNet
-    filepath_rankModel = Path('E:\LearnedImageMetric')
-    file_rankModel = os.path.join(filepath_rankModel, "RankClassifier8085_pretraining.pt")
+    filepath_rankModel = Path('I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_05062020')
+    file_rankModel = os.path.join(filepath_rankModel, "RankClassifier8916_pretraining.pt")
     classifier = Classifier(ranknet)
     #classifier.rank.register_backward_hook(printgradnorm)
     loss_func = nn.CrossEntropyLoss(weight=weight)
@@ -328,7 +328,7 @@ if ResumeTrain:
     optimizer.load_state_dict(state['optimizer'])
 
     if trainScoreandMSE:
-        file_rankModelMSE = os.path.join(filepath_rankModel, "RankClassifier8085_pretraining_MSE.pt")
+        file_rankModelMSE = os.path.join(filepath_rankModel, "RankClassifier8916_pretraining_MSE.pt")
         mse_module = MSEmodule()
         classifierMSE = Classifier(mse_module)
         stateMSE = torch.load(file_rankModelMSE)
@@ -397,7 +397,9 @@ else:
     #classifier.rank.register_backward_hook(printgradnorm)
 
     loss_func = nn.CrossEntropyLoss(weight=weight)
-    classifier.cuda()
+
+    #loss_func = nn.MultiMarginLoss()
+    classifier.cuda();
 
     if trainScoreandMSE:
         classifierMSE.cuda()
@@ -415,10 +417,12 @@ writer_train = SummaryWriter(os.path.join(log_dir,f'runs/rank/train_{Ntrial}'))
 writer_val = SummaryWriter(os.path.join(log_dir,f'runs/rank/val_{Ntrial}'))
 
 logging.basicConfig(filename=os.path.join(log_dir,f'runs/rank/ranking_{Ntrial}.log'), filemode='w', level=logging.INFO)
-logging.info('With L2cnn, SSIM and MSE fused, symetric classifier')
+logging.info('With L2cnn classifier')
 score_mse_file = os.path.join(f'score_mse_file_{Ntrial}.h5')
 
+
 Nepoch = 200
+
 
 lossT = np.zeros(Nepoch)
 lossV = np.zeros(Nepoch)
@@ -487,8 +491,11 @@ for epoch in range(Nepoch):
         # classifier and scores for each image
         delta, score1, score2 = classifier(im1, im2, imt)
 
-        #mean_score = torch.mean(score1) + torch.mean(score2)
-        #print(f'Score = {mean_score}')
+        # print(f'delta shape {delta.shape}')
+        # print(f'label shape {labels.shape}')
+        mean_score = torch.mean(score1) + torch.mean(score2)
+        # print(f'Score1, score2, mean_score = {score1}, {score2}, {mean_score}')
+
         #loss_scale = (0.5*mean_score - 1.0)**2
         #print(f'Loss Score = {loss_scale}')
 

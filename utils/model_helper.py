@@ -268,7 +268,8 @@ class L2cnn(nn.Module):
         # Convolutional pathway with MSE at multiple scales
         for l in self.layers:
             diff_mag = l(diff_mag)
-        cnn_score = self.layer_mse(diff_mag)
+        # print(f'diff_mag shape {diff_mag.shape}') # [64, 32, 1, 1]
+        cnn_score = self.layer_mse(diff_mag)    #(64, 1)
 
         # Combine scores
         #score = torch.abs(self.weight_ssim)*ssim + torch.abs(self.weight_mse)*mse + torch.abs(self.weight_cnn)*cnn_score
@@ -697,7 +698,7 @@ class Classifier(nn.Module):
 
         # Calculate scores
         scores_combined = self.rank(images_combined, truth_combined)
-        scores_combined = scores_combined.view(scores_combined.shape[0],-1)
+        scores_combined = scores_combined.view(scores_combined.shape[0],-1) #(batchsize*2,1)
         score1 = scores_combined[:image1.shape[0], ...]
         score2 = scores_combined[image1.shape[0]:, ...]
 

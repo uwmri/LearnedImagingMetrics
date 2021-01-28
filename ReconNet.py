@@ -83,12 +83,14 @@ rank_channel =1
 
 rank_trained_on_mag = False
 BO = False
-logging.basicConfig(filename=os.path.join(log_dir, f'Recon_{Ntrial}_{DGX}.log'), filemode='w', level=logging.INFO)
+
+logging.basicConfig(filename=os.path.join(log_dir,f'Recon_{Ntrial}_dgx{DGX}.log'), filemode='w', level=logging.INFO)
+
 
 # file_rankModel = os.path.join(filepath_rankModel, "RankClassifier16.pt")
 
 
-file_rankModel = os.path.join(filepath_rankModel, "RankClassifier9706_pretrained.pt")
+file_rankModel = os.path.join(filepath_rankModel, "RankClassifier9575_pretrained.pt")
 
 
 os.chdir(filepath_rankModel)
@@ -115,7 +117,9 @@ yres = 396
 act_xres = 512
 act_yres = 256
 
-acc = 8
+
+acc = 32
+
 logging.info(f'Acceleration = {acc}')
 # fixed sampling mask
 WHICH_MASK = 'poisson'
@@ -211,8 +215,10 @@ def train_evaluate_recon(parameterization):
 writer_train = SummaryWriter(f'runs/recon/train_{Ntrial}')
 writer_val = SummaryWriter(f'runs/recon/val_{Ntrial}')
 
-# WHICH_LOSS = 'learned'
-WHICH_LOSS = 'mse'
+
+WHICH_LOSS = 'learned'
+#WHICH_LOSS = 'mse'
+
 OneNet = False
 if WHICH_LOSS == 'perceptual':
     loss_perceptual = PerceptualLoss_VGG16()
@@ -229,14 +235,16 @@ logging.info(f'MSE for first {epochMSE} epochs then switch to learned')
 lossT = np.zeros(Nepoch)
 lossV = np.zeros(Nepoch)
 
-Ntrain = 252
-Nval = 28
+Ntrain = 10
+Nval = 1
 
 Ntrain = 10
 Nval = 1
 
 # save some images during training
-out_name = os.path.join(log_dir, f'sneakpeek_training{Ntrial}_KMJ.h5')
+
+out_name = os.path.join(log_dir,f'sneakpeek_training{Ntrial}.h5')
+
 try:
     os.remove(out_name)
 except OSError:
@@ -257,6 +265,7 @@ if BO:
     logging.info(f'BO, {best_parameters}')
 
 else:
+
     LR = 1e-4
     # LR = 1e-5
 
@@ -622,12 +631,23 @@ for epoch in range(Nepoch):
                     imEstfig = plt_recon(torch.abs(imEstplt))
                     writer_val.add_figure('Recon_val', imEstfig, epoch)
 
+                    # SENSE
+                    if epoch == 0:
+                        kspaceU_sl_c = sp.from_pytorch(kspaceU_sl, iscomplex=True)
+                        imSense = sp.mri.app.SenseRecon(kspaceU_sl_c, smaps_sl, lamda=.01, max_iter=20).run()
+                        # L1-wavelet
+                        imL1 = sp.mri.app.L1WaveletRecon(kspaceU_sl_c, smaps_sl, lamda=.001, max_iter=20).run()
+
                     with h5py.File(out_name, 'a') as hf:
                         if epoch == 0:
                             hf.create_dataset(f"{epoch}_truth", data=np.abs(truthplt.numpy()))
                             hf.create_dataset(f"{epoch}_FT", data=np.abs(noisyplt.numpy()))
+                            hf.create_dataset(f"{epoch}_Sense", data=np.abs(imSense))
+                            hf.create_dataset(f"{epoch}_L1", data=np.abs(imL1))
                             hf.create_dataset(f"p{epoch}_truth", data=np.angle(truthplt.numpy()))
                             hf.create_dataset(f"p{epoch}_FT", data=np.angle(noisyplt.numpy()))
+                            hf.create_dataset(f"p{epoch}_Sense", data=np.angle(imSense))
+                            hf.create_dataset(f"p{epoch}_L1", data=np.angle(imL1))
 
                         hf.create_dataset(f"p{epoch}_recon", data=np.angle(imEstplt.numpy()))
                         hf.create_dataset(f"{epoch}_recon", data=np.abs(imEstplt.numpy()))

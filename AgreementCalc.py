@@ -90,7 +90,7 @@ os.chdir(filepath_csv)
 
 files_csv = glob.glob("*.csv")
 
-rankers = ['LBE', 'ADK', 'eh', 'JJ']
+rankers = ['LBE', 'ADK', 'eh', 'JJ', 'AP','JS']
 
 for i in range(len(rankers)):
     files = glob.glob('Results_'+rankers[i]+'*.csv')
@@ -111,96 +111,96 @@ for i in range(len(rankers)):
     ranks['Results'] = ranks['Better']*10 + ranks['Worse']
     ranks = ranks.drop(['Better', 'Worse'], axis=1)
 
-    # Probability of a specific result for each reviwer
-    # This also removes same results when the image pair was shown multiple times.
-    ranks = ranks.groupby('ID')
-    ranks = ranks.apply(lambda x: x.groupby('Results').count() / x.shape[0]).rename(columns={'ID': 'Prob'}).reset_index()
+    #Probability of a specific result for each reviwer
+    #This also removes same results when the image pair was shown multiple times.
+    #ranks = ranks.groupby('ID')
+    #ranks = ranks.apply(lambda x: x.groupby('Results').count() / x.shape[0]).rename(columns={'ID': 'Prob'}).reset_index()
 
     ranks['Reviewer'] = rankers[i]
 
     exec('ranks_%s = ranks' % (rankers[i]))
 
-SELF = True
-
-if SELF:
-    reviewer1 = ranks_eh
-    reviewer2 = reviewer1
-
-else:
-
-    # Need to manually set to which reviewers
-    ranks_all = pd.concat([ranks_LBE, ranks_ADK], ignore_index=True)
-    ranks_all = ranks_all.sort_values(by=['ID'])
-
-    # Remove those reviewed only once by either reviewers
-    ranks_dup = ranks_all[ranks_all.duplicated(subset=['ID'], keep=False)]
-
-    # split and get intersection of reviewed image IDs
-    reviewer1 = ranks_dup[ranks_dup['Reviewer'] == 'LBE'].sort_values(['ID', 'Results'])
-    reviewer2 = ranks_dup[ranks_dup['Reviewer'] == 'ADK'].sort_values(['ID', 'Results'])
-
-    id_1 = reviewer1.ID.isin(reviewer2.ID)
-    reviewer1 = reviewer1[id_1]
-    id_2 = reviewer2.ID.isin(reviewer1.ID)
-    reviewer2 = reviewer2[id_2]
-
-
-num_intersection = len(reviewer1.drop_duplicates(subset=['ID']))
-print(f'{num_intersection} pairs were ranked by both reviewers')
-
-# Pad zero probability to align
-reviewer1 = add_zero_prob(reviewer1)
-reviewer2 = add_zero_prob(reviewer2)
-
-
-# Agreement calc
-reviewer1_prob = reviewer1['Prob'].to_numpy()
-reviewer2_prob = reviewer2['Prob'].to_numpy()
-
-# Pad beginning
-# This may cause extra 0 (from extra nan) at the end, but it doesn't matter
-reviewer1_prob = pad_beginning(reviewer1, reviewer1_prob)
-reviewer2_prob = pad_beginning(reviewer2, reviewer2_prob)
-num_agreed = np.dot(reviewer1_prob[:num_intersection*3],reviewer2_prob[:num_intersection*3])
-
-# Agreed%
-percent_agreed = num_agreed/num_intersection
-
-print(f'{percent_agreed*100}% agreement between reviewers')
-
-# Bland-Altman
-# values = np.tile([0,1, 0.5], num_intersection*3)
-# values1 = []
-# values2 = []
-# for i in range(num_intersection):
-#     temp1 = np.dot(values[i*3:i*3+3], reviewer1_prob[i*3:i*3+3])
-#     temp2 = np.dot(values[i*3:i*3+3], reviewer2_prob[i*3:i*3+3])
+# SELF = True
 #
-#     values1.append(temp1)
-#     values2.append(temp2)
+# if SELF:
+#     reviewer1 = ranks_JS
+#     reviewer2 = reviewer1
 #
-# values1 = np.array(values1)
-# values2 = np.array(values2)
+# else:
 #
-# diff = values2 - values1
-# mean = (values1 + values2)/2
+#     # Need to manually set to which reviewers
+#     ranks_all = pd.concat([ranks_JS, ranks_AP], ignore_index=True)
+#     ranks_all = ranks_all.sort_values(by=['ID'])
 #
-# plt.scatter(mean, diff)
-# plt.title('Bland-Altman Plot of ADK and ADK')
-# plt.xlabel('Mean of two reviewers')
-# plt.ylabel('Difference of two reviewers')
-# plt.grid()
-# plt.show()
-
+#     # Remove those reviewed only once by either reviewers
+#     ranks_dup = ranks_all[ranks_all.duplicated(subset=['ID'], keep=False)]
 #
-# Clean up the label
-# ranks_all = pd.concat([ranks_LBE, ranks_ADK, ranks_eh, ranks_JJ], ignore_index=True)
+#     # split and get intersection of reviewed image IDs
+#     reviewer1 = ranks_dup[ranks_dup['Reviewer'] == 'JS'].sort_values(['ID', 'Results'])
+#     reviewer2 = ranks_dup[ranks_dup['Reviewer'] == 'AP'].sort_values(['ID', 'Results'])
+#
+#     id_1 = reviewer1.ID.isin(reviewer2.ID)
+#     reviewer1 = reviewer1[id_1]
+#     id_2 = reviewer2.ID.isin(reviewer1.ID)
+#     reviewer2 = reviewer2[id_2]
+#
+#
+# num_intersection = len(reviewer1.drop_duplicates(subset=['ID']))
+# print(f'{num_intersection} pairs were ranked by both reviewers')
+#
+# # Pad zero probability to align
+# reviewer1 = add_zero_prob(reviewer1)
+# reviewer2 = add_zero_prob(reviewer2)
+#
+#
+# # Agreement calc
+# reviewer1_prob = reviewer1['Prob'].to_numpy()
+# reviewer2_prob = reviewer2['Prob'].to_numpy()
+#
+# # Pad beginning
+# # This may cause extra 0 (from extra nan) at the end, but it doesn't matter
+# reviewer1_prob = pad_beginning(reviewer1, reviewer1_prob)
+# reviewer2_prob = pad_beginning(reviewer2, reviewer2_prob)
+# num_agreed = np.dot(reviewer1_prob[:num_intersection*3],reviewer2_prob[:num_intersection*3])
+#
+# # Agreed%
+# percent_agreed = num_agreed/num_intersection
+#
+# print(f'{percent_agreed*100}% agreement between reviewers')
+#
+# # # Bland-Altman
+# # # values = np.tile([0,1, 0.5], num_intersection*3)
+# # # values1 = []
+# # # values2 = []
+# # # for i in range(num_intersection):
+# # #     temp1 = np.dot(values[i*3:i*3+3], reviewer1_prob[i*3:i*3+3])
+# # #     temp2 = np.dot(values[i*3:i*3+3], reviewer2_prob[i*3:i*3+3])
+# # #
+# # #     values1.append(temp1)
+# # #     values2.append(temp2)
+# # #
+# # # values1 = np.array(values1)
+# # # values2 = np.array(values2)
+# # #
+# # # diff = values2 - values1
+# # # mean = (values1 + values2)/2
+# # #
+# # # plt.scatter(mean, diff)
+# # # plt.title('Bland-Altman Plot of ADK and ADK')
+# # # plt.xlabel('Mean of two reviewers')
+# # # plt.ylabel('Difference of two reviewers')
+# # # plt.grid()
+# # # plt.show()
+# #
+# # #
+# # Clean up the label
+# ranks_all = pd.concat([ranks_LBE, ranks_ADK, ranks_eh, ranks_JJ, ranks_AP, ranks_JS], ignore_index=True)
 # ranks_all = ranks_all.sort_values(by=['ID'])
 #
 # # Only keeps duplicated IDs
 # ranks_dup = ranks_all[ranks_all.duplicated(subset=['ID'], keep=False)]
 #
-# ranks_same = ranks_dup[ranks_dup.duplicated(subset=['Better', 'Worse','ID'], keep=False)]
+# ranks_same = ranks_dup[ranks_dup.duplicated(subset=['Results','ID'], keep=False)]
 #
 # # "clean labels", pairs with 2 or more votes + pairs that only appeared once
 # ranks_once = ranks_all.merge(ranks_dup, how='outer', indicator=True).loc[lambda x:x['_merge']=='left_only']
@@ -209,4 +209,33 @@ print(f'{percent_agreed*100}% agreement between reviewers')
 # ranks_clean = pd.concat([ranks_once, ranks_same], ignore_index=True)
 # ranks_clean = ranks_clean.sort_values(by=['ID'])
 #
-# ranks_clean.to_csv('ranks_consensus.csv', index=False, header=False)
+# ranks_clean = ranks_clean.drop(['Prob', 'Reviewer'], axis=1)
+# ranks_clean['Better'] =  ranks_clean['Results']
+# ranks_clean['Worse'] =  ranks_clean['Results']
+# for i in range(len(ranks_clean)):
+#     if ranks_clean['Results'][i] == 1:
+#         ranks_clean['Better'][i] = 0
+#         ranks_clean['Worse'][i] = 1
+#     elif ranks_clean['Results'][i] == 10:
+#         ranks_clean['Better'][i] = 1
+#         ranks_clean['Worse'][i] = 0
+#     elif ranks_clean['Results'][i] == 22:
+#         ranks_clean['Better'][i] = 2
+#         ranks_clean['Worse'][i] = 2
+# ranks_clean = ranks_clean.drop(['Results'], axis=1)
+# ranks_clean = ranks_clean[['Better', 'Worse', 'ID']]
+#
+# ranks_clean.to_csv('ranks_consensus_01252021.csv', index=False, header=False)
+#
+# Naye = 0
+# Nnay = 0
+# for i in range(len(ranks_clean)-1):
+#     if ranks_clean['ID'][i + 1] != ranks_clean['ID'][i]:
+#         Naye += 1
+#         ranks0 = ranks_clean['Results'][i + 1]
+#     if ranks_clean['ID'][i+1] == ranks_clean['ID'][i]:
+#
+#         if ranks_clean['Results'][i+1] != ranks0:
+#             Nnay += 1
+#         elif ranks_clean['Results'][i+1] == ranks0:
+#             Naye += 1

@@ -773,6 +773,7 @@ class MoDL(nn.Module):
 
     def call_denoiser(self, image):
         image = self.denoiser(image)
+
         image = self.denoiser(image)
         return(image)
 
