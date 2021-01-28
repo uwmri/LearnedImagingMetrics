@@ -775,7 +775,7 @@ class MoDL(nn.Module):
 
     def call_denoiser(self, image):
         image = self.denoiser(image)
-        return(image)
+        return image
 
     def set_denoiser_scale(self, scale):
         self.lam2[:] = scale
