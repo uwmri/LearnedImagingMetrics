@@ -2,11 +2,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-def conv2d(in_channels, out_channels, kernel_size, bias=False, padding=1, groups=1):
+USE_BIAS=True
+
+def conv2d(in_channels, out_channels, kernel_size, bias=USE_BIAS, padding=1, groups=1):
     return nn.Conv2d(in_channels, out_channels, kernel_size, padding=padding, bias=bias, groups=groups)
 
 class depthwise_separable_conv(nn.Module):
-    def __init__(self, nin, nout, bias=False):
+    def __init__(self, nin, nout, bias=USE_BIAS):
         super(depthwise_separable_conv, self).__init__()
         self.depthwise = nn.Conv2d(nin, nin, kernel_size=3, padding=1, groups=nin, bias=bias)
         self.pointwise = nn.Conv2d(nin, nout, kernel_size=1, bias=bias)
@@ -47,11 +49,11 @@ def create_conv(in_channels, out_channels, kernel_size, order, num_groups, paddi
         elif char == 'c':
             # add learnable bias only in the absence of gatchnorm/groupnorm
             # bias = not ('g' in order or 'b' in order)
-            bias = False
+            bias = USE_BIAS
             modules.append((f'conv{i}', conv2d(in_channels, out_channels, kernel_size, bias, padding=padding)))
             in_channels = out_channels
         elif char == 'C':
-            modules.append((f'conv{i}', depthwise_separable_conv(in_channels, out_channels, bias=False)))
+            modules.append((f'conv{i}', depthwise_separable_conv(in_channels, out_channels, bias=USE_BIAS)))
             in_channels = out_channels
         elif char == 'i':
             modules.append((f'instancenorm{i}', nn.InstanceNorm2d(out_channels)))
@@ -212,7 +214,7 @@ class Encoder(nn.Module):
     """
 
     def __init__(self, in_channels, out_channels, conv_kernel_size=3, basic_module=ResBottle, downsample=True, conv_layer_order='crb',
-                 num_groups=8, scale_factor=(2,2) ):
+                 num_groups=8, scale_factor=(2,2), conv_downsample=True):
         super(Encoder, self).__init__()
 
         self.basic_module = basic_module(in_channels, out_channels,
@@ -221,17 +223,22 @@ class Encoder(nn.Module):
                                          order=conv_layer_order,
                                          num_groups=num_groups)
         if downsample:
-            # self.downsample = nn.Conv2d(in_channels,
-            #                                    in_channels,
-            #                                    kernel_size=3,
-            #                                    stride=scale_factor,
-            #                                    padding=0, bias=False, groups=in_channels)
-            self.downsample = nn.AvgPool2d(scale_factor)
+            if conv_downsample:
+                self.downsample = nn.Conv2d(in_channels,
+                                                   in_channels,
+                                                   kernel_size=2,
+                                                   stride=scale_factor,
+                                                   padding=0, bias=USE_BIAS, groups=in_channels)
+                self.pool_scale = 1.0
+            else:
+                self.downsample = nn.AvgPool2d(scale_factor)
+                self.pool_scale= scale_factor[0]*scale_factor[1]
         else:
             self.downsample = nn.Identity()
+            self.pool_scale = 1.0
 
     def forward(self, x):
-        x = self.downsample(x)
+        x = self.downsample(x*self.pool_scale)
         x = self.basic_module(x)
 
         return x
@@ -256,17 +263,19 @@ class Decoder(nn.Module):
     """
 
     def __init__(self, in_channels, out_channels, add_features, kernel_size=3,
-                 scale_factor=(2, 2), basic_module=ResBottle, conv_layer_order='crg', num_groups=8):
+                 scale_factor=(2, 2), basic_module=ResBottle, conv_layer_order='crg', num_groups=8, conv_upsample=True):
         super(Decoder, self).__init__()
 
-        # self.upsample = nn.ConvTranspose2d(in_channels,
-        #                                    in_channels,
-        #                                    kernel_size=3,
-        #                                    stride=scale_factor,
-        #                                    padding=1,
-        #                                    output_padding=0,
-        #                                    bias=False, groups=in_channels)
-        self.upsample = nn.UpsamplingBilinear2d(scale_factor=scale_factor)
+        if conv_upsample:
+            self.upsample = nn.ConvTranspose2d(in_channels,
+                                               in_channels,
+                                               kernel_size=2,
+                                               stride=scale_factor,
+                                               padding=0,
+                                               output_padding=0,
+                                               bias=USE_BIAS, groups=in_channels)
+        else:
+            self.upsample = nn.UpsamplingBilinear2d(scale_factor=scale_factor)
 
         self.basic_module = basic_module(in_channels + add_features, out_channels,
                                          encoder=False,
@@ -360,7 +369,7 @@ class UNet2D(nn.Module):
 
         # in the last layer a 1×1 convolution reduces the number of output
         # channels to the number of labels
-        self.final_conv = nn.Conv2d(f_maps[0], out_channels, 1, bias=False)
+        self.final_conv = nn.Conv2d(f_maps[0], out_channels, 1, bias=USE_BIAS)
 
     def forward(self, x):
 

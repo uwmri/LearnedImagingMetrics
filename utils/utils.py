@@ -128,3 +128,4 @@ def print_mem():
     print(f'torch mempool {torch_allocated*9.313e-10} Gb')
     print(f'torch max mempool {torch_max_allocated*9.313e-10} Gb')
     print(f'torch reserved {torch_cached*9.313e-10} Gb')
+
