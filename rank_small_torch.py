@@ -11,11 +11,26 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 import torch
 
+DGX = True
+
 try:
     from ax.service.managed_loop import optimize
 except:
     print('NO ax')
 
+if DGX:
+    try:
+        import setproctitle
+        import argparse
+
+        parser = argparse.ArgumentParser()
+        parser.add_argument('--pname', type=str, default=f'chenwei_ranking')
+        args = parser.parse_args()
+
+        setproctitle.setproctitle(args.pname)
+        print(f'Setting program name to {args.pname}')
+    except:
+        print('setproctitle not installled,unavailable, or failed')
 
 from utils.model_helper import *
 from utils.utils_DL import *
@@ -52,12 +67,15 @@ if Pretrain == 'pretraining':
 
 else:
     names = []
-    filepath_csv = Path('I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020')
+    if DGX:
+        filepath_csv = Path('/raid/DGXUserDataRaid/cxt004/NYUbrain')
+    else:
+        filepath_csv = Path('I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020')
     os.chdir(filepath_csv)
 
     files_csv = os.listdir(filepath_csv)
     for file in files_csv:
-        if fnmatch.fnmatch(file, 'ranks_consensus_01252021.csv'):
+        if fnmatch.fnmatch(file, 'consensus_mode.csv'):
             names.append(os.path.join(filepath_csv, file))
 
     # Load the ranks
@@ -70,18 +88,18 @@ else:
                 ranks.append(row)
     ranks = np.array(ranks, dtype=np.int)
 
-# make sure to use consensus
-import scipy.stats
-uranks_id = np.unique(ranks[:,2])
-new_ranks = np.zeros((len(uranks_id),3), ranks.dtype)
-for count, i in enumerate(uranks_id):
-    print('Use rank {i}')
-    idx = ranks[:,2] == i
-    vals = ranks[idx]
-    print(vals)
-    m,c = scipy.stats.mode(vals)
-    new_ranks[count,:] = m
-ranks = new_ranks
+# make sure to use consensus -> consensus_mode.csv
+# import scipy.stats
+# uranks_id = np.unique(ranks[:,2])
+# new_ranks = np.zeros((len(uranks_id),3), ranks.dtype)
+# for count, i in enumerate(uranks_id):
+#     #print(f'Use rank {i}')
+#     idx = ranks[:,2] == i
+#     vals = ranks[idx]
+#     #print(vals)
+#     m,c = scipy.stats.mode(vals)
+#     new_ranks[count,:] = m
+# ranks = new_ranks
 
 
 NRANKS = ranks.shape[0]
@@ -96,6 +114,7 @@ NRANKS = ranks.shape[0]
 # Shuffle the ranks while the data size is small
 if shuffle_observers:
     np.random.shuffle(ranks)
+#np.savetxt("consensus_mode.csv", ranks, fmt='%d', delimiter=',')
 
 
 if train_on_mag:
@@ -154,7 +173,10 @@ if Pretrain == 'pretraining':
 
 
 else:
-    filepath_images = Path('I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020')
+    if DGX:
+        filepath_images = Path('/raid/DGXUserDataRaid/cxt004/NYUbrain')
+    else:
+        filepath_images = Path('I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020')
     file ='TRAINING_IMAGES_04032020.h5'
     file_images = os.path.join(filepath_images, file)
     hf = h5.File(name=file_images, mode='r')
@@ -263,25 +285,25 @@ if WeightedLoss:
 else:
     weight = torch.ones(3).cuda()
 
-# check loader, show a batch
-check = iter(loader_T)
-checkim1, checkim2, checkimt, checklb = check.next()
-checkim1 = checkim1.permute(0, 2, 3, 1)
-checkim2 = checkim2.permute(0, 2, 3, 1)
-checkimt = checkimt.permute(0, 2, 3, 1)
-checklbnp = checklb.numpy()
-
-randnum = np.random.randint(16)
-imshow(checkim1[randnum, :, :, :].cpu())
-imshow(checkim2[randnum, :, :, :].cpu())
-imshow(checkimt[randnum, :, :, :].cpu())
-print(f'Label is {checklbnp[randnum]}')
+# # check loader, show a batch
+# check = iter(loader_T)
+# checkim1, checkim2, checkimt, checklb = check.next()
+# checkim1 = checkim1.permute(0, 2, 3, 1)
+# checkim2 = checkim2.permute(0, 2, 3, 1)
+# checkimt = checkimt.permute(0, 2, 3, 1)
+# checklbnp = checklb.numpy()
+#
+# randnum = np.random.randint(16)
+# imshow(checkim1[randnum, :, :, :].cpu())
+# imshow(checkim2[randnum, :, :, :].cpu())
+# imshow(checkimt[randnum, :, :, :].cpu())
+# print(f'Label is {checklbnp[randnum]}')
 # print(f'Label is {checktrans[randnum]}')
 # print(f'Label is {checkcrop[randnum]}')
 
 # Ranknet
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-print(device)
+
 
 if MOBILE:
     ranknet = mobilenet_v2(pretrained=False, num_classes=1) # Less than ResNet18
@@ -292,10 +314,10 @@ elif RESNET:
 else:
     ranknet = L2cnn(channels_in=1)
 
-# Print summary
-print(ranknet)
-torchsummary.summary(ranknet, [(X_1.shape[-3], maxMatSize, maxMatSize)
-                              ,(X_1.shape[-3], maxMatSize, maxMatSize)], device="cpu")
+# # Print summary
+# print(ranknet)
+# torchsummary.summary(ranknet, [(X_1.shape[-3], maxMatSize, maxMatSize)
+#                               ,(X_1.shape[-3], maxMatSize, maxMatSize)], device="cpu")
 
 
 # Bayesian
@@ -314,8 +336,11 @@ def train_evaluate(parameterization):
 
 if ResumeTrain:
     # load RankNet
-    filepath_rankModel = Path('I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_05062020')
-    file_rankModel = os.path.join(filepath_rankModel, "RankClassifier8916_pretraining.pt")
+    if DGX:
+        filepath_rankModel = Path('/raid/DGXUserDataRaid/cxt004/NYUbrain')
+    else:
+        filepath_rankModel = Path('I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_05062020')
+    file_rankModel = os.path.join(filepath_rankModel, "RankClassifier4488_pretraining.pt")
     classifier = Classifier(ranknet)
     #classifier.rank.register_backward_hook(printgradnorm)
     loss_func = nn.CrossEntropyLoss(weight=weight)
@@ -324,11 +349,16 @@ if ResumeTrain:
     classifier.load_state_dict(state['state_dict'], strict=True)
     classifier.cuda()
 
-    optimizer = optim.AdamW(classifier.parameters(), lr=1e-5)
+    learning_rate = 1e-5
+    optimizer = optim.Adam([
+        {'params': classifier.f.parameters()},
+        {'params': classifier.g.parameters()},
+        {'params': classifier.rank.parameters(), 'lr': learning_rate}
+    ], lr=1e-3)
     optimizer.load_state_dict(state['optimizer'])
 
     if trainScoreandMSE:
-        file_rankModelMSE = os.path.join(filepath_rankModel, "RankClassifier8916_pretraining_MSE.pt")
+        file_rankModelMSE = os.path.join(filepath_rankModel, "RankClassifier4488_pretraining_MSE.pt")
         mse_module = MSEmodule()
         classifierMSE = Classifier(mse_module)
         stateMSE = torch.load(file_rankModelMSE)
@@ -336,8 +366,29 @@ if ResumeTrain:
 
         classifierMSE.cuda()
 
-        optimizerMSE = optim.Adam(classifierMSE.parameters(), lr=1e-5)
+        optimizerMSE = optim.Adam([
+            {'params': classifierMSE.f.parameters()},
+            {'params': classifierMSE.g.parameters()},
+            {'params': classifierMSE.rank.parameters(), 'lr': 1e-3}
+        ], lr=1e-3)
         optimizerMSE.load_state_dict(stateMSE['optimizer'])
+
+    if trainScoreandSSIM:
+        file_rankModelSSIM = os.path.join(filepath_rankModel, "RankClassifier4488_pretraining_SSIM.pt")
+        ssim_module = SSIM()
+        classifierSSIM = Classifier(ssim_module)
+        stateSSIM = torch.load(file_rankModelSSIM)
+        classifierSSIM.load_state_dict(stateSSIM['state_dict'], strict=True)
+
+        classifierSSIM.cuda()
+
+        optimizerSSIM = optim.Adam([
+            {'params': classifierSSIM.f.parameters()},
+            {'params': classifierSSIM.g.parameters()},
+            {'params': classifierSSIM.rank.parameters(), 'lr': 1e-3}
+        ], lr=1e-3)
+        optimizerSSIM.load_state_dict(stateSSIM['optimizer'])
+
 
 else:
 
@@ -421,7 +472,7 @@ logging.info('With L2cnn classifier')
 score_mse_file = os.path.join(f'score_mse_file_{Ntrial}.h5')
 
 
-Nepoch = 200
+Nepoch = 300
 
 
 lossT = np.zeros(Nepoch)
