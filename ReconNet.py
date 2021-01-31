@@ -24,11 +24,11 @@ import h5py
 
 # from fastMRI.data import transforms as T
 
-from .utils.Recon_helper import *
-from .utils.model_helper import *
-from .utils import *
-from .utils.CreateImagePairs import get_smaps, get_truth
-from .utils.utils_DL import *
+from utils.Recon_helper import *
+from utils.model_helper import *
+from utils import *
+from utils.CreateImagePairs import get_smaps, get_truth
+from utils.utils_DL import *
 from random import randrange
 
 
@@ -118,7 +118,7 @@ act_xres = 512
 act_yres = 256
 
 
-acc = 32
+acc = 8
 
 logging.info(f'Acceleration = {acc}')
 # fixed sampling mask
@@ -127,7 +127,7 @@ WHICH_MASK = 'poisson'
 if WHICH_MASK == 'poisson':
     # Sample elipsoid to not be overly optimistic
     mask = mri.poisson((act_xres, act_yres), accel=acc * 2, calib=(0, 0), crop_corner=True, return_density=False,
-                       dtype='float32', vds_factor=0.5)
+                       dtype='float32')
     pady = int(.5 * (yres - mask.shape[1]))
     padx = int(.5 * (xres - mask.shape[0]))
     print(mask.shape)
@@ -235,10 +235,7 @@ logging.info(f'MSE for first {epochMSE} epochs then switch to learned')
 lossT = np.zeros(Nepoch)
 lossV = np.zeros(Nepoch)
 
-Ntrain = 10
-Nval = 1
-
-Ntrain = 10
+Ntrain = 9
 Nval = 1
 
 # save some images during training
@@ -266,7 +263,7 @@ if BO:
 
 else:
 
-    LR = 1e-4
+    LR = 1e-7
     # LR = 1e-5
 
     # optimizer = optim.SGD(ReconModel.parameters(), lr=LR, momentum=0.9)

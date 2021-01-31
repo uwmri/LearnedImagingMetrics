@@ -50,6 +50,8 @@ Pretrain = 'pretrained'   # pretraining(train on corrupted/truth pair) or pretra
 trainScoreandMSE = True    # train score based classifier and mse(im1)-mse(im2) based classifier at the same time
 trainScoreandSSIM = True    # train score based classifier and mse(im1)-mse(im2) based classifier at the same time
 
+
+
 maxMatSize = 396  # largest matrix size seems to be 396
 if Pretrain == 'pretraining':
     # use Image_pairs_0506 and 0507 for pretraining
@@ -253,16 +255,28 @@ if MOBILE:
         if i % 1e2 == 0:
             print(f'Normalizing pairs {i + 1}')
 
-ntrain = int(0.9 * NRANKS)
+from random import randrange
+Ntrial = randrange(10000)
+log_dir = filepath_images
+logging.basicConfig(filename=os.path.join(log_dir,f'runs/rank/ranking_{Ntrial}.log'), filemode='w', level=logging.INFO)
+logging.info('With L2cnn classifier')
+
+CV = 1
+CV_fold = 5
+logging.info(f'{CV_fold} fold cross validation {CV}')
+ntrain = int(0.8 * NRANKS)
 id = ranks[:,2] - 1
-idT = id[:ntrain]
-idV = id[ntrain:]
-print(f'Train on {len(idT)}, eval on {len(idV)} ')
-Labels_cnnT = Labels[:ntrain]
-Labels_cnnV = Labels[ntrain:]
+idV_L = int(NRANKS*(CV-1)*1/CV_fold)
+idV_R = int(NRANKS*(CV)*1/CV_fold)
+idT = np.concatenate((id[:idV_L], id[idV_R:]))
+idV = id[idV_L:idV_R]
+logging.info(f'Train on {len(idT)}, eval on {len(idV)} ')
+Labels_cnnT = np.concatenate((Labels[:idV_L], Labels[idV_R:]))
+Labels_cnnV = Labels[idV_L:idV_R]
 
 # Data generator
 BATCH_SIZE = 24
+logging.info(f'batchsize={BATCH_SIZE}')
 
 if SAMPLER:
     # deal with imbalanced class
@@ -349,12 +363,15 @@ if ResumeTrain:
     classifier.load_state_dict(state['state_dict'], strict=True)
     classifier.cuda()
 
-    learning_rate = 1e-5
+    learning_rate = 1e-4
+    learning_rate_Classifier=1e-5
+    learning_rate_MSE=1e-3
+    learning_rate_SSIM=1e-3
     optimizer = optim.Adam([
         {'params': classifier.f.parameters()},
         {'params': classifier.g.parameters()},
-        {'params': classifier.rank.parameters(), 'lr': learning_rate}
-    ], lr=1e-3)
+        {'params': classifier.rank.parameters(), 'lr': learning_rate_Classifier}
+    ], lr=learning_rate)
     optimizer.load_state_dict(state['optimizer'])
 
     if trainScoreandMSE:
@@ -370,7 +387,7 @@ if ResumeTrain:
             {'params': classifierMSE.f.parameters()},
             {'params': classifierMSE.g.parameters()},
             {'params': classifierMSE.rank.parameters(), 'lr': 1e-3}
-        ], lr=1e-3)
+        ], lr=learning_rate_MSE)
         optimizerMSE.load_state_dict(stateMSE['optimizer'])
 
     if trainScoreandSSIM:
@@ -386,7 +403,7 @@ if ResumeTrain:
             {'params': classifierSSIM.f.parameters()},
             {'params': classifierSSIM.g.parameters()},
             {'params': classifierSSIM.rank.parameters(), 'lr': 1e-3}
-        ], lr=1e-3)
+        ], lr=learning_rate_SSIM)
         optimizerSSIM.load_state_dict(stateSSIM['optimizer'])
 
 
@@ -422,12 +439,15 @@ else:
 
         #optimizer = optim.SGD(classifier.parameters(), lr=0.003152130338485237, momentum=0.27102874871343374)
         learning_rate = 1e-5
+        learning_rate_Classifier = 1e-4
+        learning_rate_MSE = 1e-3
+        learning_rate_SSIM = 1e-3
 
         optimizer = optim.Adam([
             {'params': classifier.f.parameters()},
             {'params': classifier.g.parameters()},
-            {'params': classifier.rank.parameters(), 'lr': learning_rate}
-        ], lr=1e-3)
+            {'params': classifier.rank.parameters(), 'lr': learning_rate_Classifier}
+        ], lr=learning_rate)
 
         logging.info(f'Adam, lr={learning_rate}')
         if trainScoreandMSE:
@@ -435,14 +455,14 @@ else:
                 {'params': classifierMSE.f.parameters()},
                 {'params': classifierMSE.g.parameters()},
                 {'params': classifierMSE.rank.parameters(), 'lr': 1e-3}
-            ], lr=1e-3)
+            ], lr=learning_rate_MSE)
 
         if trainScoreandSSIM:
             optimizerSSIM = optim.Adam([
                 {'params': classifierSSIM.f.parameters()},
                 {'params': classifierSSIM.g.parameters()},
                 {'params': classifierSSIM.rank.parameters(), 'lr': 1e-3}
-            ], lr=1e-3)
+            ], lr=learning_rate_SSIM)
 
 
     #classifier.rank.register_backward_hook(printgradnorm)
@@ -458,21 +478,23 @@ else:
     if trainScoreandSSIM:
         classifierSSIM.cuda()
 
-# Training
-from random import randrange
-Ntrial = randrange(10000)
+logging.info(f'leaning rate = {learning_rate}')
+logging.info(f'leaning rate Classifier = {learning_rate_Classifier}')
+if trainScoreandMSE:
+    logging.info(f'leaning rate Classifier = {learning_rate_MSE}')
 
-log_dir = filepath_images
-print(f'Logging to {log_dir}')
+if trainScoreandSSIM:
+    logging.info(f'leaning rate Classifier = {learning_rate_SSIM}')
+
+# Training
 writer_train = SummaryWriter(os.path.join(log_dir,f'runs/rank/train_{Ntrial}'))
 writer_val = SummaryWriter(os.path.join(log_dir,f'runs/rank/val_{Ntrial}'))
 
-logging.basicConfig(filename=os.path.join(log_dir,f'runs/rank/ranking_{Ntrial}.log'), filemode='w', level=logging.INFO)
-logging.info('With L2cnn classifier')
+
 score_mse_file = os.path.join(f'score_mse_file_{Ntrial}.h5')
 
 
-Nepoch = 300
+Nepoch = 500
 
 
 lossT = np.zeros(Nepoch)
