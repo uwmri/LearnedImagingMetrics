@@ -117,7 +117,7 @@ class DataGeneratorRecon(Dataset):
         # kspace = kspace[:]  # array
         kspace = zero_pad4D(kspace)  # array (sl, coil, 768, 396)
         # mask_sl shape (768, 396)
-        #kspace *= self.mask_sl
+        kspace *= self.mask_sl
 
         max_truth = torch.unsqueeze(max_truth, -1)
         kspace = complex_2chan(kspace)  # (slice, coil, h, w, 2)
@@ -767,7 +767,7 @@ class MoDL(nn.Module):
         self.lam2 = nn.Parameter(0.5*torch.ones([inner_iter]), requires_grad=True)
 
         # Options for UNET
-        self.denoiser = UNet2D(2, 2, depth=3, final_activation='none', f_maps=32, layer_order='cr')
+        self.denoiser = UNet2D(2, 2, depth=3, final_activation='none', f_maps=32, layer_order='cr', )
         #self.denoiser = CNN_shortcut()
         # self.denoiser = Projector(ENC=False)
 

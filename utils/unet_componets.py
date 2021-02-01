@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-USE_BIAS=True
+USE_BIAS=False
 
 def conv2d(in_channels, out_channels, kernel_size, bias=USE_BIAS, padding=1, groups=1):
     return nn.Conv2d(in_channels, out_channels, kernel_size, padding=padding, bias=bias, groups=groups)

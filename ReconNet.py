@@ -40,7 +40,7 @@ spdevice = sp.Device(0)
 Ntrial = randrange(10000)
 
 # load RankNet
-DGX = False
+DGX = True
 if DGX:
     filepath_rankModel = Path('/raid/DGXUserDataRaid/cxt004/NYUbrain')
     filepath_train = Path('/raid/DGXUserDataRaid/cxt004/NYUbrain')
@@ -51,7 +51,7 @@ if DGX:
         import argparse
 
         parser = argparse.ArgumentParser()
-        parser.add_argument('--pname', type=str, default=f'chenwei_metrics_{Ntrial}')
+        parser.add_argument('--pname', type=str, default=f'chenwei_recon_{Ntrial}')
         args = parser.parse_args()
 
         setproctitle.setproctitle(args.pname)
@@ -90,7 +90,7 @@ logging.basicConfig(filename=os.path.join(log_dir,f'Recon_{Ntrial}_dgx{DGX}.log'
 # file_rankModel = os.path.join(filepath_rankModel, "RankClassifier16.pt")
 
 
-file_rankModel = os.path.join(filepath_rankModel, "RankClassifier9575_pretrained.pt")
+file_rankModel = os.path.join(filepath_rankModel, "RankClassifier7961_pretrained.pt")
 
 
 os.chdir(filepath_rankModel)
@@ -155,7 +155,7 @@ mask_truth = np.pad(mask_truth, pad, 'constant', constant_values=0)
 # print(mask_truth.shape)
 
 plt.figure()
-plt.imshow(mask_truth)
+plt.imshow(mask_truth, cmap='gray')
 plt.show()
 
 plt.figure()
@@ -190,14 +190,10 @@ imSlShape = (BATCH_SIZE,) + (xres, yres)  # (1, 768, 396)
 UNROLL = True
 ReconModel = MoDL(inner_iter=1)
 ReconModel.cuda()
-
 # torchsummary.summary(ReconModel.denoiser, input_size=(2,768,396), batch_size=16)
-
-
-# for BO
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-
+# for BO
 def train_evaluate_recon(parameterization):
     net = ReconModel
     net = train_modRecon(net=net, train_loader=loader_T, mask_gpu=mask_gpu, parameters=parameterization,
@@ -263,7 +259,7 @@ if BO:
 
 else:
 
-    LR = 1e-7
+    LR = 1e-3
     # LR = 1e-5
 
     # optimizer = optim.SGD(ReconModel.parameters(), lr=LR, momentum=0.9)
@@ -295,10 +291,10 @@ with torch.no_grad():
             eout = torch.linalg.norm(y)
             x = y / eout
             # print(f'Scale {eout/ein}')
-        print(eout)
+        # print(eout)
         da += eout / 10
-    print(f'Denoiser scale = {da}')
-    # ReconModel.set_denoiser_scale( 0.9 / da)
+    logging.info(f'Avg Denoiser scale = {da}')
+    ReconModel.set_denoiser_scale( 0.9 / da)
 
 for epoch in range(Nepoch):
 
@@ -376,7 +372,7 @@ for epoch in range(Nepoch):
                     # Ah ishape (20,768,396), oshape(768,396)
 
                 # Get truth
-                im_sl = sp.to_pytorch(Atruth.H * (kspaceU_sl * mask_truth), requires_grad=True)
+                #im_sl = sp.to_pytorch(Atruth.H * (kspaceU_sl * mask_truth), requires_grad=True)
 
                 A_torch = sp.to_pytorch_function(A, input_iscomplex=True, output_iscomplex=True)
                 Ah_torch = sp.to_pytorch_function(Ah, input_iscomplex=True, output_iscomplex=True)
@@ -428,6 +424,7 @@ for epoch in range(Nepoch):
                     # train_avg.update(loss.detach().item(), BATCH_SIZE)
                     imEst = imEst2
                     del imEst2
+
 
                 if WHICH_LOSS == 'learned':
                     with torch.no_grad():
@@ -575,7 +572,7 @@ for epoch in range(Nepoch):
                     Atruth = sp.mri.linop.Sense(smaps_sl, coil_batch_size=None)
 
                 # Get truth
-                im_sl = sp.to_pytorch(Atruth.H * (kspaceU_sl * mask_truth), requires_grad=False)
+                # im_sl = sp.to_pytorch(Atruth.H * (kspaceU_sl * mask_truth), requires_grad=False)
 
                 A_torch = sp.to_pytorch_function(A, input_iscomplex=True, output_iscomplex=True)
                 Ah_torch = sp.to_pytorch_function(Ah, input_iscomplex=True, output_iscomplex=True)
@@ -772,4 +769,4 @@ for epoch in range(Nepoch):
         'loss_train': lossT,
         'loss_cal': lossV
     }
-    torch.save(state, os.path.join(log_dir, f'Recon{Ntrial}_{WHICH_LOSS}_{epoch}.pt'))
+    torch.save(state, os.path.join(log_dir, f'Recon{Ntrial}_{WHICH_LOSS}.pt'))
