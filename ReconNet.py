@@ -33,7 +33,7 @@ spdevice = sp.Device(0)
 Ntrial = randrange(10000)
 
 # load RankNet
-DGX = True
+DGX = False
 if DGX:
     filepath_rankModel = Path('/raid/DGXUserDataRaid/cxt004/NYUbrain')
     filepath_train = Path('/raid/DGXUserDataRaid/cxt004/NYUbrain')
@@ -72,7 +72,7 @@ else:
 rank_channel =1
 rank_trained_on_mag = False
 BO = False
-file_rankModel = os.path.join(filepath_rankModel, "RankClassifier4709_pretrained.pt")
+file_rankModel = os.path.join(filepath_rankModel, "RankClassifier4217_pretrained.pt")
 os.chdir(filepath_rankModel)
 
 log_dir = filepath_rankModel
@@ -100,7 +100,7 @@ yres = 396
 act_xres = 512
 act_yres = 256
 
-acc = 4
+acc = 8
 WHICH_MASK = 'poisson'
 logging.info(f'Acceleration = {acc}, {WHICH_MASK} mask')
 if WHICH_MASK == 'poisson':
@@ -168,7 +168,7 @@ writer_train = SummaryWriter(f'runs/recon/train_{Ntrial}')
 writer_val = SummaryWriter(f'runs/recon/val_{Ntrial}')
 
 
-WHICH_LOSS = 'mse'
+WHICH_LOSS = 'learned'
 if WHICH_LOSS == 'perceptual':
     loss_perceptual = PerceptualLoss_VGG16()
     loss_perceptual.cuda()
@@ -182,12 +182,12 @@ logging.info(f'MSE for first {epochMSE} epochs then switch to learned')
 lossT = np.zeros(Nepoch)
 lossV = np.zeros(Nepoch)
 
-Ntrain = 9
-Nval = 1
+Ntrain = 27
+Nval = 3
 
 out_name = os.path.join(log_dir,f'Images_training{Ntrial}_{WHICH_LOSS}.h5')
 
-LR = 1e-3
+LR = 1e-4
 # optimizer = optim.SGD(ReconModel.parameters(), lr=LR, momentum=0.9)
 optimizer = optim.Adam(ReconModel.parameters(), lr=LR)
 if epochMSE != 0:

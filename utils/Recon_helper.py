@@ -735,7 +735,7 @@ class MoDL(nn.Module):
         # Options for UNET
         self.denoiser = UNet2D(2, 2, depth=3, final_activation='none', f_maps=32, layer_order='cl')
 
-        self.refiner = UNet2D(2, 2, depth=3, final_activation='none', f_maps=32, layer_order='cl')
+        self.refiner = UNet2D(2, 2, depth=1, final_activation='none', f_maps=32, layer_order='cl')
         #self.denoiser = CNN_shortcut()
         # self.denoiser = Projector(ENC=False)
 
@@ -752,14 +752,17 @@ class MoDL(nn.Module):
     def forward(self, image, kspace, encoding_op, decoding_op):
 
         for i in range(self.inner_iter):
-            # Steepest descent
 
             # Ex
             Ex = encoding_op.apply(image)      # For slice by slice:(20, 768, 396, 2) or by case:([slice, 20, 768, 396, 2])
 
             # kspace correction
             image_inter = decoding_op.apply(Ex)
+            image_inter_dim = image_inter.ndim
+            if image_inter_dim == 3:
+                image_inter = torch.unsqueeze(image_inter, 0)
             image_inter = image_inter.permute(0, -1, 1, 2).contiguous()
+
             # Pad to prevent edge effects, circular pad to keep image statistics
             target_size1 = 32 * math.ceil( (64 + image_inter.shape[-1]) / 32)
             target_size2 = 32 * math.ceil( (64 + image_inter.shape[-2]) / 32)
@@ -771,6 +774,8 @@ class MoDL(nn.Module):
             image_inter = self.refiner(image_inter)
             image_inter = image_inter[:, :, pad_amount2:-pad_amount2, pad_amount1:-pad_amount1]
             image_inter = image_inter.permute(0, 2, 3, 1).contiguous()
+            if image_inter_dim == 3:
+                image_inter = torch.squeeze(image_inter)
 
             Ex = encoding_op.apply(image_inter)
 
