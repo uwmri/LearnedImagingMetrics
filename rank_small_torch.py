@@ -11,7 +11,7 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 import torch
 
-DGX = True
+DGX = False
 
 try:
     from ax.service.managed_loop import optimize
@@ -36,7 +36,7 @@ from utils.model_helper import *
 from utils.utils_DL import *
 
 train_on_mag = False    # False: L2CNN trained on abs(im-truth), True: train on abs(im)-abs(truth)
-shuffle_observers = False
+shuffle_observers = True
 MOBILE = False
 EFF = False
 BO = False
@@ -46,6 +46,8 @@ CLIP = False
 SAMPLER = False
 WeightedLoss = False
 Pretrain = 'pretrained'   # pretraining(train on corrupted/truth pair) or pretrained (for actual training) or none
+SHIFT = True
+SCALE = True
 
 trainScoreandMSE = True    # train score based classifier and mse(im1)-mse(im2) based classifier at the same time
 trainScoreandSSIM = True    # train score based classifier and mse(im1)-mse(im2) based classifier at the same time
@@ -77,7 +79,7 @@ else:
 
     files_csv = os.listdir(filepath_csv)
     for file in files_csv:
-        if fnmatch.fnmatch(file, 'consensus_mode.csv'):
+        if fnmatch.fnmatch(file, 'consensus_mode_all.csv'):
             names.append(os.path.join(filepath_csv, file))
 
     # Load the ranks
@@ -116,7 +118,7 @@ NRANKS = ranks.shape[0]
 # Shuffle the ranks while the data size is small
 if shuffle_observers:
     np.random.shuffle(ranks)
-#np.savetxt("consensus_mode.csv", ranks, fmt='%d', delimiter=',')
+#np.savetxt("consensus_mode_all.csv", ranks, fmt='%d', delimiter=',')
 
 
 if train_on_mag:
@@ -328,10 +330,10 @@ elif RESNET:
 else:
     ranknet = L2cnn(channels_in=1)
 
-# # Print summary
+# Print summary
 # print(ranknet)
-# torchsummary.summary(ranknet, [(X_1.shape[-3], maxMatSize, maxMatSize)
-#                               ,(X_1.shape[-3], maxMatSize, maxMatSize)], device="cpu")
+torchsummary.summary(ranknet, [(X_1.shape[-3], maxMatSize, maxMatSize)
+                              ,(X_1.shape[-3], maxMatSize, maxMatSize)], device="cpu")
 
 
 # Bayesian
@@ -494,8 +496,7 @@ writer_val = SummaryWriter(os.path.join(log_dir,f'runs/rank/val_{Ntrial}'))
 score_mse_file = os.path.join(f'score_mse_file_{Ntrial}.h5')
 
 
-Nepoch = 500
-
+Nepoch = 300
 
 lossT = np.zeros(Nepoch)
 lossV = np.zeros(Nepoch)
@@ -562,18 +563,41 @@ for epoch in range(Nepoch):
         labels = labels.to(device, dtype=torch.long)
 
         # classifier and scores for each image
-        delta, score1, score2 = classifier(im1, im2, imt)
+        delta, score1, score2 = classifier(im1, im2, imt, imt)
 
         # print(f'delta shape {delta.shape}')
         # print(f'label shape {labels.shape}')
-        mean_score = torch.mean(score1) + torch.mean(score2)
+        # mean_score = torch.mean(score1) + torch.mean(score2)
         # print(f'Score1, score2, mean_score = {score1}, {score2}, {mean_score}')
 
         #loss_scale = (0.5*mean_score - 1.0)**2
         #print(f'Loss Score = {loss_scale}')
 
         # Cross entropy
+        # if SHIFT:
+        #     shift_ax = np.random.randint(2,4)
+        #     im1_shift = torch.roll(im1, 1, shift_ax)
+        #     imt_shift = torch.roll(imt, 1, shift_ax)
+        #     with torch.no_grad():
+        #         delta_shift, score1_shift, score2_shift = classifier(im1_shift, im2, imt_shift, imt)
+        #
+        #         scorefig = plt_scores(score1, score1_shift)
+        #         writer_train.add_figure('Scores_shift', scorefig, epoch)
+        #
+        #     loss = (loss_func(delta_shift, labels) + loss_func(delta, labels)) / 2
+        #
+        # if SCALE:
+        #     scale = 1e3 * torch.rand(1).cuda()
+        #     im1_scale = im1 * scale
+        #
+        #     with torch.no_grad():
+        #         delta_scale, score1_scale, score2_scale = classifier(im1_scale, im2, imt, imt)
+        #
+        #         scorefig_scale = plt_scores(score1, score1_scale)
+        #         writer_train.add_figure('Scores_score', scorefig_scale, epoch)
+
         loss = loss_func(delta, labels)
+
 
         # Track loss
         train_avg.update(loss.item(), n=BATCH_SIZE)  # here is total loss of all batches
@@ -601,7 +625,7 @@ for epoch in range(Nepoch):
 
         # train on MSE
         if trainScoreandMSE:
-            deltaMSE, mse1, mse2  = classifierMSE(im1, im2, imt)
+            deltaMSE, mse1, mse2  = classifierMSE(im1, im2, imt, imt)
             lossMSE = loss_func(deltaMSE, labels)
             train_avgMSE.update(lossMSE.item(), n=BATCH_SIZE)  # here is total loss of all batches
 
@@ -620,7 +644,7 @@ for epoch in range(Nepoch):
 
         # train on SSIM
         if trainScoreandSSIM:
-            deltaSSIM, ssim1, ssim2  = classifierSSIM(im1, im2, imt)
+            deltaSSIM, ssim1, ssim2  = classifierSSIM(im1, im2, imt, imt)
             lossSSIM = loss_func(deltaSSIM, labels)
             train_avgSSIM.update(lossSSIM.item(), n=BATCH_SIZE)  # here is total loss of all batches
 
@@ -685,10 +709,23 @@ for epoch in range(Nepoch):
             labels = labels.to(device, dtype=torch.long)
 
             # forward
-            delta, score1, score2 = classifier(im1, im2, imt)
+            delta, score1, score2 = classifier(im1, im2, imt, imt)
 
             # loss
-            loss = loss_func(delta, labels)
+            if SHIFT:
+                shift_ax = np.random.randint(2, 4)
+                im1_shift = torch.roll(im1, 1, shift_ax)
+                imt_shift = torch.roll(imt, 1, shift_ax)
+                delta_shift, score1_shift, score2_shift = classifier(im1_shift, im2, imt_shift, imt)
+
+            if SCALE:
+                scale = 1e3 * torch.rand(1).cuda()
+                im1_scale = im1 * scale
+
+                delta_scale, score1_scale, score2_scale = classifier(im1_scale, im2, imt, imt)
+
+            loss = loss_func(delta, labels) + loss_func(delta_shift, labels) + loss_func(delta_scale, labels)
+
             eval_avg.update(loss.item(), n=BATCH_SIZE)
 
             # acc
@@ -698,7 +735,7 @@ for epoch in range(Nepoch):
 
             # mse-based classifier
             if trainScoreandMSE:
-                deltaMSE, mse1, mse2 = classifierMSE(im1, im2, imt)
+                deltaMSE, mse1, mse2 = classifierMSE(im1, im2, imt, imt)
                 lossMSE = loss_func(deltaMSE, labels)
                 eval_avgMSE.update(lossMSE.item(), n=BATCH_SIZE)
 
@@ -709,7 +746,7 @@ for epoch in range(Nepoch):
                 mselistV.append(mse2.cpu().numpy())
 
             if trainScoreandSSIM:
-                deltaSSIM, ssim1, ssim2 = classifierSSIM(im1, im2, imt)
+                deltaSSIM, ssim1, ssim2 = classifierSSIM(im1, im2, imt, imt)
                 lossSSIM = loss_func(deltaSSIM, labels)
                 eval_avgSSIM.update(lossSSIM.item(), n=BATCH_SIZE)
 

@@ -222,7 +222,7 @@ class L2cnnBlock(nn.Module):
 
 
 class L2cnn(nn.Module):
-    def __init__(self, channel_base=32, channels_in=1,  channel_scale=1, group_depth=8, bias=False):
+    def __init__(self, channel_base=32, channels_in=1,  channel_scale=1, group_depth=8, bias=False, init_scale=1.0):
 
         super(L2cnn, self).__init__()
         pool_rate = 2
@@ -234,6 +234,7 @@ class L2cnn(nn.Module):
         self.weight_ssim = torch.nn.Parameter(torch.tensor([1.0]).view(1, 1))
         self.scale_weight = nn.Parameter(torch.ones([group_depth]), requires_grad=True)
         self.ssim_op = SSIM( window_size=11, size_average=False, val_range=1)
+        #self.scale = nn.Parameter(torch.FloatTensor(init_scale* torch.ones([2])), requires_grad=True)
 
         self.layers = nn.ModuleList()
         for block in range(group_depth):
@@ -249,10 +250,13 @@ class L2cnn(nn.Module):
         return 1e3*torch.sum(y**2, dim=1, keepdim=True)**0.5
 
     def forward(self, input, truth):
-        x = input.clone()
 
         # SSIM (range is -1 to 1)
         #ssim = 2.0 - self.ssim_op(x, truth)
+
+        # print(f'scale shape {self.scale}')
+        # for i in range(2):
+        #     input[:, i, :, :] *= self.scale[i]
 
         diff = input - truth
         # if train on 2chan (real and imag) images
@@ -687,14 +691,15 @@ class Classifier(nn.Module):
                                  nn.Linear(16, 1))
 
 
-    def forward(self, image1, image2, imaget):
+
+    def forward(self, image1, image2, imaget1, imaget2):
 
         #score1 = self.rank(image1, imaget)
         #score2 = self.rank(image2, imaget)
 
         # Combine the images for batch norm operations
-        images_combined = torch.cat([image1, image2], dim=0)
-        truth_combined = torch.cat([imaget, imaget], dim=0)
+        images_combined = torch.cat([image1, image2], dim=0)    #(batchsize*2, ch=2, 396, 396)
+        truth_combined = torch.cat([imaget1, imaget2], dim=0)
 
         # Calculate scores
         scores_combined = self.rank(images_combined, truth_combined)

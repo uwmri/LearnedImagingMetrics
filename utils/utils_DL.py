@@ -113,6 +113,17 @@ def plt_recon(recon):
 
     return figure
 
+def plt_scores(score1, score2):
+    if not isinstance(score1,np.ndarray):
+        score1 = score1.detach().cpu().numpy()
+        score2 = score2.detach().cpu().numpy()
+    figure = plt.figure(figsize=(10, 10))
+    plt.scatter(score1.squeeze(), score2.squeeze())
+    plt.xlabel('score of unshifted/unscaled')
+    plt.ylabel('score of shifted/scaled')
+
+    return figure
+
 
 # for Bayesian
 def train_mod(

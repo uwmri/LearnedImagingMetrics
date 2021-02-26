@@ -33,7 +33,7 @@ class SubtractArray(sp.linop.Linop):
 
 class DataGeneratorRecon(Dataset):
 
-    def __init__(self,path_root, h5file, mask_sl, rank_trained_on_mag=False, data_type=None):
+    def __init__(self,path_root, h5file, rank_trained_on_mag=False, data_type=None):
 
         '''
         input: mask (768, 396) complex64
@@ -48,12 +48,8 @@ class DataGeneratorRecon(Dataset):
         self.hf = h5py.File(name=os.path.join(path_root, h5file), mode='r')
         self.scans = [f for f in self.hf.keys()]
 
-        # undersampling mask
-        self.mask_sl = mask_sl
-
         # iterate over scans
         self.len = len(self.hf)
-
 
         self.data_type = data_type
 
@@ -65,7 +61,7 @@ class DataGeneratorRecon(Dataset):
     def __getitem__(self, idx):
         import time
 
-        #print(f'Load {self.scans[idx]}')
+        print(f'Load {self.scans[idx]}')
         t = time.time()
         if self.data_type == 'smap16':
             smaps = np.array(self.hf[self.scans[idx]]['smaps'])
@@ -86,15 +82,6 @@ class DataGeneratorRecon(Dataset):
         truth = zero_pad_truth(truth)
         truth = torch.from_numpy(truth)     # ([16, 768, 396, ch])
 
-        # # normalize truth's abs
-        # truth = np.reshape(truth, (-1, 396, 396))
-        # max_truth = np.amax(np.abs(truth), axis=(1, 2))
-        # max_truth = np.tile(max_truth[:, np.newaxis, np.newaxis], (1, 396, 396))
-        # min_truth = np.amin(np.abs(truth), axis=(1, 2))
-        # min_truth = np.tile(min_truth[:, np.newaxis, np.newaxis], (1, 396, 396))
-        # truth = (truth - min_truth) / (max_truth - min_truth)
-        # truth = np.reshape(truth, (Nslice, 396, 396))
-
         # normalize truth to 0 and 1
         # maxt_truth shape  (sl, 1, 1, 1)
         max_truth, _ = torch.max(truth, dim=1, keepdim=True)
@@ -103,34 +90,13 @@ class DataGeneratorRecon(Dataset):
         truth /= max_truth
         #print(f'Get truth {time.time() - t} {truth.dtype} {truth.shape}')
 
-        # max_truth = np.amax(truth, axis=(1, 2))
-        # scale_truth_max = np.tile(max_truth[:, np.newaxis, np.newaxis], (1, 396, 396))
-        # min_truth = np.amin(truth, axis=(1, 2))
-        # scale_truth_min = np.tile(min_truth[:, np.newaxis, np.newaxis], (1, 396, 396))
-        # truth /= (scale_truth_max - scale_truth_min)
-        # truth = np.reshape(truth, (Nslice, 396, 396, 2))
-        # truth = torch.from_numpy(truth)
-
         t = time.time()
-        # max_truth = torch.unsqueeze(max_truth,-1)
         kspace = np.array(self.hf[self.scans[idx]]['kspace'])
-        # kspace = kspace[:]  # array
         kspace = zero_pad4D(kspace)  # array (sl, coil, 768, 396)
-        # mask_sl shape (768, 396)
-        kspace *= self.mask_sl
 
         max_truth = torch.unsqueeze(max_truth, -1)
         kspace = complex_2chan(kspace)  # (slice, coil, h, w, 2)
         kspace /= max_truth
-        # normalize kspace to 0 and 1 separately for real and imag
-        # kspace = np.reshape(kspace,(-1,768,396))
-        # scale_kspace_max = np.tile(max_truth[:, np.newaxis, np.newaxis], (Ncoil, 768, 396))
-        # scale_kspace_min = np.tile(min_truth[:, np.newaxis, np.newaxis], (Ncoil, 768, 396))
-
-        # kspace /= (scale_kspace_max - scale_kspace_min)
-        # kspace = np.reshape(kspace,(Nslice, Ncoil, 768,396,2))
-        # kspace = torch.from_numpy(kspace)
-        #print(f'Get kspace {time.time()-t} {kspace.dtype} {kspace.shape}')\
 
         return smaps, truth, kspace
 
@@ -255,7 +221,7 @@ def sneakpeek(dataset, Ncoils=20, rank_trained_on_mag=True):
 def mseloss_fcn(output, target):
     # output = crop_im(output)
     # target = crop_im(target)
-    loss = torch.mean((output - target) ** 2)
+    loss = torch.sum((output - target) ** 2)** 0.5
     return loss
 
 
@@ -767,7 +733,9 @@ class MoDL(nn.Module):
         self.lam2 = nn.Parameter(0.5*torch.ones([inner_iter]), requires_grad=True)
 
         # Options for UNET
-        self.denoiser = UNet2D(2, 2, depth=3, final_activation='none', f_maps=32, layer_order='cr', )
+        self.denoiser = UNet2D(2, 2, depth=3, final_activation='none', f_maps=32, layer_order='cl')
+
+        self.refiner = UNet2D(2, 2, depth=3, final_activation='none', f_maps=32, layer_order='cl')
         #self.denoiser = CNN_shortcut()
         # self.denoiser = Projector(ENC=False)
 
@@ -789,6 +757,23 @@ class MoDL(nn.Module):
             # Ex
             Ex = encoding_op.apply(image)      # For slice by slice:(20, 768, 396, 2) or by case:([slice, 20, 768, 396, 2])
 
+            # kspace correction
+            image_inter = decoding_op.apply(Ex)
+            image_inter = image_inter.permute(0, -1, 1, 2).contiguous()
+            # Pad to prevent edge effects, circular pad to keep image statistics
+            target_size1 = 32 * math.ceil( (64 + image_inter.shape[-1]) / 32)
+            target_size2 = 32 * math.ceil( (64 + image_inter.shape[-2]) / 32)
+
+            pad_amount1 = (target_size1 - image_inter.shape[-1]) // 2
+            pad_amount2 = (target_size2 - image_inter.shape[-2]) // 2
+            pad_f = (pad_amount1,pad_amount1,pad_amount2, pad_amount2)
+            image_inter = nn.functional.pad(image_inter,pad_f, "circular")
+            image_inter = self.refiner(image_inter)
+            image_inter = image_inter[:, :, pad_amount2:-pad_amount2, pad_amount1:-pad_amount1]
+            image_inter = image_inter.permute(0, 2, 3, 1).contiguous()
+
+            Ex = encoding_op.apply(image_inter)
+
             # Ex - d
             Ex -= kspace
 
@@ -797,7 +782,7 @@ class MoDL(nn.Module):
 
             y_pred = image
             dim = y_pred.ndim
-            if dim ==3:
+            if dim == 3:
                 y_pred = torch.unsqueeze(y_pred,0)
 
             y_pred = y_pred.permute(0, -1, 1, 2).contiguous()
@@ -824,7 +809,6 @@ class MoDL(nn.Module):
             y_pred = self.denoiser(y_pred)
 
             # cropping for UNet
-
             y_pred = y_pred[:,:,pad_amount2:-pad_amount2,pad_amount1:-pad_amount1]
 
 
