@@ -100,7 +100,7 @@ yres = 396
 act_xres = 512
 act_yres = 256
 
-acc = 8
+acc = 16
 WHICH_MASK = 'poisson'
 logging.info(f'Acceleration = {acc}, {WHICH_MASK} mask')
 if WHICH_MASK == 'poisson':
@@ -150,7 +150,7 @@ prefetch_data = False
 logging.info(f'Load train data from {filepath_train}')
 trainingset = DataGeneratorRecon(filepath_train, file_train, rank_trained_on_mag=rank_trained_on_mag,
                                  data_type=smap_type)
-loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=False)
+loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=True)
 
 logging.info(f'Load eval data from {filepath_val}')
 validationset = DataGeneratorRecon(filepath_val, file_val, rank_trained_on_mag=rank_trained_on_mag,
@@ -168,7 +168,7 @@ writer_train = SummaryWriter(f'runs/recon/train_{Ntrial}')
 writer_val = SummaryWriter(f'runs/recon/val_{Ntrial}')
 
 
-WHICH_LOSS = 'learned'
+WHICH_LOSS = 'ssim'
 if WHICH_LOSS == 'perceptual':
     loss_perceptual = PerceptualLoss_VGG16()
     loss_perceptual.cuda()
@@ -176,14 +176,14 @@ elif WHICH_LOSS == 'patchGAN':
     patchGAN = NLayerDiscriminator(input_nc=2)
     patchGAN.cuda()
 
-Nepoch = 100
+Nepoch = 150
 epochMSE = 0
 logging.info(f'MSE for first {epochMSE} epochs then switch to learned')
 lossT = np.zeros(Nepoch)
 lossV = np.zeros(Nepoch)
 
-Ntrain = 27
-Nval = 3
+Ntrain = 18
+Nval = 2
 
 out_name = os.path.join(log_dir,f'Images_training{Ntrial}_{WHICH_LOSS}.h5')
 
@@ -290,6 +290,8 @@ for epoch in range(Nepoch):
 
             if WHICH_LOSS == 'mse':
                 loss = mseloss_fcn(imEst2, im_sl)
+            elif WHICH_LOSS == 'ssim':
+                loss = ssimloss_fcn(imEst2, im_sl)
             elif WHICH_LOSS == 'perceptual':
                 loss = loss_perceptual(imEst2, im_sl)
             elif WHICH_LOSS == 'patchGAN':
@@ -379,6 +381,8 @@ for epoch in range(Nepoch):
 
             if WHICH_LOSS == 'mse':
                 loss = mseloss_fcn(imEst2, im_sl)
+            elif WHICH_LOSS == 'ssim':
+                loss = ssimloss_fcn(imEst2, im_sl)
             elif WHICH_LOSS == 'perceptual':
                 loss = loss_perceptual(imEst2, im_sl)
             elif WHICH_LOSS == 'patchGAN':
