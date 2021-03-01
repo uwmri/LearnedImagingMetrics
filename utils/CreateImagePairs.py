@@ -5,8 +5,51 @@ import sigpy.mri as mri
 import pywt
 import time
 
-#from fastMRI.data import transforms as T
+from fastMRI.data import transforms as T
 from utils.utils import *
+
+
+def crop_flipud(image):
+    width = image.shape[1]
+    if width < 320:
+        image_sq = image[160:480, :]
+    else:
+        lower = int(.5 * width)
+        upper = int(1.5 * width)
+        image_sq = image[lower:upper, :]
+
+    image_sq = np.flipud(image_sq)
+    return image_sq
+
+
+def blurring(kspace, acc_ulim):
+    #kspace of shape[coil, h, w]
+
+    acc = np.random.randint(0, acc_ulim)
+
+    num_coils = kspace.shape[0]
+    xv, yv = np.meshgrid(np.linspace(-1, 1, kspace.shape[1]), np.linspace(-1, 1, kspace.shape[2]), sparse=False,
+                         indexing='ij')
+    radius = np.sqrt(np.square(xv) + np.square(yv))
+
+    # Create a sampling mask
+    mask = np.random.random_sample(kspace[0, :, :].shape)
+    variable_density = np.random.rand()
+    sampling_density = np.ones(kspace[0, :, :].shape) * variable_density + (1 - variable_density) / (0.01 + radius)
+    mask *= sampling_density
+
+
+    thresh = np.percentile(mask, acc)
+    mask = np.asarray(np.greater(mask, thresh), dtype=np.float)
+
+    # Blurring in kspace
+    sigma = 2 * np.random.rand()
+    mask *= np.exp(-radius * sigma)
+
+    for c in range(num_coils):
+        kspace[c, :, :] = kspace[c, :, :] * mask
+
+    return kspace, acc
 
 
 def soft_thresh(input, thresh):
@@ -28,28 +71,30 @@ def wave_thresh(input, thresh):
     return output
 
 
-def trans_motion(input, dir_motion, maxshift, sigma_shift, prob):
+def trans_motion(input, dir_motion, maxshift, prob):
     # input: kspace (coil, h, w).
     # dir_motion: direction of phase encode. 0 for width, 1 for height-dir
     # maxshift: np.random.uniform(0,maxshift) is the size of displacement in pixel
     # prob: if np.random.randint(prob) == 1, there's motion for that PE line
 
     logger = logging.getLogger('trans_motion')
-
+    total_shift = 0
     if dir_motion == 0:
         num_pe = input.shape[2]     # number of column
         for ii in range(num_pe):
             if np.random.randint(prob) == 0:
+
                 input[:, :, ii] = input[:, :, ii] * np.exp(
-                    -1j * 2 * np.pi * np.random.uniform(0, maxshift) * (1 / num_pe) * (ii - num_pe / 2))
+                    -1j * 2 * np.pi * total_shift * (1 / num_pe) * (ii - num_pe / 2))
             else:
                 pass
     elif dir_motion == 1:
         num_pe = input.shape[1]     # number of rows
         for jj in range(num_pe):
             if np.random.randint(prob) == 0:
+                total_shift = np.random.uniform(0, maxshift)
                 input[:, jj, :] = input[:, jj, :] * np.exp(
-                    -1j * 2 * np.pi * np.random.uniform(0, maxshift) * (1 / num_pe) * (jj - num_pe / 2))
+                    -1j * 2 * np.pi * total_shift * (1 / num_pe) * (jj - num_pe / 2))
             else:
                 pass
     else:
@@ -66,7 +111,7 @@ def trans_motion(input, dir_motion, maxshift, sigma_shift, prob):
             shift_bulk1 = (2 * np.random.randint(0, 2) - 1) * np.random.randint(1, maxshift)  # shift in y
             # shift_bulk0 = (2*np.random.randint(0,2)-1) * np.random.normal(maxshift, sigma_shift)        # shift in x
             # shift_bulk1 = (2*np.random.randint(0,2)-1) * np.random.normal(maxshift, sigma_shift)        # shift in y
-
+            total_shift = np.abs(shift_bulk0) + np.abs(shift_bulk1)
 
             logger.info(f'shift in x is {shift_bulk0} pixels')
             logger.info(f'shift in y is {shift_bulk1} pixels')
@@ -108,7 +153,7 @@ def trans_motion(input, dir_motion, maxshift, sigma_shift, prob):
         else:
             pass
 
-    return input
+    return input, total_shift
 
 
 def normalization(input, num_max):
@@ -118,11 +163,26 @@ def normalization(input, num_max):
     return np.abs(input)/norm_fac
 
 
-def add_gaussian_noise(input, prob, median_real=None, median_imag=None, level=1, mode=0,mean=0):
+def add_gaussian_noise(input, prob, kedge_len=30, level=1, mode=0,mean=0):
     # input: when mode=0, it's image before crop to square, (h,w) complex. When mode=1,its ksp2 = (coil, h, w)
     # level: the sigma of gaussian noise = level * median(HH)
     # mode: 0 is to take median(hh) as sigma. 1 is to take edge of ksp as sigma.
     # median: only use when mode=1. it is median|kedge|. dim = (coil,)
+    sigma_real = 0
+    sigma_imag = 0
+
+    # Using edge of ksp as sigma_estimated
+    # 395 is the center row after zero padding. Hard code for now
+    idx_1nz = next((i for i, x in enumerate(input[0, 395, :]) if x), None)  # index of first non-zero value
+    idx_enz = input.shape[2] - idx_1nz + 1  # index of last non-zero value
+
+    kedgel = input[:, :, idx_1nz:idx_1nz + kedge_len]
+    kedge = np.concatenate((kedgel, input[:, :, idx_enz - kedge_len:idx_enz]), axis=2)
+    kedge_real = np.real(kedge)
+    kedge_imag = np.imag(kedge)
+
+    sigma_est_real = np.median(np.median(np.abs(kedge_real), axis=1), axis=1)
+    sigma_est_imag = np.median(np.median(np.abs(kedge_imag), axis=1), axis=1)
 
     # add to image
     logger = logging.getLogger('add_gaussian_noise')
@@ -160,8 +220,8 @@ def add_gaussian_noise(input, prob, median_real=None, median_imag=None, level=1,
             logger.info('Gaussian noise added to kspace(coil, h,w)')
             logger.info(f'Gaussian noise level = {level}')
             for c in range(input.shape[0]):
-                sigma_real = level * median_real[c]
-                sigma_imag = level * median_imag[c]
+                sigma_real = level * sigma_est_real[c]
+                sigma_imag = level * sigma_est_imag[c]
 
                 gauss_real = np.random.normal(mean, sigma_real, (height, width))
                 gauss_real = gauss_real.reshape(height, width)
@@ -180,7 +240,7 @@ def add_gaussian_noise(input, prob, median_real=None, median_imag=None, level=1,
             logger.info('No gaussian noise added')
             noisy = input
 
-    return noisy
+    return noisy, sigma_real, sigma_imag
 
 
 def add_incoherent_noise(kspace=None, prob=None, central=0.4, mode=1, num_corrupted=0, dump=0.5):
@@ -337,18 +397,6 @@ def get_corrupted(kspace, sl, num_coils, num_corrupted, device, acc=0, acc_ulim=
     for c in range(num_coils):
         ksp2[c, :, :] = ksp2[c, :, :] * mask  # ksp2 = (coil, h,w)
 
-    # Using edge of ksp as sigma_estimated
-    # 395 is the center row after zero padding. Hard code for now
-    idx_1nz = next((i for i, x in enumerate(ksp2[0, 395, :]) if x), None)  # index of first non-zero value
-    idx_enz = kspace.shape[3] - idx_1nz + 1  # index of last non-zero value
-
-    kedgel = ksp2[:, :, idx_1nz:idx_1nz + kedge_len]
-    kedge = np.concatenate((kedgel, ksp2[:, :, idx_enz - kedge_len:idx_enz]), axis=2)
-    kedge_real = np.real(kedge)
-    kedge_imag = np.imag(kedge)
-
-    sigma_est_real = np.median(np.median(np.abs(kedge_real), axis=1), axis=1)
-    sigma_est_imag = np.median(np.median(np.abs(kedge_imag), axis=1), axis=1)
 
     # Add Gaussian noise to each coil in kspace
     if num_corrupted == 0:
@@ -356,15 +404,10 @@ def get_corrupted(kspace, sl, num_coils, num_corrupted, device, acc=0, acc_ulim=
     else:
         gaussian_level = gaussian_ulim      # need to put gaussian_level(recon=0) as gaussian_ulim for later tries
 
-    ksp2 = add_gaussian_noise(ksp2, gaussian_prob, median_real=sigma_est_real, median_imag=sigma_est_imag,
-                              level=gaussian_level, mode=1, mean=0)
+    ksp2,_,_ = add_gaussian_noise(ksp2, gaussian_prob, kedge_len=kedge_len,level=gaussian_level, mode=1, mean=0)
 
     # Translational motion in kspace
-
-    ksp2 = trans_motion(ksp2, dir_motion, maxshift, sigma_shift, motion_prob)
-
-
-
+    ksp2,_ = trans_motion(ksp2, dir_motion, maxshift, motion_prob)
 
     # Add incoherent noise
     if num_corrupted == 0:

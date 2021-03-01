@@ -33,7 +33,7 @@ spdevice = sp.Device(0)
 Ntrial = randrange(10000)
 
 # load RankNet
-DGX = False
+DGX = True
 if DGX:
     filepath_rankModel = Path('/raid/DGXUserDataRaid/cxt004/NYUbrain')
     filepath_train = Path('/raid/DGXUserDataRaid/cxt004/NYUbrain')
@@ -69,10 +69,10 @@ else:
     filepath_val = Path("I:/NYUbrain")
 
 
-rank_channel =1
+rank_channel = 1
 rank_trained_on_mag = False
 BO = False
-file_rankModel = os.path.join(filepath_rankModel, "RankClassifier4217_pretrained.pt")
+file_rankModel = os.path.join(filepath_rankModel, "RankClassifier4709_pretrained.pt")
 os.chdir(filepath_rankModel)
 
 log_dir = filepath_rankModel
@@ -100,7 +100,7 @@ yres = 396
 act_xres = 512
 act_yres = 256
 
-acc = 16
+acc = 8
 WHICH_MASK = 'poisson'
 logging.info(f'Acceleration = {acc}, {WHICH_MASK} mask')
 if WHICH_MASK == 'poisson':
@@ -175,6 +175,8 @@ if WHICH_LOSS == 'perceptual':
 elif WHICH_LOSS == 'patchGAN':
     patchGAN = NLayerDiscriminator(input_nc=2)
     patchGAN.cuda()
+elif WHICH_LOSS == 'ssim':
+    ssim_module = SSIM()
 
 Nepoch = 150
 epochMSE = 0
@@ -291,7 +293,11 @@ for epoch in range(Nepoch):
             if WHICH_LOSS == 'mse':
                 loss = mseloss_fcn(imEst2, im_sl)
             elif WHICH_LOSS == 'ssim':
-                loss = ssimloss_fcn(imEst2, im_sl)
+                imEst2_ep = torch.unsqueeze(imEst2, 0)
+                imEst2_ep = imEst2_ep.permute(0,-1,1,2)
+                im_sl_ep = torch.unsqueeze(im_sl, 0)
+                im_sl_ep = im_sl_ep.permute(0, -1, 1, 2)
+                loss = 1 - ssim(imEst2_ep, im_sl_ep)
             elif WHICH_LOSS == 'perceptual':
                 loss = loss_perceptual(imEst2, im_sl)
             elif WHICH_LOSS == 'patchGAN':
@@ -382,7 +388,11 @@ for epoch in range(Nepoch):
             if WHICH_LOSS == 'mse':
                 loss = mseloss_fcn(imEst2, im_sl)
             elif WHICH_LOSS == 'ssim':
-                loss = ssimloss_fcn(imEst2, im_sl)
+                imEst2_ep = torch.unsqueeze(imEst2, 0)
+                imEst2_ep = imEst2_ep.permute(0, -1, 1, 2)
+                im_sl_ep = torch.unsqueeze(im_sl, 0)
+                im_sl_ep = im_sl_ep.permute(0, -1, 1, 2)
+                loss = 1 - ssim(imEst2_ep, im_sl_ep)
             elif WHICH_LOSS == 'perceptual':
                 loss = loss_perceptual(imEst2, im_sl)
             elif WHICH_LOSS == 'patchGAN':

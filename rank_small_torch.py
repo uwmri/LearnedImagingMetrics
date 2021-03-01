@@ -36,7 +36,7 @@ from utils.model_helper import *
 from utils.utils_DL import *
 
 train_on_mag = False    # False: L2CNN trained on abs(im-truth), True: train on abs(im)-abs(truth)
-shuffle_observers = True
+shuffle_observers = False
 MOBILE = False
 EFF = False
 BO = False
@@ -46,8 +46,6 @@ CLIP = False
 SAMPLER = False
 WeightedLoss = False
 Pretrain = 'pretrained'   # pretraining(train on corrupted/truth pair) or pretrained (for actual training) or none
-SHIFT = True
-SCALE = True
 
 trainScoreandMSE = True    # train score based classifier and mse(im1)-mse(im2) based classifier at the same time
 trainScoreandSSIM = True    # train score based classifier and mse(im1)-mse(im2) based classifier at the same time
@@ -356,7 +354,7 @@ if ResumeTrain:
         filepath_rankModel = Path('/raid/DGXUserDataRaid/cxt004/NYUbrain')
     else:
         filepath_rankModel = Path('I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_05062020')
-    file_rankModel = os.path.join(filepath_rankModel, "RankClassifier4488_pretraining.pt")
+    file_rankModel = os.path.join(filepath_rankModel, "RankClassifier6850_pretraining.pt")
     classifier = Classifier(ranknet)
     #classifier.rank.register_backward_hook(printgradnorm)
     loss_func = nn.CrossEntropyLoss(weight=weight)
@@ -377,7 +375,7 @@ if ResumeTrain:
     optimizer.load_state_dict(state['optimizer'])
 
     if trainScoreandMSE:
-        file_rankModelMSE = os.path.join(filepath_rankModel, "RankClassifier4488_pretraining_MSE.pt")
+        file_rankModelMSE = os.path.join(filepath_rankModel, "RankClassifier6850_pretraining_MSE.pt")
         mse_module = MSEmodule()
         classifierMSE = Classifier(mse_module)
         stateMSE = torch.load(file_rankModelMSE)
@@ -393,7 +391,7 @@ if ResumeTrain:
         optimizerMSE.load_state_dict(stateMSE['optimizer'])
 
     if trainScoreandSSIM:
-        file_rankModelSSIM = os.path.join(filepath_rankModel, "RankClassifier4488_pretraining_SSIM.pt")
+        file_rankModelSSIM = os.path.join(filepath_rankModel, "RankClassifier6850_pretraining_SSIM.pt")
         ssim_module = SSIM()
         classifierSSIM = Classifier(ssim_module)
         stateSSIM = torch.load(file_rankModelSSIM)
@@ -497,7 +495,6 @@ score_mse_file = os.path.join(f'score_mse_file_{Ntrial}.h5')
 
 
 Nepoch = 300
-
 lossT = np.zeros(Nepoch)
 lossV = np.zeros(Nepoch)
 
@@ -563,7 +560,7 @@ for epoch in range(Nepoch):
         labels = labels.to(device, dtype=torch.long)
 
         # classifier and scores for each image
-        delta, score1, score2 = classifier(im1, im2, imt, imt)
+        delta, score1, score2 = classifier(im1, im2, imt)
 
         # print(f'delta shape {delta.shape}')
         # print(f'label shape {labels.shape}')
@@ -574,30 +571,7 @@ for epoch in range(Nepoch):
         #print(f'Loss Score = {loss_scale}')
 
         # Cross entropy
-        # if SHIFT:
-        #     shift_ax = np.random.randint(2,4)
-        #     im1_shift = torch.roll(im1, 1, shift_ax)
-        #     imt_shift = torch.roll(imt, 1, shift_ax)
-        #     with torch.no_grad():
-        #         delta_shift, score1_shift, score2_shift = classifier(im1_shift, im2, imt_shift, imt)
-        #
-        #         scorefig = plt_scores(score1, score1_shift)
-        #         writer_train.add_figure('Scores_shift', scorefig, epoch)
-        #
-        #     loss = (loss_func(delta_shift, labels) + loss_func(delta, labels)) / 2
-        #
-        # if SCALE:
-        #     scale = 1e3 * torch.rand(1).cuda()
-        #     im1_scale = im1 * scale
-        #
-        #     with torch.no_grad():
-        #         delta_scale, score1_scale, score2_scale = classifier(im1_scale, im2, imt, imt)
-        #
-        #         scorefig_scale = plt_scores(score1, score1_scale)
-        #         writer_train.add_figure('Scores_score', scorefig_scale, epoch)
-
         loss = loss_func(delta, labels)
-
 
         # Track loss
         train_avg.update(loss.item(), n=BATCH_SIZE)  # here is total loss of all batches
@@ -625,7 +599,7 @@ for epoch in range(Nepoch):
 
         # train on MSE
         if trainScoreandMSE:
-            deltaMSE, mse1, mse2  = classifierMSE(im1, im2, imt, imt)
+            deltaMSE, mse1, mse2  = classifierMSE(im1, im2, imt)
             lossMSE = loss_func(deltaMSE, labels)
             train_avgMSE.update(lossMSE.item(), n=BATCH_SIZE)  # here is total loss of all batches
 
@@ -644,7 +618,7 @@ for epoch in range(Nepoch):
 
         # train on SSIM
         if trainScoreandSSIM:
-            deltaSSIM, ssim1, ssim2  = classifierSSIM(im1, im2, imt, imt)
+            deltaSSIM, ssim1, ssim2  = classifierSSIM(im1, im2, imt)
             lossSSIM = loss_func(deltaSSIM, labels)
             train_avgSSIM.update(lossSSIM.item(), n=BATCH_SIZE)  # here is total loss of all batches
 
@@ -709,23 +683,10 @@ for epoch in range(Nepoch):
             labels = labels.to(device, dtype=torch.long)
 
             # forward
-            delta, score1, score2 = classifier(im1, im2, imt, imt)
+            delta, score1, score2 = classifier(im1, im2, imt)
 
             # loss
-            if SHIFT:
-                shift_ax = np.random.randint(2, 4)
-                im1_shift = torch.roll(im1, 1, shift_ax)
-                imt_shift = torch.roll(imt, 1, shift_ax)
-                delta_shift, score1_shift, score2_shift = classifier(im1_shift, im2, imt_shift, imt)
-
-            if SCALE:
-                scale = 1e3 * torch.rand(1).cuda()
-                im1_scale = im1 * scale
-
-                delta_scale, score1_scale, score2_scale = classifier(im1_scale, im2, imt, imt)
-
-            loss = loss_func(delta, labels) + loss_func(delta_shift, labels) + loss_func(delta_scale, labels)
-
+            loss = loss_func(delta, labels)
             eval_avg.update(loss.item(), n=BATCH_SIZE)
 
             # acc
@@ -735,7 +696,7 @@ for epoch in range(Nepoch):
 
             # mse-based classifier
             if trainScoreandMSE:
-                deltaMSE, mse1, mse2 = classifierMSE(im1, im2, imt, imt)
+                deltaMSE, mse1, mse2 = classifierMSE(im1, im2, imt)
                 lossMSE = loss_func(deltaMSE, labels)
                 eval_avgMSE.update(lossMSE.item(), n=BATCH_SIZE)
 
@@ -746,7 +707,7 @@ for epoch in range(Nepoch):
                 mselistV.append(mse2.cpu().numpy())
 
             if trainScoreandSSIM:
-                deltaSSIM, ssim1, ssim2 = classifierSSIM(im1, im2, imt, imt)
+                deltaSSIM, ssim1, ssim2 = classifierSSIM(im1, im2, imt)
                 lossSSIM = loss_func(deltaSSIM, labels)
                 eval_avgSSIM.update(lossSSIM.item(), n=BATCH_SIZE)
 

@@ -7,7 +7,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 import torchvision
 import torchsummary
-import pytorch_ssim
+
 from utils.model_helper import *
 from utils.CreateImagePairs import get_smaps, add_gaussian_noise
 from utils.unet_componets import *
@@ -223,14 +223,6 @@ def mseloss_fcn(output, target):
     # output = crop_im(output)
     # target = crop_im(target)
     loss = torch.sum((output - target) ** 2)** 0.5
-    return loss
-
-
-def ssimloss_fcn(output, target):
-    output = torch.unsqueeze(output,0).permute(0,-1,1,2).contiguous()
-    target = torch.unsqueeze(target,0).permute(0,-1,1,2).contiguous()
-    loss_fn =pytorch_ssim.SSIM(window_size=7)
-    loss = loss_fn(output, target)
     return loss
 
 

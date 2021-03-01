@@ -691,15 +691,14 @@ class Classifier(nn.Module):
                                  nn.Linear(16, 1))
 
 
-
-    def forward(self, image1, image2, imaget1, imaget2):
+    def forward(self, image1, image2, imaget):
 
         #score1 = self.rank(image1, imaget)
         #score2 = self.rank(image2, imaget)
 
         # Combine the images for batch norm operations
         images_combined = torch.cat([image1, image2], dim=0)    #(batchsize*2, ch=2, 396, 396)
-        truth_combined = torch.cat([imaget1, imaget2], dim=0)
+        truth_combined = torch.cat([imaget, imaget], dim=0)
 
         # Calculate scores
         scores_combined = self.rank(images_combined, truth_combined)

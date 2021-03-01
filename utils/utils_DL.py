@@ -74,7 +74,7 @@ def plt_scoreVsMse(scorelist, mselist, xname='Learned Score', yname='MSE', add_r
         x = np.linspace( 0, np.max(scorelist),100)
         line = slope * x + intercept
         plt.plot(x, line, 'k', label='y={:.2f}x+{:.2f}'.format(slope, intercept), linewidth=5)
-        end
+
 
     plt.xlim([0, 2*np.median(scorelist)])
     plt.ylim([0, 2*np.median(mselist)])
