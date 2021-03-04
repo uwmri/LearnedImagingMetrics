@@ -36,7 +36,7 @@ val_folder = Path("D:/NYUbrain/brain_multicoil_val/multicoil_val")
 test_folder = Path("D:/NYUbrain/brain_multicoil_test/multicoil_test")
 files = find("*.h5", train_folder)
 
-WHICH_CORRUPTION = 'incoherent_pts'
+WHICH_CORRUPTION = 'incoherent_lines'
 out_name = os.path.join(f'corrupted_images_{WHICH_CORRUPTION}.h5')
 try:
     os.remove(out_name)

@@ -38,7 +38,6 @@ def blurring(kspace, acc_ulim):
     sampling_density = np.ones(kspace[0, :, :].shape) * variable_density + (1 - variable_density) / (0.01 + radius)
     mask *= sampling_density
 
-
     thresh = np.percentile(mask, acc)
     mask = np.asarray(np.greater(mask, thresh), dtype=np.float)
 

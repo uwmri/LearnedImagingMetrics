@@ -34,7 +34,7 @@ class SubtractArray(sp.linop.Linop):
 
 class DataGeneratorRecon(Dataset):
 
-    def __init__(self,path_root, h5file, rank_trained_on_mag=False, data_type=None):
+    def __init__(self,path_root, h5file, num_cases=None, rank_trained_on_mag=False, data_type=None):
 
         '''
         input: mask (768, 396) complex64
@@ -50,7 +50,8 @@ class DataGeneratorRecon(Dataset):
         self.scans = [f for f in self.hf.keys()]
 
         # iterate over scans
-        self.len = len(self.hf)
+        # self.len = len(self.hf)
+        self.len = num_cases
 
         self.data_type = data_type
 
@@ -734,9 +735,9 @@ class MoDL(nn.Module):
         self.lam2 = nn.Parameter(0.5*torch.ones([inner_iter]), requires_grad=True)
 
         # Options for UNET
-        self.denoiser = UNet2D(2, 2, depth=3, final_activation='none', f_maps=32, layer_order='cl')
+        self.denoiser = UNet2D(2, 2, depth=5, final_activation='none', f_maps=32, layer_order='cl')
 
-        self.refiner = UNet2D(2, 2, depth=3, final_activation='none', f_maps=32, layer_order='cl')
+        #self.refiner = UNet2D(2, 2, depth=3, final_activation='none', f_maps=32, layer_order='cl')
         #self.denoiser = CNN_shortcut()
         # self.denoiser = Projector(ENC=False)
 
@@ -757,28 +758,28 @@ class MoDL(nn.Module):
             # Ex
             Ex = encoding_op.apply(image)      # For slice by slice:(20, 768, 396, 2) or by case:([slice, 20, 768, 396, 2])
 
-            # kspace correction
-            image_inter = decoding_op.apply(Ex)
-            image_inter_dim = image_inter.ndim
-            if image_inter_dim == 3:
-                image_inter = torch.unsqueeze(image_inter, 0)
-            image_inter = image_inter.permute(0, -1, 1, 2).contiguous()
+            # # kspace correction
+            # image_inter = decoding_op.apply(Ex)
+            # image_inter_dim = image_inter.ndim
+            # if image_inter_dim == 3:
+            #     image_inter = torch.unsqueeze(image_inter, 0)
+            # image_inter = image_inter.permute(0, -1, 1, 2).contiguous()
+            #
+            # # Pad to prevent edge effects, circular pad to keep image statistics
+            # target_size1 = 32 * math.ceil( (64 + image_inter.shape[-1]) / 32)
+            # target_size2 = 32 * math.ceil( (64 + image_inter.shape[-2]) / 32)
+            #
+            # pad_amount1 = (target_size1 - image_inter.shape[-1]) // 2
+            # pad_amount2 = (target_size2 - image_inter.shape[-2]) // 2
+            # pad_f = (pad_amount1,pad_amount1,pad_amount2, pad_amount2)
+            # image_inter = nn.functional.pad(image_inter,pad_f, "circular")
+            # image_inter = self.refiner(image_inter)
+            # image_inter = image_inter[:, :, pad_amount2:-pad_amount2, pad_amount1:-pad_amount1]
+            # image_inter = image_inter.permute(0, 2, 3, 1).contiguous()
+            # if image_inter_dim == 3:
+            #     image_inter = torch.squeeze(image_inter)
 
-            # Pad to prevent edge effects, circular pad to keep image statistics
-            target_size1 = 32 * math.ceil( (64 + image_inter.shape[-1]) / 32)
-            target_size2 = 32 * math.ceil( (64 + image_inter.shape[-2]) / 32)
-
-            pad_amount1 = (target_size1 - image_inter.shape[-1]) // 2
-            pad_amount2 = (target_size2 - image_inter.shape[-2]) // 2
-            pad_f = (pad_amount1,pad_amount1,pad_amount2, pad_amount2)
-            image_inter = nn.functional.pad(image_inter,pad_f, "circular")
-            image_inter = self.refiner(image_inter)
-            image_inter = image_inter[:, :, pad_amount2:-pad_amount2, pad_amount1:-pad_amount1]
-            image_inter = image_inter.permute(0, 2, 3, 1).contiguous()
-            if image_inter_dim == 3:
-                image_inter = torch.squeeze(image_inter)
-
-            Ex = encoding_op.apply(image_inter)
+            # Ex = encoding_op.apply(image_inter)
 
             # Ex - d
             Ex -= kspace

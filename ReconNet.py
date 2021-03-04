@@ -145,15 +145,17 @@ mask_truth = sp.to_device(mask_truth, spdevice)  # Square here to account for sq
 mask_gpu = sp.to_device(mask, spdevice)
 
 # Data generator
+Ntrain = 18
+Nval = 2
 BATCH_SIZE = 1
 prefetch_data = False
 logging.info(f'Load train data from {filepath_train}')
-trainingset = DataGeneratorRecon(filepath_train, file_train, rank_trained_on_mag=rank_trained_on_mag,
+trainingset = DataGeneratorRecon(filepath_train, file_train, num_cases=Ntrain, rank_trained_on_mag=rank_trained_on_mag,
                                  data_type=smap_type)
 loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=True)
 
 logging.info(f'Load eval data from {filepath_val}')
-validationset = DataGeneratorRecon(filepath_val, file_val, rank_trained_on_mag=rank_trained_on_mag,
+validationset = DataGeneratorRecon(filepath_val, file_val, num_cases=Ntrain, rank_trained_on_mag=rank_trained_on_mag,
                                    data_type=smap_type)
 loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=False)
 
@@ -168,7 +170,7 @@ writer_train = SummaryWriter(f'runs/recon/train_{Ntrial}')
 writer_val = SummaryWriter(f'runs/recon/val_{Ntrial}')
 
 
-WHICH_LOSS = 'ssim'
+WHICH_LOSS = 'learned'
 if WHICH_LOSS == 'perceptual':
     loss_perceptual = PerceptualLoss_VGG16()
     loss_perceptual.cuda()
@@ -184,8 +186,7 @@ logging.info(f'MSE for first {epochMSE} epochs then switch to learned')
 lossT = np.zeros(Nepoch)
 lossV = np.zeros(Nepoch)
 
-Ntrain = 18
-Nval = 2
+
 
 out_name = os.path.join(log_dir,f'Images_training{Ntrial}_{WHICH_LOSS}.h5')
 
@@ -204,21 +205,21 @@ logging.info(f'{Ntrain} cases training, {Nval} cases validation')
 logging.info(f'loss = {WHICH_LOSS}')
 logging.info(f'acc = {acc}, mask is {WHICH_MASK}')
 
-# Get the scale for Denoiser
-with torch.no_grad():
-    da = 0.0
-    for avg in range(10):
-        x = torch.randn((1, 2, yres, xres), device='cuda')
-        for iter in range(30):
-            ein = torch.linalg.norm(x)
-            y = ReconModel.call_denoiser(x)
-            eout = torch.linalg.norm(y)
-            x = y / eout
-            # print(f'Scale {eout/ein}')
-        # print(eout)
-        da += eout / 10
-    logging.info(f'Avg Denoiser scale = {da}')
-    ReconModel.set_denoiser_scale( 0.9 / da)
+# # Get the scale for Denoiser
+# with torch.no_grad():
+#     da = 0.0
+#     for avg in range(10):
+#         x = torch.randn((1, 2, yres, xres), device='cuda')
+#         for iter in range(30):
+#             ein = torch.linalg.norm(x)
+#             y = ReconModel.call_denoiser(x)
+#             eout = torch.linalg.norm(y)
+#             x = y / eout
+#             # print(f'Scale {eout/ein}')
+#         # print(eout)
+#         da += eout / 10
+#     logging.info(f'Avg Denoiser scale = {da}')
+#     ReconModel.set_denoiser_scale( 0.9 / da)
 
 for epoch in range(Nepoch):
 
@@ -343,8 +344,8 @@ for epoch in range(Nepoch):
         # print(f'---------------------after training case {i}, epoch {epoch}-------------------------------')
         # print_mem()
 
-        if i == Ntrain:
-            break
+        # if i == Ntrain:
+        #     break
     print(f'Epoch took {time.time() - tstart_batch}')
 
     ReconModel.eval()
@@ -459,8 +460,8 @@ for epoch in range(Nepoch):
         pinned_mempool.free_all_blocks()
         torch.cuda.empty_cache()
 
-        if i == Nval:
-            break
+        # if i == Nval:
+        #     break
 
     logging.info(
         f'epoch {epoch} took {(time.time() - tt) / 60} min, Loss train = {train_avg.avg()}, Loss eval = {eval_avg.avg()}')
