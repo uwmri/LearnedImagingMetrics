@@ -33,7 +33,7 @@ spdevice = sp.Device(0)
 Ntrial = randrange(10000)
 
 # load RankNet
-DGX = True
+DGX = False
 if DGX:
     filepath_rankModel = Path('/raid/DGXUserDataRaid/cxt004/NYUbrain')
     filepath_train = Path('/raid/DGXUserDataRaid/cxt004/NYUbrain')
@@ -72,7 +72,7 @@ else:
 rank_channel = 1
 rank_trained_on_mag = False
 BO = False
-file_rankModel = os.path.join(filepath_rankModel, "RankClassifier4709_pretrained.pt")
+file_rankModel = os.path.join(filepath_rankModel, "RankClassifier4217_pretrained.pt")
 os.chdir(filepath_rankModel)
 
 log_dir = filepath_rankModel
@@ -143,10 +143,11 @@ plt.show()
 
 mask_truth = sp.to_device(mask_truth, spdevice)  # Square here to account for sqrt in SENSE operator
 mask_gpu = sp.to_device(mask, spdevice)
+mask_torch = sp.to_pytorch(mask_gpu, requires_grad=False)
 
 # Data generator
-Ntrain = 18
-Nval = 2
+Ntrain = 1
+Nval = 1
 BATCH_SIZE = 1
 prefetch_data = False
 logging.info(f'Load train data from {filepath_train}')
@@ -159,10 +160,16 @@ validationset = DataGeneratorRecon(filepath_val, file_val, num_cases=Ntrain, ran
                                    data_type=smap_type)
 loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=False)
 
-
-INNER_ITER = 5
-ReconModel = MoDL(inner_iter=INNER_ITER)
-ReconModel.cuda()
+UNROLL = False
+if UNROLL:
+    INNER_ITER = 5
+    ReconModel = MoDL(inner_iter=INNER_ITER)
+    logging.info(f'MoDL, inner iter = {INNER_ITER}')
+else:
+    NUM_CASCADES = 10
+    ReconModel = EEVarNet(num_cascades=NUM_CASCADES)
+    logging.info(f'EEVarNet, {NUM_CASCADES} cascades')
+ReconModel.cuda();
 # torchsummary.summary(ReconModel.denoiser, input_size=(2,768,396), batch_size=16)
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -180,7 +187,7 @@ elif WHICH_LOSS == 'patchGAN':
 elif WHICH_LOSS == 'ssim':
     ssim_module = SSIM()
 
-Nepoch = 150
+Nepoch = 1
 epochMSE = 0
 logging.info(f'MSE for first {epochMSE} epochs then switch to learned')
 lossT = np.zeros(Nepoch)
@@ -200,7 +207,6 @@ if epochMSE != 0:
 logging.info(f'Adam, lr = {LR}')
 logging.info('case averaged loss')
 logging.info('Denoiser = Unet')
-logging.info(f'inner_iter = {INNER_ITER}')
 logging.info(f'{Ntrain} cases training, {Nval} cases validation')
 logging.info(f'loss = {WHICH_LOSS}')
 logging.info(f'acc = {acc}, mask is {WHICH_MASK}')
@@ -284,12 +290,14 @@ for epoch in range(Nepoch):
 
             A_torch = sp.to_pytorch_function(A, input_iscomplex=True, output_iscomplex=True)
             Ah_torch = sp.to_pytorch_function(Ah, input_iscomplex=True, output_iscomplex=True)
-
             imEst = 0.0 * sp.to_pytorch(Ah * kspaceU_sl, requires_grad=True)
-
             t = time.time()
             kspaceU_sl = sp.to_pytorch(kspaceU_sl)  # torch.Size([20, 768, 396, 2])
-            imEst2 = ReconModel(imEst, kspaceU_sl, A_torch, Ah_torch)  # (768, 396, 2)
+
+            if UNROLL:
+                imEst2 = ReconModel(imEst, kspaceU_sl, A_torch, Ah_torch)  # (768, 396, 2)
+            else:
+                imEst2 = ReconModel(kspaceU_sl, mask_torch, A_torch, Ah_torch)
 
             if WHICH_LOSS == 'mse':
                 loss = mseloss_fcn(imEst2, im_sl)
@@ -384,7 +392,11 @@ for epoch in range(Nepoch):
 
             t = time.time()
             kspaceU_sl = sp.to_pytorch(kspaceU_sl)
-            imEst2 = ReconModel(imEst, kspaceU_sl, A_torch, Ah_torch)
+            if UNROLL:
+                imEst2 = ReconModel(imEst, kspaceU_sl, A_torch, Ah_torch)
+            else:
+                imEst2 = ReconModel(kspaceU_sl, mask_torch, A_torch, Ah_torch)
+
 
             if WHICH_LOSS == 'mse':
                 loss = mseloss_fcn(imEst2, im_sl)

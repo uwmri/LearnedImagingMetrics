@@ -831,6 +831,75 @@ class MoDL(nn.Module):
 
         return image
 
+class EEVarNet_Block(nn.Module):
+    def __init__(self, model, scale_init=1.0):
+        super(EEVarNet_Block, self).__init__()
+        self.model = model
+        self.lam = nn.Parameter(scale_init * torch.ones(1), requires_grad=True)
+
+    def forward(self, k0, kspace, mask, encoding_op, decoding_op):
+
+        # Refinement: encoding * CNN(image)
+        image = decoding_op.apply(kspace)
+        # Padding
+        if isinstance(self.model, UNet2D):
+            dim = image.ndim
+            if dim == 3:
+                image = torch.unsqueeze(image, 0)
+            image = image.permute(0, -1, 1, 2).contiguous()
+             # Pad to prevent edge effects, circular pad to keep image statistics
+            target_size1 = 32 * math.ceil((64 + image.shape[-1]) / 32)
+            target_size2 = 32 * math.ceil((64 + image.shape[-2]) / 32)
+            # print(f'Target size {target_size1} {target_size2}')
+
+            pad_amount1 = (target_size1 - image.shape[-1]) // 2
+            pad_amount2 = (target_size2 - image.shape[-2]) // 2
+            # print(f'Target size {pad_amount1} {pad_amount2}')
+
+            # print(f'Target size = {target_size}, pad_amount {pad_amount} input = {y_pred.shape}')
+
+            pad_f = (pad_amount1, pad_amount1, pad_amount2, pad_amount2)
+            # print(pad_f)
+            image = nn.functional.pad(image, pad_f, "circular")
+            # print(y_pred.shape)
+            image = self.model(image)
+
+            # cropping for UNet
+            image = image[:, :, pad_amount2:-pad_amount2, pad_amount1:-pad_amount1]
+            image = image.permute(0, 2, 3, 1).contiguous()
+            if dim == 3:
+                image = torch.squeeze(image)
+            #print(f'image shape {image.shape}')
+        refinement = encoding_op.apply(image)
+
+        # DC
+        kspace_complex = torch.view_as_complex(kspace)
+        k0_complex = torch.view_as_complex(k0)
+        dc_complex = -1 * self.lam * mask * (kspace_complex - k0_complex)
+        dc = torch.view_as_real(dc_complex)
+
+        return kspace + dc + refinement
+
+class EEVarNet(nn.Module):
+    def __init__(self, num_cascades=12):
+        super(EEVarNet, self).__init__()
+        self.cascades = nn.ModuleList(
+            [EEVarNet_Block(UNet2D(2, 2, depth=3, final_activation='none', f_maps=32, layer_order='cl'))
+             for _ in range(num_cascades)]
+        )
+
+
+    def forward(self, k0, mask, encoding_op, decoding_op):
+        kspace = k0.clone()
+        for cascade in self.cascades:
+            kspace = cascade(k0, kspace, mask, encoding_op, decoding_op)
+
+        # SOS
+        FT_torch = sp.to_pytorch_function(sp.linop.IFFT(tuple(k0.shape[:-1]), axes=range(-3, 0)), input_iscomplex=True, output_iscomplex=True)
+        im = FT_torch.apply(kspace)
+        imSOS = torch.sum(im**2,dim=0)
+        return imSOS
+
 
 class MoDL_CG(nn.Module):
     # def __init__(self, inner_iter=10):
