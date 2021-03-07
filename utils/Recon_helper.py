@@ -828,6 +828,10 @@ class MoDL(nn.Module):
 
             # Return Image
             image = self.lam2[i]*y_pred
+        # crop to square
+        idxL = int((image.shape[0] - image.shape[1]) / 2)
+        idxR = int(idxL + image.shape[1])
+        image = image[idxL:idxR,:,:]
 
         return image
 
@@ -898,6 +902,12 @@ class EEVarNet(nn.Module):
         FT_torch = sp.to_pytorch_function(sp.linop.IFFT(tuple(k0.shape[:-1]), axes=range(-3, 0)), input_iscomplex=True, output_iscomplex=True)
         im = FT_torch.apply(kspace)
         imSOS = torch.sum(im**2,dim=0)
+
+        # crop to square
+        idxL = int((imSOS.shape[0] - imSOS.shape[1]) / 2)
+        idxR = int(idxL + imSOS.shape[1])
+        imSOS = imSOS[idxL:idxR,:,:]
+
         return imSOS
 
 

@@ -33,7 +33,7 @@ spdevice = sp.Device(0)
 Ntrial = randrange(10000)
 
 # load RankNet
-DGX = False
+DGX = True
 if DGX:
     filepath_rankModel = Path('/raid/DGXUserDataRaid/cxt004/NYUbrain')
     filepath_train = Path('/raid/DGXUserDataRaid/cxt004/NYUbrain')
@@ -72,7 +72,7 @@ else:
 rank_channel = 1
 rank_trained_on_mag = False
 BO = False
-file_rankModel = os.path.join(filepath_rankModel, "RankClassifier4217_pretrained.pt")
+file_rankModel = os.path.join(filepath_rankModel, "RankClassifier4709_pretrained.pt")
 os.chdir(filepath_rankModel)
 
 log_dir = filepath_rankModel
@@ -146,8 +146,8 @@ mask_gpu = sp.to_device(mask, spdevice)
 mask_torch = sp.to_pytorch(mask_gpu, requires_grad=False)
 
 # Data generator
-Ntrain = 1
-Nval = 1
+Ntrain = 18
+Nval = 2
 BATCH_SIZE = 1
 prefetch_data = False
 logging.info(f'Load train data from {filepath_train}')
@@ -166,7 +166,7 @@ if UNROLL:
     ReconModel = MoDL(inner_iter=INNER_ITER)
     logging.info(f'MoDL, inner iter = {INNER_ITER}')
 else:
-    NUM_CASCADES = 10
+    NUM_CASCADES = 12
     ReconModel = EEVarNet(num_cascades=NUM_CASCADES)
     logging.info(f'EEVarNet, {NUM_CASCADES} cascades')
 ReconModel.cuda();
@@ -197,7 +197,7 @@ lossV = np.zeros(Nepoch)
 
 out_name = os.path.join(log_dir,f'Images_training{Ntrial}_{WHICH_LOSS}.h5')
 
-LR = 1e-4
+LR = 5*1e-5
 # optimizer = optim.SGD(ReconModel.parameters(), lr=LR, momentum=0.9)
 optimizer = optim.Adam(ReconModel.parameters(), lr=LR)
 if epochMSE != 0:
@@ -287,6 +287,9 @@ for epoch in range(Nepoch):
 
             # Get truth on the fly
             im_sl = sp.to_pytorch(Atruth.H * (kspace_sl * mask_truth), requires_grad=False)
+            idxL = int((im_sl.shape[0] - im_sl.shape[1]) / 2)
+            idxR = int(idxL + im_sl.shape[1])
+            im_sl = im_sl[idxL:idxR, :, :]
 
             A_torch = sp.to_pytorch_function(A, input_iscomplex=True, output_iscomplex=True)
             Ah_torch = sp.to_pytorch_function(Ah, input_iscomplex=True, output_iscomplex=True)
@@ -384,6 +387,9 @@ for epoch in range(Nepoch):
 
             # Get truth
             im_sl = sp.to_pytorch(Atruth.H * (kspace_sl * mask_truth), requires_grad=False)
+            idxL = int((im_sl.shape[0] - im_sl.shape[1]) / 2)
+            idxR = int(idxL + im_sl.shape[1])
+            im_sl = im_sl[idxL:idxR, :, :]
 
             A_torch = sp.to_pytorch_function(A, input_iscomplex=True, output_iscomplex=True)
             Ah_torch = sp.to_pytorch_function(Ah, input_iscomplex=True, output_iscomplex=True)
