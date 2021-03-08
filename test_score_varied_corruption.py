@@ -36,7 +36,7 @@ val_folder = Path("D:/NYUbrain/brain_multicoil_val/multicoil_val")
 test_folder = Path("D:/NYUbrain/brain_multicoil_test/multicoil_test")
 files = find("*.h5", train_folder)
 
-WHICH_CORRUPTION = 'incoherent_lines'
+WHICH_CORRUPTION = 'none'
 out_name = os.path.join(f'corrupted_images_{WHICH_CORRUPTION}.h5')
 try:
     os.remove(out_name)
@@ -112,8 +112,17 @@ for index_file in range(len(os.listdir(train_folder))):
                 hf.create_dataset(name, data=image_truth)
 
             # Get corrupted
-            if WHICH_CORRUPTION == 'motion':
-                ksp2, corruption_mag = trans_motion(ksp_full, 2, 150, 1)
+            if WHICH_CORRUPTION == 'Corrupted PE (%)':
+                # corruption_mag is from which PE line the motion started/total PEs
+                maxshift=20
+                ksp2, corruption_mag = trans_motion(ksp_full, dir_motion=2, maxshift=maxshift, prob=1, startPE=180,
+                                                    fix_shift=True, fix_start=False)
+            if WHICH_CORRUPTION == 'Total shift in pixels':
+                # corruption_mag is magnitude of the motion
+                startPE=180
+                ksp2, corruption_mag = trans_motion(ksp_full, dir_motion=2, maxshift=1, prob=1,
+                                                    startPE=startPE,fix_shift=False, fix_start=True)
+
             elif WHICH_CORRUPTION == 'gaussian':
                 gaussian_ulim = 12
                 gaussian_level = np.random.randint(0, gaussian_ulim)
@@ -129,6 +138,10 @@ for index_file in range(len(os.listdir(train_folder))):
                 ksp2, corruption_mag, _ = add_incoherent_noise(ksp_full, prob=1,
                                                            central=np.random.uniform(0.2, 0.4), mode=1,
                                                            num_corrupted=0, dump=0.5)
+
+            elif WHICH_CORRUPTION =='none':
+                ksp2 = ksp_full
+                corruption_mag = 0
 
             corruption_magList.append(corruption_mag)
             ksp2_gpu = sp.to_device(ksp2, device=spdevice)
@@ -153,7 +166,7 @@ for index_file in range(len(os.listdir(train_folder))):
 
             count += 1
 
-    if index_file == 100:
+    if index_file == 10:
         break
 scoreList = np.asarray(scoreList)
 mseList = np.asarray(mseList)

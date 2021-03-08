@@ -882,13 +882,13 @@ class EEVarNet_Block(nn.Module):
         dc_complex = -1 * self.lam * mask * (kspace_complex - k0_complex)
         dc = torch.view_as_real(dc_complex)
 
-        return kspace + dc + refinement
+        return kspace + dc - refinement
 
 class EEVarNet(nn.Module):
     def __init__(self, num_cascades=12):
         super(EEVarNet, self).__init__()
         self.cascades = nn.ModuleList(
-            [EEVarNet_Block(UNet2D(2, 2, depth=3, final_activation='none', f_maps=32, layer_order='cl'))
+            [EEVarNet_Block(UNet2D(2, 2, depth=4, final_activation='none', f_maps=18, layer_order='cli'))
              for _ in range(num_cascades)]
         )
 

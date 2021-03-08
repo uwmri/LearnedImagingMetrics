@@ -70,11 +70,15 @@ def wave_thresh(input, thresh):
     return output
 
 
-def trans_motion(input, dir_motion, maxshift, prob):
+def trans_motion(input, dir_motion=2, maxshift=10, prob=1, startPE=180,fix_shift=False, fix_start=False):
     # input: kspace (coil, h, w).
     # dir_motion: direction of phase encode. 0 for width, 1 for height-dir
     # maxshift: np.random.uniform(0,maxshift) is the size of displacement in pixel
     # prob: if np.random.randint(prob) == 1, there's motion for that PE line
+    # for test_score_varied_corruption.py: Always, dir_motion=2, prob=1
+    #                   fix_shift, when enabled, maxshift IS the amount of shift. corruption mag=corrupted PE/total PE
+    #                   fix_start, startPE should not be none. corruption mag=total shift
+
 
     logger = logging.getLogger('trans_motion')
     total_shift = 0
@@ -82,7 +86,7 @@ def trans_motion(input, dir_motion, maxshift, prob):
         num_pe = input.shape[2]     # number of column
         for ii in range(num_pe):
             if np.random.randint(prob) == 0:
-
+                total_shift = np.random.uniform(0, maxshift)
                 input[:, :, ii] = input[:, :, ii] * np.exp(
                     -1j * 2 * np.pi * total_shift * (1 / num_pe) * (ii - num_pe / 2))
             else:
@@ -102,15 +106,18 @@ def trans_motion(input, dir_motion, maxshift, prob):
         logger.info(f'probability of motion is 1/{prob}')
         if np.random.randint(prob) == 0:
 
-            logger.info(f'Yes, Motion')
             num_x, num_y = input.shape[1:]
             startdir = np.random.randint(0,1)   # Always start in PE (column)
-
-            shift_bulk0 = (2 * np.random.randint(0, 2) - 1) * np.random.randint(1, maxshift)  # shift in x
-            shift_bulk1 = (2 * np.random.randint(0, 2) - 1) * np.random.randint(1, maxshift)  # shift in y
+            if fix_shift:
+                shift_bulk0 = (2 * np.random.randint(0, 2) - 1) * maxshift
+                shift_bulk1 = (2 * np.random.randint(0, 2) - 1) * maxshift
+            else:
+                shift_bulk0 = (2 * np.random.randint(0, 2) - 1) * np.random.randint(0, maxshift)  # shift in x
+                shift_bulk1 = (2 * np.random.randint(0, 2) - 1) * np.random.randint(0, maxshift)  # shift in y
             # shift_bulk0 = (2*np.random.randint(0,2)-1) * np.random.normal(maxshift, sigma_shift)        # shift in x
             # shift_bulk1 = (2*np.random.randint(0,2)-1) * np.random.normal(maxshift, sigma_shift)        # shift in y
-            total_shift = np.abs(shift_bulk0) + np.abs(shift_bulk1)
+                total_shift = np.abs(shift_bulk0) + np.abs(shift_bulk1)
+                corruption_mag = total_shift
 
             logger.info(f'shift in x is {shift_bulk0} pixels')
             logger.info(f'shift in y is {shift_bulk1} pixels')
@@ -127,17 +134,23 @@ def trans_motion(input, dir_motion, maxshift, prob):
             else:   # col is PE
                 mu_start = num_y/2
                 sigma_start = num_y/2*.075
-                start = np.int(np.floor(np.random.normal(mu_start,sigma_start)))
+                if fix_shift:
+                    start = np.random.randint(0, num_y)
+                else:
+                    start = np.int(np.floor(np.random.normal(mu_start, sigma_start)))
+                if fix_start:
+                    start = startPE
                 central_rangeL = num_y/2 - num_y/2*.05
                 central_rangeR = num_y/2 + num_y/2*.05
-                if start > central_rangeR:
 
+                if start > central_rangeR:
                     logger.info(f'motion starts from column # {start} to the end')
                     for ii in range(num_x):
                         for jj in range(start,num_y):
                             input[:, ii, jj] = input[:, ii, jj] * np.exp(
                                 -1j * 2 * np.pi * (shift_bulk0 * (1 / num_y) * (jj - num_y / 2) + shift_bulk1 *
                                                    (1 / num_x) * (ii - num_x / 2)))
+                    percent_corruptedPE = (num_y-start)/num_y
                 elif start < central_rangeL:
 
                     logger.info(f'motion starts from column #0 to {start}')
@@ -146,13 +159,20 @@ def trans_motion(input, dir_motion, maxshift, prob):
                             input[:, ii, jj] = input[:, ii, jj] * np.exp(
                                 -1j * 2 * np.pi * (-shift_bulk0 * (1 / num_y) * (jj - num_y / 2) - shift_bulk1 *
                                                    (1 / num_x) * (ii - num_x / 2)))
-                else:
+                    percent_corruptedPE = start/num_y
 
+                else:
                     logger.info(f'motion starts too close to the central region, abort')
+                    percent_corruptedPE = 0
+
+                if fix_shift:
+                    corruption_mag = percent_corruptedPE * 100
         else:
             pass
 
-    return input, total_shift
+
+    return input, corruption_mag
+
 
 
 def normalization(input, num_max):

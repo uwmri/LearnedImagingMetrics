@@ -187,7 +187,7 @@ elif WHICH_LOSS == 'patchGAN':
 elif WHICH_LOSS == 'ssim':
     ssim_module = SSIM()
 
-Nepoch = 1
+Nepoch = 200
 epochMSE = 0
 logging.info(f'MSE for first {epochMSE} epochs then switch to learned')
 lossT = np.zeros(Nepoch)
@@ -197,12 +197,13 @@ lossV = np.zeros(Nepoch)
 
 out_name = os.path.join(log_dir,f'Images_training{Ntrial}_{WHICH_LOSS}.h5')
 
-LR = 5*1e-5
+LR = 1e-3
 # optimizer = optim.SGD(ReconModel.parameters(), lr=LR, momentum=0.9)
 optimizer = optim.Adam(ReconModel.parameters(), lr=LR)
-if epochMSE != 0:
-    lambda1 = lambda epoch: 1e1 if epoch<epochMSE else 1.0
-    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda1)
+scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=40, gamma=0.1)
+# if epochMSE != 0:
+#     lambda1 = lambda epoch: 1e1 if epoch<epochMSE else 1.0
+#     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda1)
 
 logging.info(f'Adam, lr = {LR}')
 logging.info('case averaged loss')
@@ -249,7 +250,8 @@ for epoch in range(Nepoch):
         smaps = sp.to_device(smaps, device=spdevice)
         smaps = spdevice.xp.squeeze(smaps)
 
-        kspace *= 1e6
+        if UNROLL:
+            kspace *= 1e6
         kspace = sp.to_device(kspace, device=spdevice)
         kspace = chan2_complex(spdevice.xp.squeeze(kspace))  # cupy array on cuda
 
@@ -316,7 +318,7 @@ for epoch in range(Nepoch):
                 loss = loss_GAN(imEst2, im_sl, patchGAN)
             else:
                 if epoch < epochMSE:
-                    loss = mseloss_fcn(imEst2, im_sl)
+                    loss = mseloss_fcn(imEst2, im_sl) * 5e2
                     loss_mse_tensor = loss
                 else:
                     loss = learnedloss_fcn(imEst2, im_sl, score, rank_trained_on_mag=rank_trained_on_mag)
@@ -338,8 +340,7 @@ for epoch in range(Nepoch):
 
         # Slice loop
         optimizer.step()
-        if epochMSE != 0:
-            scheduler.step()
+        scheduler.step()
 
         print(f'case {i}, took {time.time() - t_case}s, loss {loss_avg}, avg = {train_avg.avg()}')
 
@@ -370,7 +371,8 @@ for epoch in range(Nepoch):
         smaps = chan2_complex(spdevice.xp.squeeze(smaps))
         Nslices = smaps.shape[0]
 
-        kspace *= 1e6
+        if UNROLL:
+            kspace *= 1e6
         kspace = sp.to_device(kspace, device=spdevice)
         kspace = spdevice.xp.squeeze(kspace)
         kspace = chan2_complex(kspace)
@@ -418,7 +420,7 @@ for epoch in range(Nepoch):
                 loss = loss_GAN(imEst2, im_sl, patchGAN)
             else:
                 if epoch < epochMSE:
-                    loss = mseloss_fcn(imEst2, im_sl)
+                    loss = mseloss_fcn(imEst2, im_sl) *5e2
                     loss_mse_tensor = loss
                 else:
                     loss_mse_tensor = mseloss_fcn(imEst2, im_sl).detach()
@@ -433,8 +435,10 @@ for epoch in range(Nepoch):
 
             if i == 1 and sl == 4:
                 truthplt = chan2_complex(torch.squeeze(im_sl.detach().cpu()))
+                truthplt = truthplt[idxL:idxR,:]
                 perturbed = Ah_torch.apply(kspaceU_sl)
                 noisyplt = chan2_complex(perturbed.detach().cpu())
+                noisyplt = noisyplt[idxL:idxR,:]
                 del perturbed
                 temp = imEst2
                 temp = temp.detach().cpu()
@@ -448,9 +452,11 @@ for epoch in range(Nepoch):
                     kspaceU_sl_gpu = sp.from_pytorch(kspaceU_sl, iscomplex=True)
                     imSense = sp.mri.app.SenseRecon(kspaceU_sl_gpu, smaps_sl, weights=mask_gpu, lamda=.01,
                                                     max_iter=20, device=spdevice).run()
+                    imSense = imSense[idxL:idxR,:]
                     # L1-wavelet
                     imL1 = sp.mri.app.L1WaveletRecon(kspaceU_sl_gpu, smaps_sl, weights=mask_gpu, lamda=.001,
                                                      max_iter=20, device=spdevice).run()
+                    imL1 = imL1[idxL:idxR,:]
 
                 with h5py.File(out_name, 'a') as hf:
                     if epoch == 0:

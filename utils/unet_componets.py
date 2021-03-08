@@ -328,7 +328,7 @@ class UNet2D(nn.Module):
     """
 
     def __init__(self, in_channels, out_channels, f_maps=64, layer_order='crg', num_groups=0,
-                 depth=4, layer_growth=2.0, residual=True, **kwargs):
+                 depth=4, layer_growth=2.0, residual=True, EEVarNet=False, **kwargs):
         super(UNet2D, self).__init__()
 
         if isinstance(f_maps, int):
@@ -371,10 +371,30 @@ class UNet2D(nn.Module):
         # channels to the number of labels
         self.final_conv = nn.Conv2d(f_maps[0], out_channels, 1, bias=USE_BIAS)
 
+        self.EEVarNet = EEVarNet
+
+    def norm(self, x):
+        b, c, h, w = x.shape
+        x = x.view(b, 2, c // 2 * h * w)
+
+        mean = x.mean(dim=2).view(b, c, 1, 1)
+        std = x.std(dim=2).view(b, c, 1, 1)
+
+        x = x.view(b, c, h, w)
+
+        return (x - mean) / std, mean, std
+
+    def unnorm(self, x, mean, std):
+        return x * std + mean
+
     def forward(self, x):
 
         # Keep x
         input = x
+
+        # do group norm as in the paper
+        if self.EEVarNet:
+            x, mean, std = self.norm(x)
 
         # encoder part
         encoders_features = []
@@ -398,6 +418,9 @@ class UNet2D(nn.Module):
         # Keep skip to end and also downweight to help training
         if self.residual:
             x += input
+
+        if self.EEVarNet:
+            x = self.unnorm(x, mean, std)
 
         return x
 
