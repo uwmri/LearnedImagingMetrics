@@ -11,7 +11,7 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 import torch
 
-DGX = False
+DGX = True
 
 try:
     from ax.service.managed_loop import optimize
@@ -116,7 +116,7 @@ NRANKS = ranks.shape[0]
 # Shuffle the ranks while the data size is small
 if shuffle_observers:
     np.random.shuffle(ranks)
-#np.savetxt("consensus_mode_all.csv", ranks, fmt='%d', delimiter=',')
+# np.savetxt("consensus_mode_all.csv", ranks, fmt='%d', delimiter=',')
 
 
 if train_on_mag:
@@ -260,6 +260,7 @@ Ntrial = randrange(10000)
 log_dir = filepath_images
 logging.basicConfig(filename=os.path.join(log_dir,f'runs/rank/ranking_{Ntrial}.log'), filemode='w', level=logging.INFO)
 logging.info('With L2cnn classifier')
+logging.info(f'{Ntrial}')
 
 CV = 1
 CV_fold = 5
@@ -354,7 +355,7 @@ if ResumeTrain:
         filepath_rankModel = Path('/raid/DGXUserDataRaid/cxt004/NYUbrain')
     else:
         filepath_rankModel = Path('I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_05062020')
-    file_rankModel = os.path.join(filepath_rankModel, "RankClassifier6850_pretraining.pt")
+    file_rankModel = os.path.join(filepath_rankModel, "RankClassifier847_pretraining.pt")
     classifier = Classifier(ranknet)
     #classifier.rank.register_backward_hook(printgradnorm)
     loss_func = nn.CrossEntropyLoss(weight=weight)
@@ -375,7 +376,7 @@ if ResumeTrain:
     optimizer.load_state_dict(state['optimizer'])
 
     if trainScoreandMSE:
-        file_rankModelMSE = os.path.join(filepath_rankModel, "RankClassifier6850_pretraining_MSE.pt")
+        file_rankModelMSE = os.path.join(filepath_rankModel, "RankClassifier847_pretraining_MSE.pt")
         mse_module = MSEmodule()
         classifierMSE = Classifier(mse_module)
         stateMSE = torch.load(file_rankModelMSE)
@@ -391,7 +392,7 @@ if ResumeTrain:
         optimizerMSE.load_state_dict(stateMSE['optimizer'])
 
     if trainScoreandSSIM:
-        file_rankModelSSIM = os.path.join(filepath_rankModel, "RankClassifier6850_pretraining_SSIM.pt")
+        file_rankModelSSIM = os.path.join(filepath_rankModel, "RankClassifier847_pretraining_SSIM.pt")
         ssim_module = SSIM()
         classifierSSIM = Classifier(ssim_module)
         stateSSIM = torch.load(file_rankModelSSIM)
@@ -438,8 +439,8 @@ else:
         # get best paramters and initialize optimizier here manually
 
         #optimizer = optim.SGD(classifier.parameters(), lr=0.003152130338485237, momentum=0.27102874871343374)
-        learning_rate = 1e-5
-        learning_rate_Classifier = 1e-4
+        learning_rate = 1e-3
+        learning_rate_Classifier = 1e-3
         learning_rate_MSE = 1e-3
         learning_rate_SSIM = 1e-3
 
@@ -494,7 +495,7 @@ writer_val = SummaryWriter(os.path.join(log_dir,f'runs/rank/val_{Ntrial}'))
 score_mse_file = os.path.join(f'score_mse_file_{Ntrial}.h5')
 
 
-Nepoch = 300
+Nepoch = 500
 lossT = np.zeros(Nepoch)
 lossV = np.zeros(Nepoch)
 

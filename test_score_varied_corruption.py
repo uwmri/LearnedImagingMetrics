@@ -36,30 +36,35 @@ val_folder = Path("D:/NYUbrain/brain_multicoil_val/multicoil_val")
 test_folder = Path("D:/NYUbrain/brain_multicoil_test/multicoil_test")
 files = find("*.h5", train_folder)
 
-WHICH_CORRUPTION = 'none'
-out_name = os.path.join(f'corrupted_images_{WHICH_CORRUPTION}.h5')
-try:
-    os.remove(out_name)
-except OSError:
-    pass
+#CORRUPTIONS = ['Motion Corrupted PE (%)','Total shift in pixels', 'gaussian', '% random undersampling', '% PE removed randomly']
+CORRUPTIONS = ['Motion Corrupted PE (%)']
+SAME_IMAGE = '(the same image)'
+# out_name = os.path.join(f'corrupted_images_{WHICH_CORRUPTION}.h5')
+# try:
+#     os.remove(out_name)
+# except OSError:
+#     pass
 
-# number of slices to grab from each scan
+Ntrials = 100
 num_slices = 4
 Nxmax = 396
 Nymax = 768
-count = 1
-scoreList = []
-mseList = []
-ssimList = []
-corruption_magList = []
-for index_file in range(len(os.listdir(train_folder))):
+count = 0
 
-    file=files[np.random.randint(len(os.listdir(train_folder)))]
+
+# for index_file in range(len(os.listdir(train_folder))):
+
+while count == 0:
+
+    file = files[np.random.randint(len(os.listdir(train_folder)))]
 
     file_size = os.path.getsize(file)
     if file_size < 300000000:
         pass
     else:
+        s = 1
+        print(f'{file}, slice{s}')
+        count += 1
         hf = h5py.File(file, mode='r')
 
         ksp = hf['kspace'][()]
@@ -67,120 +72,174 @@ for index_file in range(len(os.listdir(train_folder))):
         # Hard code zero padding kspace
         padyU = int(.5 * (Nymax - ksp.shape[2]))
         padxU = int(.5 * (Nxmax - ksp.shape[3]))
-
         ksp = np.pad(ksp,
                      ((0, 0), (0, 0), (padyU, Nymax - ksp.shape[2] - padyU), (padxU, Nxmax - ksp.shape[3] - padxU)),
                      'constant', constant_values=0 + 0j)
         tot_slices = np.size(ksp, 0)
         tot_coils = np.size(ksp, 1)
 
-        # Get list of slice numbers without duplicates
-        mu, sigma = 0, 0.7 * tot_slices
-        for ii in range(10000):  # Not ideal...
-            num_duplicates = 0
-            num_outrange = 0
-            index_duplicates = []
-            slice_nums = np.floor(np.abs(np.random.normal(mu, sigma, num_slices)))
-            for i in range(0, num_slices):
-                if slice_nums[i] >= tot_slices:
-                    num_outrange += 1
-                for j in range(i + 1, num_slices):
-                    if slice_nums[i] == slice_nums[j]:
-                        index_duplicates.append(j)
-                        num_duplicates += 1
-            if num_duplicates == 0 and num_outrange == 0:
-                break
 
-        for s in slice_nums:
-            s = int(s)
-            ksp_full = ksp[s]
-            ksp_full_gpu = sp.to_device(ksp_full, device=spdevice)
+        # # Get list of slice numbers without duplicates
+        # mu, sigma = 0, 0.7 * tot_slices
+        # for ii in range(10000):  # Not ideal...
+        #     num_duplicates = 0
+        #     num_outrange = 0
+        #     index_duplicates = []
+        #     slice_nums = np.floor(np.abs(np.random.normal(mu, sigma, num_slices)))
+        #     for i in range(0, num_slices):
+        #         if slice_nums[i] >= tot_slices:
+        #             num_outrange += 1
+        #         for j in range(i + 1, num_slices):
+        #             if slice_nums[i] == slice_nums[j]:
+        #                 index_duplicates.append(j)
+        #                 num_duplicates += 1
+        #     if num_duplicates == 0 and num_outrange == 0:
+        #         break
 
-            smaps = get_smaps(ksp_full_gpu, device=spdevice, maxiter=50)
-            smaps = sp.to_device(smaps, device=spdevice)
+        # for s in slice_nums:
+        #     s = int(s)
+        ksp_full = ksp[s]
+        ksp_full_gpu = sp.to_device(ksp_full, device=spdevice)
 
-            # Get Truth
-            image_truth = mri.app.SenseRecon(ksp_full_gpu, smaps, lamda=0.005, device=spdevice, max_iter=20).run()
+        smaps = get_smaps(ksp_full_gpu, device=spdevice, maxiter=50)
+        smaps = sp.to_device(smaps, device=spdevice)
 
-            # send to cpu and normalize
-            image_truth = sp.to_device(image_truth, sp.cpu_device)
-            image_truth /= np.max(np.abs(image_truth))
-            image_truthSQ = crop_flipud(image_truth)
+        # Get Truth
+        image_truth = mri.app.SenseRecon(ksp_full_gpu, smaps, lamda=0.005, device=spdevice, max_iter=20).run()
 
-            with h5py.File(out_name, 'a') as hf:
-                name = 'EXAMPLE_%07d_TRUTH' % count
-                hf.create_dataset(name, data=image_truth)
+        # send to cpu and normalize
+        image_truth = sp.to_device(image_truth, sp.cpu_device)
+        image_truth /= np.max(np.abs(image_truth))
+        image_truthSQ = crop_flipud(image_truth)
+        # with h5py.File(out_name, 'a') as hf:
+        #     name = 'EXAMPLE_%07d_TRUTH' % count
+        #     hf.create_dataset(name, data=image_truth)
 
-            # Get corrupted
-            if WHICH_CORRUPTION == 'Corrupted PE (%)':
-                # corruption_mag is from which PE line the motion started/total PEs
-                maxshift=20
-                ksp2, corruption_mag = trans_motion(ksp_full, dir_motion=2, maxshift=maxshift, prob=1, startPE=180,
-                                                    fix_shift=True, fix_start=False)
-            if WHICH_CORRUPTION == 'Total shift in pixels':
-                # corruption_mag is magnitude of the motion
-                startPE=180
-                ksp2, corruption_mag = trans_motion(ksp_full, dir_motion=2, maxshift=1, prob=1,
-                                                    startPE=startPE,fix_shift=False, fix_start=True)
+        for WHICH_CORRUPTION in CORRUPTIONS:
+            scoreList = []
+            mseList = []
+            ssimList = []
+            corruption_magList = []
+            for i in range(Ntrials):
 
-            elif WHICH_CORRUPTION == 'gaussian':
-                gaussian_ulim = 12
-                gaussian_level = np.random.randint(0, gaussian_ulim)
-                ksp2, sigma_real, sigma_imag = add_gaussian_noise(ksp_full, 1, kedge_len=30,level=gaussian_level, mode=1, mean=0)
-                corruption_mag = (sigma_real**2 + sigma_imag**2)**0.5
-            elif WHICH_CORRUPTION == 'blurring':
-                ksp2, corruption_mag = blurring(ksp_full, 15)
-            elif WHICH_CORRUPTION == 'incoherent_pts':
-                ksp2, corruption_mag, _ = add_incoherent_noise(ksp_full, prob=1,
-                                                           central=np.random.uniform(0.2, 0.4), mode=0,
-                                                           num_corrupted=0, dump=0.5)
-            elif WHICH_CORRUPTION == 'incoherent_lines':
-                ksp2, corruption_mag, _ = add_incoherent_noise(ksp_full, prob=1,
-                                                           central=np.random.uniform(0.2, 0.4), mode=1,
-                                                           num_corrupted=0, dump=0.5)
+                # Get corrupted
+                if WHICH_CORRUPTION == 'Motion Corrupted PE (%)':
+                    # corruption_mag is from which PE line the motion started/total PEs
+                    maxshift=20
+                    ksp2, corruption_mag = trans_motion(ksp_full, dir_motion=2, maxshift=maxshift, prob=1, startPE=180,
+                                                        fix_shift=True, fix_start=False)
+                if WHICH_CORRUPTION == 'Total shift in pixels':
+                    # corruption_mag is magnitude of the motion
+                    startPE=180
+                    ksp2, corruption_mag = trans_motion(ksp_full, dir_motion=2, maxshift=50, prob=1,
+                                                        startPE=startPE,fix_shift=False, fix_start=True)
 
-            elif WHICH_CORRUPTION =='none':
-                ksp2 = ksp_full
-                corruption_mag = 0
+                elif WHICH_CORRUPTION == 'gaussian':
+                    gaussian_ulim = 12
+                    gaussian_level = np.random.randint(0, gaussian_ulim)
+                    ksp2, sigma_real, sigma_imag = add_gaussian_noise(ksp_full, 1, kedge_len=30,level=gaussian_level, mode=1, mean=0)
+                    corruption_mag = (sigma_real**2 + sigma_imag**2)**0.5
+                elif WHICH_CORRUPTION == 'blurring':
+                    ksp2, corruption_mag = blurring(ksp_full, 20)
+                elif WHICH_CORRUPTION == '% random undersampling':
+                    ksp2,_,_, corruption_mag= add_incoherent_noise(ksp_full, prob=1,
+                                                               central=np.random.uniform(0.2, 0.4), mode=0,
+                                                               num_corrupted=0, dump=0.5)
+                elif WHICH_CORRUPTION == '% PE removed randomly':
+                    ksp2,_,_, corruption_mag = add_incoherent_noise(ksp_full, prob=1,
+                                                               central=np.random.uniform(0.2, 0.4), mode=1,
+                                                               num_corrupted=0, dump=0.7)
 
-            corruption_magList.append(corruption_mag)
-            ksp2_gpu = sp.to_device(ksp2, device=spdevice)
+                elif WHICH_CORRUPTION =='none':
+                    ksp2 = ksp_full
+                    corruption_mag = 0
 
-            image = mri.app.SenseRecon(ksp2_gpu, smaps, lamda=0.005, device=spdevice, max_iter=20).run()
-            image = sp.to_device(image, sp.cpu_device)
-            imageSQ = crop_flipud(image)
-            scale = np.sum(np.conj(imageSQ).T * image_truthSQ) / np.sum(np.conj(imageSQ).T * imageSQ)
-            image *= scale
+                corruption_magList.append(corruption_mag)
+                ksp2_gpu = sp.to_device(ksp2, device=spdevice)
 
-            mse = np.sum((np.abs(image) - np.abs(image_truth)) ** 2)** 0.5
-            ssim = structural_similarity(np.abs(image), np.abs(image_truth))
-            image_tensor = torch.unsqueeze(torch.from_numpy(complex_2chan(image)),0)
-            image_truth_tensor = torch.unsqueeze(torch.from_numpy(complex_2chan(image_truth)),0)
-            image_tensor = image_tensor.permute(0,-1,1,2).cuda()
-            image_truth_tensor = image_truth_tensor.permute(0, -1, 1, 2).cuda()
-            score = scoreNet(image_tensor, image_truth_tensor)
+                image = mri.app.SenseRecon(ksp2_gpu, smaps, lamda=0.005, device=spdevice, max_iter=20).run()
+                # print('corrupted recon done')
+                image = sp.to_device(image, sp.cpu_device)
+                imageSQ = crop_flipud(image)
+                scale = np.sum(np.conj(imageSQ).T * image_truthSQ) / np.sum(np.conj(imageSQ).T * imageSQ)
+                image *= scale
 
-            scoreList.append(score.detach().cpu().numpy())
-            mseList.append(mse)
-            ssimList.append(ssim)
+                mse = np.sum((np.abs(imageSQ) - np.abs(image_truthSQ)) ** 2)** 0.5
+                ssim = structural_similarity(np.abs(imageSQ), np.abs(image_truthSQ))
+                image_tensor = torch.unsqueeze(torch.from_numpy(complex_2chan(imageSQ)),0)
+                image_truth_tensor = torch.unsqueeze(torch.from_numpy(complex_2chan(image_truthSQ)),0)
+                image_tensor = image_tensor.permute(0,-1,1,2).cuda()
+                image_truth_tensor = image_truth_tensor.permute(0, -1, 1, 2).cuda()
+                score = scoreNet(image_tensor, image_truth_tensor)
 
-            count += 1
+                scoreList.append(score.detach().cpu().numpy())
+                mseList.append(mse)
+                ssimList.append(ssim)
 
-    if index_file == 10:
-        break
-scoreList = np.asarray(scoreList)
-mseList = np.asarray(mseList)
-ssimList = np.asarray(ssimList)
+        # if index_file == 25:
+        #     break
 
-plt.scatter(corruption_magList, scoreList, alpha=0.5)
-plt.xlabel(f'{WHICH_CORRUPTION} magnitude')
-plt.ylabel('score')
-plt.show()
-plt.scatter(corruption_magList, mseList, alpha=0.5)
-plt.xlabel(f'{WHICH_CORRUPTION} magnitude')
-plt.ylabel('mse')
-plt.show()
-plt.scatter(corruption_magList, ssimList, alpha=0.5)
-plt.xlabel(f'{WHICH_CORRUPTION} magnitude')
-plt.ylabel('ssim')
-plt.show()
+
+
+            scoreList = np.asarray(scoreList).squeeze()
+            mseList = np.asarray(mseList).squeeze()
+            ssimList = 1 - np.asarray(ssimList).squeeze()
+            corruption_magList = np.asarray(corruption_magList)
+
+            # plt.figure()
+            # plt.scatter(corruption_magList, scoreList, alpha=0.5)
+            # plt.xlabel(f'{WHICH_CORRUPTION}')
+            # plt.ylabel('score')
+            # plt.show()
+            # plt.figure()
+            # plt.scatter(corruption_magList, mseList, alpha=0.5)
+            # plt.xlabel(f'{WHICH_CORRUPTION} ')
+            # plt.ylabel('mse')
+            # plt.show()
+            # plt.figure()
+            # plt.scatter(corruption_magList, ssimList, alpha=0.5)
+            # plt.xlabel(f'{WHICH_CORRUPTION} ')
+            # plt.ylabel('ssim')
+            # plt.show()
+
+            fig, ax1 = plt.subplots()
+            color = 'tab:red'
+            ax1.set_xlabel(f'{WHICH_CORRUPTION} {SAME_IMAGE}')
+            ax1.set_ylabel('1-ssim', color=color)
+            ax1.scatter(corruption_magList, ssimList, color=color, alpha=0.2)
+            ax1.tick_params(axis='y', labelcolor=color)
+
+            ax2 = ax1.twinx()  # instantiate a second axes that shares the same x-axis
+            color = 'tab:blue'
+            ax2.set_ylabel('score', color=color)  # we already handled the x-label with ax1
+            ax2.scatter(corruption_magList, scoreList, color=color, alpha=0.2)
+            ax2.tick_params(axis='y', labelcolor=color)
+            fig.tight_layout()  # otherwise the right y-label is slightly clipped
+            plt.show()
+
+            fig, ax1 = plt.subplots()
+            color = 'tab:red'
+            ax1.set_xlabel(f'{WHICH_CORRUPTION} {SAME_IMAGE}')
+            ax1.set_ylabel('mse', color=color)
+            ax1.scatter(corruption_magList, mseList, color=color, alpha=0.2)
+            ax1.tick_params(axis='y', labelcolor=color)
+
+            ax2 = ax1.twinx()  # instantiate a second axes that shares the same x-axis
+            color = 'tab:blue'
+            ax2.set_ylabel('score', color=color)  # we already handled the x-label with ax1
+            ax2.scatter(corruption_magList, scoreList, color=color, alpha=0.15)
+            ax2.tick_params(axis='y', labelcolor=color)
+            fig.tight_layout()  # otherwise the right y-label is slightly clipped
+            plt.show()
+
+            fig_mseVscore = plt.figure()
+            plt.scatter(mseList, scoreList, alpha=0.5)
+            plt.xlabel('MSE')
+            plt.ylabel('score')
+            plt.show()
+
+            fig_ssimVscore = plt.figure()
+            plt.scatter(ssimList, scoreList, alpha=0.5)
+            plt.xlabel('SSIM')
+            plt.ylabel('score')
+            plt.show()

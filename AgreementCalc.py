@@ -194,7 +194,7 @@ for i in range(len(rankers)):
 #
 # #
 # Clean up the label
-ranks_all = pd.concat([ranks_LBE, ranks_ADK, ranks_eh, ranks_JJ, ranks_AP, ranks_JS], ignore_index=True)
+ranks_all = pd.concat([ranks_LBE, ranks_ADK, ranks_eh, ranks_JJ, ranks_AP, ranks_JS, ranks_THO], ignore_index=True)
 ranks_all = ranks_all.sort_values(by=['ID'])
 
 # Only keeps duplicated IDs
@@ -225,7 +225,7 @@ for i in range(len(ranks_clean)):
 ranks_clean = ranks_clean.drop(['Results'], axis=1)
 ranks_clean = ranks_clean[['Better', 'Worse', 'ID']]
 
-ranks_clean.to_csv('ranks_consensus_02082021.csv', index=False, header=False)
+#ranks_clean.to_csv('ranks_consensus_02082021.csv', index=False, header=False)
 
 # Naye = 0
 # Nnay = 0
@@ -239,3 +239,15 @@ ranks_clean.to_csv('ranks_consensus_02082021.csv', index=False, header=False)
 #             Nnay += 1
 #         elif ranks_clean['Results'][i+1] == ranks0:
 #             Naye += 1
+
+ranks_cleannp = ranks_clean.to_numpy()
+for i in range(1, len(ranks_cleannp)):
+    if ranks_cleannp[i-1,-1] == ranks_cleannp[i,-1]:
+        result0 = ranks_cleannp[i-1, 0]
+        result1 = ranks_cleannp[i-1, 1]
+        if ranks_cleannp[i, 0] != result0:
+            ranks_cleannp[i-1,0] = 2
+            ranks_cleannp[i,0] = 2
+            ranks_cleannp[i - 1,1] = 2
+            ranks_cleannp[i,1] = 2
+ranks_clean.to_csv('ranks_consensus_disagree2.csv', index=False, header=False)

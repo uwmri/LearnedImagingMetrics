@@ -24,6 +24,7 @@ from utils import *
 from utils.CreateImagePairs import get_smaps, get_truth
 from utils.utils_DL import *
 from random import randrange
+#from fastmri.models.varnet import *
 
 mempool = cupy.get_default_memory_pool()
 pinned_mempool = cupy.get_default_pinned_memory_pool()
@@ -59,12 +60,12 @@ else:
     filepath_val = Path("I:/NYUbrain")
 
     # On Kevins machine
-    filepath_rankModel = Path('E:/LearnedImageMetric/ImagePairs_Pack_04032020')
+    filepath_rankModel = Path('E:/LearnedImageMetric/ImagePairs_Pack_04032020/')
     filepath_train = Path("Q:/LearnedImageMetric")
     filepath_val = Path("Q:/LearnedImageMetric")
 
     # Chenweis machine
-    filepath_rankModel = Path('I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020')
+    filepath_rankModel = Path('I:/code/LearnedImagingMetrics_pytorch/Rank_NYU/ImagePairs_Pack_04032020/rank_trained')
     filepath_train = Path("I:/NYUbrain")
     filepath_val = Path("I:/NYUbrain")
 
@@ -72,7 +73,7 @@ else:
 rank_channel = 1
 rank_trained_on_mag = False
 BO = False
-file_rankModel = os.path.join(filepath_rankModel, "RankClassifier4709_pretrained.pt")
+file_rankModel = os.path.join(filepath_rankModel, "RankClassifier475_pretrained.pt")
 os.chdir(filepath_rankModel)
 
 log_dir = filepath_rankModel
@@ -107,13 +108,6 @@ if WHICH_MASK == 'poisson':
     # Sample elipsoid to not be overly optimistic
     mask = mri.poisson((act_xres, act_yres), accel=acc * 2, calib=(0, 0), crop_corner=True, return_density=False,
                        dtype='float32')
-    pady = int(.5 * (yres - mask.shape[1]))
-    padx = int(.5 * (xres - mask.shape[0]))
-    print(mask.shape)
-    print(f'padx = {(padx, xres - padx - mask.shape[0])}, {(pady, yres - pady - mask.shape[1])}')
-    pad = ((padx, xres - padx - mask.shape[0]), (pady, yres - pady - mask.shape[1]))
-    mask = np.pad(mask, pad, 'constant', constant_values=0)
-    print(mask.shape)
 
 elif WHICH_MASK == 'randLines':
     length_center = 20
@@ -121,11 +115,19 @@ elif WHICH_MASK == 'randLines':
     acquired_center = np.arange((yres - 2) / 2 - (length_center / 2 - 1), yres / 2 + length_center / 2, step=1,
                                 dtype='int')
     acquired_peri = np.random.randint(0, (yres - 1), num_peri, dtype='int')
-    mask = np.zeros((xres, yres), dtype=np.float32)
+    mask = np.zeros((act_xres, act_yres), dtype=np.float32)
     mask[:, acquired_center] = 1
     mask[:, acquired_peri] = 1
 else:
-    mask = np.ones((xres, yres), dtype=np.float32)
+    mask = np.ones((act_xres, act_yres), dtype=np.float32)
+
+pady = int(.5 * (yres - mask.shape[1]))
+padx = int(.5 * (xres - mask.shape[0]))
+print(mask.shape)
+print(f'padx = {(padx, xres - padx - mask.shape[0])}, {(pady, yres - pady - mask.shape[1])}')
+pad = ((padx, xres - padx - mask.shape[0]), (pady, yres - pady - mask.shape[1]))
+mask = np.pad(mask, pad, 'constant', constant_values=0)
+print(mask.shape)
 
 [kx, ky] = np.meshgrid(np.linspace(-1, 1, act_xres), np.linspace(-1, 1, act_yres), indexing='ij')
 kr = (kx ** 2 + ky ** 2) ** 0.5
@@ -160,7 +162,7 @@ validationset = DataGeneratorRecon(filepath_val, file_val, num_cases=Ntrain, ran
                                    data_type=smap_type)
 loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=False)
 
-UNROLL = False
+UNROLL = True
 if UNROLL:
     INNER_ITER = 5
     ReconModel = MoDL(inner_iter=INNER_ITER)
@@ -435,7 +437,6 @@ for epoch in range(Nepoch):
 
             if i == 1 and sl == 4:
                 truthplt = chan2_complex(torch.squeeze(im_sl.detach().cpu()))
-                truthplt = truthplt[idxL:idxR,:]
                 perturbed = Ah_torch.apply(kspaceU_sl)
                 noisyplt = chan2_complex(perturbed.detach().cpu())
                 noisyplt = noisyplt[idxL:idxR,:]

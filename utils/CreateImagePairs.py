@@ -5,7 +5,7 @@ import sigpy.mri as mri
 import pywt
 import time
 
-from fastMRI.data import transforms as T
+from fastmri.data import transforms as T
 from utils.utils import *
 
 
@@ -22,33 +22,23 @@ def crop_flipud(image):
     return image_sq
 
 
-def blurring(kspace, acc_ulim):
+def blurring(ksp, acc_ulim):
     #kspace of shape[coil, h, w]
-
-    acc = np.random.randint(0, acc_ulim)
+    kspace = ksp.copy()
+    sigma = np.random.random_sample() * acc_ulim
 
     num_coils = kspace.shape[0]
     xv, yv = np.meshgrid(np.linspace(-1, 1, kspace.shape[1]), np.linspace(-1, 1, kspace.shape[2]), sparse=False,
                          indexing='ij')
     radius = np.sqrt(np.square(xv) + np.square(yv))
 
-    # Create a sampling mask
-    mask = np.random.random_sample(kspace[0, :, :].shape)
-    variable_density = np.random.rand()
-    sampling_density = np.ones(kspace[0, :, :].shape) * variable_density + (1 - variable_density) / (0.01 + radius)
-    mask *= sampling_density
-
-    thresh = np.percentile(mask, acc)
-    mask = np.asarray(np.greater(mask, thresh), dtype=np.float)
-
-    # Blurring in kspace
-    sigma = 2 * np.random.rand()
+    mask = np.ones(kspace[0, :, :].shape)
     mask *= np.exp(-radius * sigma)
 
     for c in range(num_coils):
         kspace[c, :, :] = kspace[c, :, :] * mask
 
-    return kspace, acc
+    return kspace, sigma
 
 
 def soft_thresh(input, thresh):
@@ -70,7 +60,7 @@ def wave_thresh(input, thresh):
     return output
 
 
-def trans_motion(input, dir_motion=2, maxshift=10, prob=1, startPE=180,fix_shift=False, fix_start=False):
+def trans_motion(kspace, dir_motion=2, maxshift=10, prob=1, startPE=180,fix_shift=False, fix_start=False):
     # input: kspace (coil, h, w).
     # dir_motion: direction of phase encode. 0 for width, 1 for height-dir
     # maxshift: np.random.uniform(0,maxshift) is the size of displacement in pixel
@@ -79,7 +69,7 @@ def trans_motion(input, dir_motion=2, maxshift=10, prob=1, startPE=180,fix_shift
     #                   fix_shift, when enabled, maxshift IS the amount of shift. corruption mag=corrupted PE/total PE
     #                   fix_start, startPE should not be none. corruption mag=total shift
 
-
+    input  = kspace.copy()
     logger = logging.getLogger('trans_motion')
     total_shift = 0
     if dir_motion == 0:
@@ -110,7 +100,7 @@ def trans_motion(input, dir_motion=2, maxshift=10, prob=1, startPE=180,fix_shift
             startdir = np.random.randint(0,1)   # Always start in PE (column)
             if fix_shift:
                 shift_bulk0 = (2 * np.random.randint(0, 2) - 1) * maxshift
-                shift_bulk1 = (2 * np.random.randint(0, 2) - 1) * maxshift
+                shift_bulk1 = (2 * np.random.randint(0, 2) - 1) * maxshift*0
             else:
                 shift_bulk0 = (2 * np.random.randint(0, 2) - 1) * np.random.randint(0, maxshift)  # shift in x
                 shift_bulk1 = (2 * np.random.randint(0, 2) - 1) * np.random.randint(0, maxshift)  # shift in y
@@ -262,13 +252,13 @@ def add_gaussian_noise(input, prob, kedge_len=30, level=1, mode=0,mean=0):
     return noisy, sigma_real, sigma_imag
 
 
-def add_incoherent_noise(kspace=None, prob=None, central=0.4, mode=1, num_corrupted=0, dump=0.5):
+def add_incoherent_noise(ksp, prob=None, central=0.4, mode=1, num_corrupted=0, dump=0.5):
     # feed in ksp(coil, h, w)
     # baseline is uniform random of 1 and 0
     # percent: percentage of ones and (1-1/prob) zeros
     # mode: 0 is to drop random ksp points, 1 is to drop random ksp columns (PE)
     # central - (1-central) will never be discarded
-
+    kspace = ksp.copy()
     global percent
     logger = logging.getLogger('add_incoherent_noise')
 
@@ -285,10 +275,16 @@ def add_incoherent_noise(kspace=None, prob=None, central=0.4, mode=1, num_corrup
                 # for the second corrupted image, do the same the percent as the first one. input dump=percent1.
                 percent = dump
             logger.info(f'mode={mode}, discard {(1-percent)*100}% PEs')
-            randuni_col = np.random.choice([0,1], size=kspace[0, 0,:].shape, p=[1-percent, percent])
-
+            # below was used to generate image pairs 0403
+            # randuni_col = np.random.choice([0,1], size=kspace[0, 0,:].shape, p=[1-percent, percent])
+            # randuni_colm = np.tile(randuni_col, (len(kspace[0, :, 0]), 1))
+            # randuni_colm[:, centralL:centralR] = 1
+            # below is for test_score_varied_corruption. So that the percent is the actual %PE kept.
+            randuni_edge = np.random.choice([0, 1], size=(centralL+(kspace.shape[-1]-centralR),), p=[1 - percent, percent])
+            randuni_col = np.concatenate((randuni_edge[:centralL],np.ones(centralR-centralL), randuni_edge[centralL:]))
             randuni_colm = np.tile(randuni_col, (len(kspace[0, :, 0]),1))
-            randuni_colm[:, centralL:centralR] = 1
+            percent_actualRemoved = (1- (1-2*central+np.count_nonzero(randuni_edge)/kspace_width)) * 100
+
             for c in range(len(kspace[:,0,0])):
                 kspace[c, :, :] = kspace[c, :, :] * randuni_colm
 
@@ -312,11 +308,13 @@ def add_incoherent_noise(kspace=None, prob=None, central=0.4, mode=1, num_corrup
 
             for c in range(len(kspace[:,0,0])):
                 kspace[c, :, :] = kspace[c, :, :] * randuni_m
+            percent_actualRemoved=(1-percent) * 100
     else:
         mode = 0
         percent = 0.99
+        percent_actualRemoved=(1-percent) *100
         logger.info('No incoherent noise added')
-    return kspace, percent, mode
+    return kspace, percent, mode, percent_actualRemoved
 
 
 def get_smaps(kspace_gpu, device, maxiter=30, method='espirit'):
@@ -434,7 +432,7 @@ def get_corrupted(kspace, sl, num_coils, num_corrupted, device, acc=0, acc_ulim=
         mode = np.ndarray.item(np.random.choice([0, 1], size=1, p=[.8, .2]))  # leaning towards dropping points
     else:
         mode = mode_incoherent
-    ksp2, percent, mode = add_incoherent_noise(ksp2, prob=incoherent_prob, central=np.random.uniform(0.2, 0.4), mode=mode, num_corrupted=num_corrupted, dump=dump)
+    ksp2, percent, mode,_ = add_incoherent_noise(ksp2, prob=incoherent_prob, central=np.random.uniform(0.2, 0.4), mode=mode, num_corrupted=num_corrupted, dump=dump)
     ksp2_gpu = sp.to_device(ksp2, device=device)
 
     # RECON. 0 for sos, 1 for PILS, 2 for L2 SENSE, 3 for l1 wavelet, 4 for tv

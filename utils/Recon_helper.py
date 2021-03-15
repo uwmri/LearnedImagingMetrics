@@ -888,7 +888,7 @@ class EEVarNet(nn.Module):
     def __init__(self, num_cascades=12):
         super(EEVarNet, self).__init__()
         self.cascades = nn.ModuleList(
-            [EEVarNet_Block(UNet2D(2, 2, depth=4, final_activation='none', f_maps=18, layer_order='cli'))
+            [EEVarNet_Block(UNet2D(2, 2, depth=4, final_activation='none', f_maps=18, layer_order='cli', EEVarNet=True))
              for _ in range(num_cascades)]
         )
 
