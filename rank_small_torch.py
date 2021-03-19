@@ -10,8 +10,16 @@ import torchsummary
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 import torch
+import argparse
 
-DGX = True
+parser = argparse.ArgumentParser()
+parser.add_argument('--pname', type=str, default=f'learned_ranking')
+parser.add_argument('--dgx', action='store_true', default=True)
+parser.add_argument('--file_csv', type=str)
+parser.add_argument('--file_images', type=str)
+args = parser.parse_args()
+
+DGX = args.dgx
 
 try:
     from ax.service.managed_loop import optimize
@@ -22,10 +30,6 @@ if DGX:
     try:
         import setproctitle
         import argparse
-
-        parser = argparse.ArgumentParser()
-        parser.add_argument('--pname', type=str, default=f'chenwei_ranking')
-        args = parser.parse_args()
 
         setproctitle.setproctitle(args.pname)
         print(f'Setting program name to {args.pname}')
@@ -41,7 +45,7 @@ MOBILE = False
 EFF = False
 BO = False
 RESNET = False
-ResumeTrain = True
+ResumeTrain = False
 CLIP = False
 SAMPLER = False
 WeightedLoss = False
@@ -68,26 +72,13 @@ if Pretrain == 'pretraining':
     ranks[:, 2] = np.arange(NEXAMPLES,  dtype=np.int)
 
 else:
-    names = []
-    if DGX:
-        filepath_csv = Path('/raid/DGXUserDataRaid/cxt004/NYUbrain')
-    else:
-        filepath_csv = Path('I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020')
-    os.chdir(filepath_csv)
-
-    files_csv = os.listdir(filepath_csv)
-    for file in files_csv:
-        if fnmatch.fnmatch(file, 'consensus_mode_all.csv'):
-            names.append(os.path.join(filepath_csv, file))
-
     # Load the ranks
     ranks = []
-    for fname in names:
-        print(fname)
-        with open(fname) as csvfile:
-            readCSV = csv.reader(csvfile, delimiter=',')
-            for row in readCSV:
-                ranks.append(row)
+    print(args.file_csv)
+    with open(args.file_csv) as csvfile:
+        readCSV = csv.reader(csvfile, delimiter=',')
+        for row in readCSV:
+            ranks.append(row)
     ranks = np.array(ranks, dtype=np.int)
 
 # make sure to use consensus -> consensus_mode.csv
@@ -175,13 +166,7 @@ if Pretrain == 'pretraining':
 
 
 else:
-    if DGX:
-        filepath_images = Path('/raid/DGXUserDataRaid/cxt004/NYUbrain')
-    else:
-        filepath_images = Path('I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020')
-    file ='TRAINING_IMAGES_04032020.h5'
-    file_images = os.path.join(filepath_images, file)
-    hf = h5.File(name=file_images, mode='r')
+    hf = h5.File(name=args.file_images, mode='r')
 
     # Just read and subtract truth for now, index later
     for i in range(NEXAMPLES):
@@ -257,7 +242,7 @@ if MOBILE:
 
 from random import randrange
 Ntrial = randrange(10000)
-log_dir = filepath_images
+log_dir = os.path.dirname(args.file_images)
 logging.basicConfig(filename=os.path.join(log_dir,f'runs/rank/ranking_{Ntrial}.log'), filemode='w', level=logging.INFO)
 logging.info('With L2cnn classifier')
 logging.info(f'{Ntrial}')
@@ -573,6 +558,12 @@ for epoch in range(Nepoch):
 
         # Cross entropy
         loss = loss_func(delta, labels)
+        # Add L2 norm for kernels
+        l2_lambda = 0.01
+        l2_reg = torch.tensor(0.).cuda()
+        for param in classifier.rank.parameters():
+            l2_reg += torch.norm(param)
+        loss += l2_lambda * l2_reg
 
         # Track loss
         train_avg.update(loss.item(), n=BATCH_SIZE)  # here is total loss of all batches
