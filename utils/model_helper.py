@@ -219,7 +219,15 @@ class L2cnnBlock(nn.Module):
         x = self.pool(x)
         return x
 
+class saveOutputs():
+    def __init__(self):
+        self.outputs = []
 
+    def __call__(self, module, module_in, module_out):
+        self.outputs.append(module_out)
+
+    def clear(self):
+        self.outputs = []
 
 class L2cnn(nn.Module):
     def __init__(self, channel_base=32, channels_in=1,  channel_scale=1, group_depth=8, bias=False, init_scale=1.0):
@@ -263,8 +271,8 @@ class L2cnn(nn.Module):
         # if train on 2chan (real and imag) images
 
 
-        diff_sq = torch.sum( diff ** 2, dim=1, keepdim=True)
-        diff_mag = diff_sq ** (0.5)
+        diff_mag = torch.sum( diff ** 2, dim=1, keepdim=True)
+        #diff_mag = diff_sq ** (0.5)
 
         # Mean square error
         #mse = self.layer_mse(diff_mag)
@@ -281,7 +289,6 @@ class L2cnn(nn.Module):
         score = cnn_score
 
         return score
-
 
 class ResNet2(nn.Module):
 

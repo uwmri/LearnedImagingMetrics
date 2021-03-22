@@ -43,6 +43,8 @@ BO = False
 RESNET = False
 ResumeTrain = True
 CLIP = False
+SGD = True
+NESTEROV = True
 SAMPLER = False
 WeightedLoss = False
 Pretrain = 'pretrained'   # pretraining(train on corrupted/truth pair) or pretrained (for actual training) or none
@@ -335,6 +337,8 @@ torchsummary.summary(ranknet, [(X_1.shape[-3], maxMatSize, maxMatSize)
                               ,(X_1.shape[-3], maxMatSize, maxMatSize)], device="cpu")
 
 
+
+
 # Bayesian
 # optimize classification accuracy on the validation set as a function of the learning rate and momentum
 def train_evaluate(parameterization):
@@ -355,7 +359,7 @@ if ResumeTrain:
         filepath_rankModel = Path('/raid/DGXUserDataRaid/cxt004/NYUbrain')
     else:
         filepath_rankModel = Path('I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_05062020')
-    file_rankModel = os.path.join(filepath_rankModel, "RankClassifier847_pretraining.pt")
+    file_rankModel = os.path.join(filepath_rankModel, "RankClassifier3451_pretraining.pt")
     classifier = Classifier(ranknet)
     #classifier.rank.register_backward_hook(printgradnorm)
     loss_func = nn.CrossEntropyLoss(weight=weight)
@@ -365,47 +369,94 @@ if ResumeTrain:
     classifier.cuda()
 
     learning_rate = 1e-4
-    learning_rate_Classifier=1e-5
+    learning_rate_rank=1e-5
     learning_rate_MSE=1e-3
     learning_rate_SSIM=1e-3
-    optimizer = optim.Adam([
-        {'params': classifier.f.parameters()},
-        {'params': classifier.g.parameters()},
-        {'params': classifier.rank.parameters(), 'lr': learning_rate_Classifier}
-    ], lr=learning_rate)
-    optimizer.load_state_dict(state['optimizer'])
+    weight_decay = .1 * learning_rate_rank
+    mu = 0.9
+    if SGD:
+        logging.info(
+            f'SGD, lr={learning_rate}, lr_rank = {learning_rate_rank}, WD = {weight_decay}, nesterov={NESTEROV}'
+            f', momentum = {mu}')
 
-    if trainScoreandMSE:
-        file_rankModelMSE = os.path.join(filepath_rankModel, "RankClassifier847_pretraining_MSE.pt")
-        mse_module = MSEmodule()
-        classifierMSE = Classifier(mse_module)
-        stateMSE = torch.load(file_rankModelMSE)
-        classifierMSE.load_state_dict(stateMSE['state_dict'], strict=True)
+        optimizer = optim.SGD([
+            {'params': classifier.f.parameters()},
+            {'params': classifier.g.parameters()},
+            {'params': classifier.rank.parameters(), 'lr': learning_rate_rank}
+        ], lr=learning_rate, momentum=mu, weight_decay=weight_decay, nesterov=NESTEROV)
+        optimizer.load_state_dict(state['optimizer'])
 
-        classifierMSE.cuda()
+        if trainScoreandMSE:
+            file_rankModelMSE = os.path.join(filepath_rankModel, "RankClassifier3451_pretraining_MSE.pt")
+            mse_module = MSEmodule()
+            classifierMSE = Classifier(mse_module)
+            stateMSE = torch.load(file_rankModelMSE)
+            classifierMSE.load_state_dict(stateMSE['state_dict'], strict=True)
 
-        optimizerMSE = optim.Adam([
-            {'params': classifierMSE.f.parameters()},
-            {'params': classifierMSE.g.parameters()},
-            {'params': classifierMSE.rank.parameters(), 'lr': 1e-3}
-        ], lr=learning_rate_MSE)
-        optimizerMSE.load_state_dict(stateMSE['optimizer'])
+            classifierMSE.cuda()
 
-    if trainScoreandSSIM:
-        file_rankModelSSIM = os.path.join(filepath_rankModel, "RankClassifier847_pretraining_SSIM.pt")
-        ssim_module = SSIM()
-        classifierSSIM = Classifier(ssim_module)
-        stateSSIM = torch.load(file_rankModelSSIM)
-        classifierSSIM.load_state_dict(stateSSIM['state_dict'], strict=True)
+            optimizerMSE = optim.SGD([
+                {'params': classifierMSE.f.parameters()},
+                {'params': classifierMSE.g.parameters()},
+                {'params': classifierMSE.rank.parameters(), 'lr': 1e-3}
+            ], lr=learning_rate_MSE, momentum=mu, weight_decay=weight_decay, nesterov=NESTEROV)
+            optimizerMSE.load_state_dict(stateMSE['optimizer'])
 
-        classifierSSIM.cuda()
+        if trainScoreandSSIM:
+            file_rankModelSSIM = os.path.join(filepath_rankModel, "RankClassifier3451_pretraining_SSIM.pt")
+            ssim_module = SSIM()
+            classifierSSIM = Classifier(ssim_module)
+            stateSSIM = torch.load(file_rankModelSSIM)
+            classifierSSIM.load_state_dict(stateSSIM['state_dict'], strict=True)
 
-        optimizerSSIM = optim.Adam([
-            {'params': classifierSSIM.f.parameters()},
-            {'params': classifierSSIM.g.parameters()},
-            {'params': classifierSSIM.rank.parameters(), 'lr': 1e-3}
-        ], lr=learning_rate_SSIM)
-        optimizerSSIM.load_state_dict(stateSSIM['optimizer'])
+            classifierSSIM.cuda()
+
+            optimizerSSIM = optim.SGD([
+                {'params': classifierSSIM.f.parameters()},
+                {'params': classifierSSIM.g.parameters()},
+                {'params': classifierSSIM.rank.parameters(), 'lr': 1e-3}
+            ], lr=learning_rate_SSIM, momentum=mu, weight_decay=weight_decay, nesterov=NESTEROV)
+            optimizerSSIM.load_state_dict(stateSSIM['optimizer'])
+
+    else:
+        optimizer = optim.Adam([
+            {'params': classifier.f.parameters()},
+            {'params': classifier.g.parameters()},
+            {'params': classifier.rank.parameters(), 'lr': learning_rate_rank}
+        ], lr=learning_rate)
+        optimizer.load_state_dict(state['optimizer'])
+
+        if trainScoreandMSE:
+            file_rankModelMSE = os.path.join(filepath_rankModel, "RankClassifier847_pretraining_MSE.pt")
+            mse_module = MSEmodule()
+            classifierMSE = Classifier(mse_module)
+            stateMSE = torch.load(file_rankModelMSE)
+            classifierMSE.load_state_dict(stateMSE['state_dict'], strict=True)
+
+            classifierMSE.cuda()
+
+            optimizerMSE = optim.Adam([
+                {'params': classifierMSE.f.parameters()},
+                {'params': classifierMSE.g.parameters()},
+                {'params': classifierMSE.rank.parameters(), 'lr': 1e-3}
+            ], lr=learning_rate_MSE)
+            optimizerMSE.load_state_dict(stateMSE['optimizer'])
+
+        if trainScoreandSSIM:
+            file_rankModelSSIM = os.path.join(filepath_rankModel, "RankClassifier847_pretraining_SSIM.pt")
+            ssim_module = SSIM()
+            classifierSSIM = Classifier(ssim_module)
+            stateSSIM = torch.load(file_rankModelSSIM)
+            classifierSSIM.load_state_dict(stateSSIM['state_dict'], strict=True)
+
+            classifierSSIM.cuda()
+
+            optimizerSSIM = optim.Adam([
+                {'params': classifierSSIM.f.parameters()},
+                {'params': classifierSSIM.g.parameters()},
+                {'params': classifierSSIM.rank.parameters(), 'lr': 1e-3}
+            ], lr=learning_rate_SSIM)
+            optimizerSSIM.load_state_dict(stateSSIM['optimizer'])
 
 
 else:
@@ -434,36 +485,53 @@ else:
         print(best_parameters)
         logging.info(f'{best_parameters}')
     else:
-
-        # NEED to set trainOnMSE in train_evaluate manually for both MSE and score-based,
-        # get best paramters and initialize optimizier here manually
-
-        #optimizer = optim.SGD(classifier.parameters(), lr=0.003152130338485237, momentum=0.27102874871343374)
         learning_rate = 1e-3
-        learning_rate_Classifier = 1e-3
+        learning_rate_rank = 1e-3
         learning_rate_MSE = 1e-3
         learning_rate_SSIM = 1e-3
+        weight_decay = 1e-5
+        if SGD:
+            optimizer = optim.SGD([
+                {'params': classifier.f.parameters()},
+                {'params': classifier.g.parameters()},
+                {'params': classifier.rank.parameters(), 'lr': learning_rate_rank}
+            ], lr=learning_rate, momentum=0.9, weight_decay=weight_decay, nesterov=NESTEROV)
 
-        optimizer = optim.Adam([
-            {'params': classifier.f.parameters()},
-            {'params': classifier.g.parameters()},
-            {'params': classifier.rank.parameters(), 'lr': learning_rate_Classifier}
-        ], lr=learning_rate)
+            logging.info(f'SGD, lr={learning_rate}, lr_rank = {learning_rate_rank}, WD = {weight_decay}, nesterov={NESTEROV}')
+            if trainScoreandMSE:
+                optimizerMSE = optim.SGD([
+                    {'params': classifierMSE.f.parameters()},
+                    {'params': classifierMSE.g.parameters()},
+                    {'params': classifierMSE.rank.parameters(), 'lr': 1e-3}
+                ], lr=learning_rate_MSE, momentum=0.9, weight_decay=1e-5, nesterov=True)
 
-        logging.info(f'Adam, lr={learning_rate}')
-        if trainScoreandMSE:
-            optimizerMSE = optim.Adam([
-                {'params': classifierMSE.f.parameters()},
-                {'params': classifierMSE.g.parameters()},
-                {'params': classifierMSE.rank.parameters(), 'lr': 1e-3}
-            ], lr=learning_rate_MSE)
+            if trainScoreandSSIM:
+                optimizerSSIM = optim.SGD([
+                    {'params': classifierSSIM.f.parameters()},
+                    {'params': classifierSSIM.g.parameters()},
+                    {'params': classifierSSIM.rank.parameters(), 'lr': 1e-3}
+                ], lr=learning_rate_SSIM, momentum=0.9, weight_decay=1e-5, nesterov=True)
+        else:
+            optimizer = optim.Adam([
+                {'params': classifier.f.parameters()},
+                {'params': classifier.g.parameters()},
+                {'params': classifier.rank.parameters(), 'lr': learning_rate_rank}
+            ], lr=learning_rate)
 
-        if trainScoreandSSIM:
-            optimizerSSIM = optim.Adam([
-                {'params': classifierSSIM.f.parameters()},
-                {'params': classifierSSIM.g.parameters()},
-                {'params': classifierSSIM.rank.parameters(), 'lr': 1e-3}
-            ], lr=learning_rate_SSIM)
+            logging.info(f'Adam, lr={learning_rate}')
+            if trainScoreandMSE:
+                optimizerMSE = optim.Adam([
+                    {'params': classifierMSE.f.parameters()},
+                    {'params': classifierMSE.g.parameters()},
+                    {'params': classifierMSE.rank.parameters(), 'lr': 1e-3}
+                ], lr=learning_rate_MSE)
+
+            if trainScoreandSSIM:
+                optimizerSSIM = optim.Adam([
+                    {'params': classifierSSIM.f.parameters()},
+                    {'params': classifierSSIM.g.parameters()},
+                    {'params': classifierSSIM.rank.parameters(), 'lr': 1e-3}
+                ], lr=learning_rate_SSIM)
 
 
     #classifier.rank.register_backward_hook(printgradnorm)
@@ -480,12 +548,12 @@ else:
         classifierSSIM.cuda()
 
 logging.info(f'leaning rate = {learning_rate}')
-logging.info(f'leaning rate Classifier = {learning_rate_Classifier}')
+logging.info(f'leaning rate rank = {learning_rate_rank}')
 if trainScoreandMSE:
-    logging.info(f'leaning rate Classifier = {learning_rate_MSE}')
+    logging.info(f'leaning rate MSE = {learning_rate_MSE}')
 
 if trainScoreandSSIM:
-    logging.info(f'leaning rate Classifier = {learning_rate_SSIM}')
+    logging.info(f'leaning rate MSE = {learning_rate_SSIM}')
 
 # Training
 writer_train = SummaryWriter(os.path.join(log_dir,f'runs/rank/train_{Ntrial}'))
@@ -516,6 +584,9 @@ diff_scoreV = []
 diff_mseV = []
 diff_ssimV = []
 
+scaler = torch.cuda.amp.GradScaler()
+scalerMSE = torch.cuda.amp.GradScaler()
+scalerSSIM = torch.cuda.amp.GradScaler()
 for epoch in range(Nepoch):
 
     # Setup counter to keep track of loss
@@ -560,22 +631,28 @@ for epoch in range(Nepoch):
         im1, im2, imt = im1.cuda(), im2.cuda(), imt.cuda()
         labels = labels.to(device, dtype=torch.long)
 
-        # classifier and scores for each image
-        delta, score1, score2 = classifier(im1, im2, imt)
+        # zero the parameter gradients, backward and update
+        optimizer.zero_grad()
 
-        # print(f'delta shape {delta.shape}')
-        # print(f'label shape {labels.shape}')
-        # mean_score = torch.mean(score1) + torch.mean(score2)
-        # print(f'Score1, score2, mean_score = {score1}, {score2}, {mean_score}')
+        with torch.cuda.amp.autocast():
 
-        #loss_scale = (0.5*mean_score - 1.0)**2
-        #print(f'Loss Score = {loss_scale}')
+            # classifier and scores for each image
+            delta, score1, score2 = classifier(im1, im2, imt)
 
-        # Cross entropy
-        loss = loss_func(delta, labels)
+
+            # print(f'delta shape {delta.shape}')
+            # print(f'label shape {labels.shape}')
+            # mean_score = torch.mean(score1) + torch.mean(score2)
+            # print(f'Score1, score2, mean_score = {score1}, {score2}, {mean_score}')
+
+            #loss_scale = (0.5*mean_score - 1.0)**2
+            #print(f'Loss Score = {loss_scale}')
+
+            # Cross entropy
+            loss = loss_func(delta, labels)
 
         # Track loss
-        train_avg.update(loss.item(), n=BATCH_SIZE)  # here is total loss of all batches
+        train_avg.update(scaler.scale(loss).item(), n=BATCH_SIZE)  # here is total loss of all batches
 
         # Track accuracy
         acc = acc_calc(delta, labels, BatchSize=BATCH_SIZE)
@@ -588,53 +665,58 @@ for epoch in range(Nepoch):
         #if i % 30 == 0:
         #    print(train_acc.avg())
 
-        # zero the parameter gradients, backward and update
-        optimizer.zero_grad()
-        loss.backward()
+        scaler.scale(loss).backward()
 
         if CLIP:
             clipping_value = 1e-2  # arbitrary value of your choosing
             torch.nn.utils.clip_grad_norm_(classifier.parameters(), clipping_value)
 
-        optimizer.step()
+        scaler.step(optimizer)
+        scaler.update()
 
         # train on MSE
         if trainScoreandMSE:
-            deltaMSE, mse1, mse2  = classifierMSE(im1, im2, imt)
-            lossMSE = loss_func(deltaMSE, labels)
+            # zero the parameter gradients, backward and update
+            optimizerMSE.zero_grad()
+
+            with torch.cuda.amp.autocast():
+                deltaMSE, mse1, mse2  = classifierMSE(im1, im2, imt)
+                lossMSE = loss_func(deltaMSE, labels)
             train_avgMSE.update(lossMSE.item(), n=BATCH_SIZE)  # here is total loss of all batches
 
             # acc
             accMSE = acc_calc(deltaMSE, labels, BatchSize=BATCH_SIZE)
             train_accMSE.update(accMSE, n=1)
 
-            # zero the parameter gradients, backward and update
-            optimizerMSE.zero_grad()
-            lossMSE.backward()
+            scalerMSE.scale(lossMSE).backward()
             if CLIP:
                 clipping_value = 1e-2  # arbitrary value of your choosing
                 torch.nn.utils.clip_grad_norm_(classifierMSE.parameters(), clipping_value)
 
-            optimizerMSE.step()
+            scalerMSE.step(optimizerMSE)
+            scalerMSE.update()
 
         # train on SSIM
         if trainScoreandSSIM:
-            deltaSSIM, ssim1, ssim2  = classifierSSIM(im1, im2, imt)
-            lossSSIM = loss_func(deltaSSIM, labels)
+            # zero the parameter gradients, backward and update
+            optimizerSSIM.zero_grad()
+
+            with torch.cuda.amp.autocast():
+                deltaSSIM, ssim1, ssim2  = classifierSSIM(im1, im2, imt)
+                lossSSIM = loss_func(deltaSSIM, labels)
             train_avgSSIM.update(lossSSIM.item(), n=BATCH_SIZE)  # here is total loss of all batches
 
             # acc
             accSSIM = acc_calc(deltaSSIM, labels, BatchSize=BATCH_SIZE)
             train_accSSIM.update(accSSIM, n=1)
 
-            # zero the parameter gradients, backward and update
-            optimizerSSIM.zero_grad()
-            lossSSIM.backward()
+            scalerSSIM.scale(lossSSIM).backward()
             if CLIP:
                 clipping_value = 1e-2  # arbitrary value of your choosing
                 torch.nn.utils.clip_grad_norm_(classifierSSIM.parameters(), clipping_value)
 
-            optimizerSSIM.step()
+            scalerSSIM.step(optimizerSSIM)
+            scalerSSIM.update()
 
         # get the score for a plot
         with torch.no_grad():
