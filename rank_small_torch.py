@@ -43,7 +43,7 @@ BO = False
 RESNET = False
 ResumeTrain = True
 CLIP = False
-SGD = True
+SGD = False
 NESTEROV = True
 SAMPLER = False
 WeightedLoss = False
@@ -359,7 +359,7 @@ if ResumeTrain:
         filepath_rankModel = Path('/raid/DGXUserDataRaid/cxt004/NYUbrain')
     else:
         filepath_rankModel = Path('I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_05062020')
-    file_rankModel = os.path.join(filepath_rankModel, "RankClassifier3451_pretraining.pt")
+    file_rankModel = os.path.join(filepath_rankModel, "RankClassifier847_pretraining.pt")
     classifier = Classifier(ranknet)
     #classifier.rank.register_backward_hook(printgradnorm)
     loss_func = nn.CrossEntropyLoss(weight=weight)
@@ -387,7 +387,7 @@ if ResumeTrain:
         optimizer.load_state_dict(state['optimizer'])
 
         if trainScoreandMSE:
-            file_rankModelMSE = os.path.join(filepath_rankModel, "RankClassifier3451_pretraining_MSE.pt")
+            file_rankModelMSE = os.path.join(filepath_rankModel, "RankClassifier847_pretraining_MSE.pt")
             mse_module = MSEmodule()
             classifierMSE = Classifier(mse_module)
             stateMSE = torch.load(file_rankModelMSE)
@@ -403,7 +403,7 @@ if ResumeTrain:
             optimizerMSE.load_state_dict(stateMSE['optimizer'])
 
         if trainScoreandSSIM:
-            file_rankModelSSIM = os.path.join(filepath_rankModel, "RankClassifier3451_pretraining_SSIM.pt")
+            file_rankModelSSIM = os.path.join(filepath_rankModel, "RankClassifier847_pretraining_SSIM.pt")
             ssim_module = SSIM()
             classifierSSIM = Classifier(ssim_module)
             stateSSIM = torch.load(file_rankModelSSIM)

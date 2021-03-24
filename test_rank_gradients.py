@@ -123,7 +123,7 @@ X_1 = np.transpose(X_1, [0, 3, 1, 2])
 X_2 = np.transpose(X_2, [0, 3, 1, 2])
 X_T = np.transpose(X_T, [0, 3, 1, 2])
 
-dataset = DataGenerator_rank(X_1, X_2, X_T, Labels, id, augmentation=False, pad_channels=0)
+dataset = DataGenerator_rank(X_1, X_2, X_T, Labels, id, augmentation=True, pad_channels=0)
 loader = DataLoader(dataset=dataset, batch_size=BATCH_SIZE, shuffle=False, drop_last=True)
 
 torchsummary.summary(score.cpu(), [(X_1.shape[-3], maxMatSize, maxMatSize)
@@ -158,23 +158,7 @@ for i, data in enumerate(loader, 0):
         im2_abs = im2.detach().cpu().numpy()
         im2_abs = (im2_abs[:,0,:,:]**2+im2_abs[:,1,:,:]**2)**.5
         out_name = os.path.join(filepath_images, f'rank{Ntrial}_im_grad.h5')
-        with h5py.File(out_name, 'a') as hf:
-            hf.create_dataset(f"im1_grad", data=im1_gradabs)
-            hf.create_dataset(f"im2_grad", data=im2_gradabs)
-            hf.create_dataset(f"im1", data=im1_abs)
-            hf.create_dataset(f"im2", data=im2_abs)
-        # sl = 2
-        # forward_block1 = saveForward.outputs[89].detach().cpu().numpy()
-        # forward_block2 = saveForward.outputs[98].detach().cpu().numpy()
-        # forward_block3 = saveForward.outputs[107].detach().cpu().numpy()
-        # forward_block4 = saveForward.outputs[116].detach().cpu().numpy()
-        # forward_block5 = saveForward.outputs[125].detach().cpu().numpy()
-        # for m in range(8):
-        #     for n in range(4):
-        #         plt.subplot(8, 4, (m * 4 + n + 1))
-        #         plt.imshow(forward_block5[sl, (m * 4 + n), :, :])
-        #         plt.axis('off')
-        # plt.show()
+
         #
         # backward_start = saveBackward.outputs[72][0].cpu().numpy()
         # for m in range(8):

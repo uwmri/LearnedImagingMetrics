@@ -496,7 +496,7 @@ class ResNet2(nn.Module):
 
 
 
-def sigpy_image_rotate2( image, theta, verbose=False, device=sp.Device(0)):
+def sigpy_image_rotate2( image, theta, verbose=False, device=sp.Device(0), crop=True):
     """
     SIgpy based 2D image rotation
 
@@ -538,13 +538,20 @@ def sigpy_image_rotate2( image, theta, verbose=False, device=sp.Device(0)):
         cy_pad = ny_pad // 2
 
         # Rotate the image coordinates
-        y, x = xp.meshgrid(xp.arange(0, ny, dtype=xp.float32),
+        if crop:
+            y, x = xp.meshgrid(xp.arange(0, ny_pad, dtype=xp.float32),
+                               xp.arange(0, nx_pad, dtype=xp.float32),
+                               indexing='ij')
+            x -= cx_pad
+            y -= cx_pad
+        else:
+            y, x = xp.meshgrid(xp.arange(0, ny, dtype=xp.float32),
                            xp.arange(0, nx, dtype=xp.float32),
                            indexing='ij')
 
-        #subtract center of coordinates
-        x -= cx
-        y -= cx
+            #subtract center of coordinates
+            x -= cx
+            y -= cx
 
         # Rotate the coordinates
         coord = xp.stack((y, x), axis=-1)
@@ -561,19 +568,40 @@ def sigpy_image_rotate2( image, theta, verbose=False, device=sp.Device(0)):
         # Actual rotation
         if isinstance(image, list):
             image_rotated = []
-            for imt in image:
-                xpad = xp.zeros((ny_pad, nx_pad), dtype=xp.float32)
-                xnew = xp.zeros((nch, ny, nx), dtype=xp.float32)
-                for ch in range(nch):
-                    xpad[pad:pad + ny, pad:pad + ny] = imt[ch]
-                    xnew[ch] = sp.interpolate(xpad, coord, kernel='spline', width=2)
-                image_rotated.append(xnew)
+            if crop:
+                for imt in image:
+                    xnew_uncrop = xp.zeros((nch, ny_pad, nx_pad), dtype=xp.float32)
+                    xnew = xp.zeros((nch, ny, nx), dtype=xp.float32)
+                    for ch in range(nch):
+                        xpad = imt[ch]
+                        xnew_uncrop[ch] = sp.interpolate(xpad, coord, kernel='spline', width=2)
+                        xnew[ch] = xnew_uncrop[ch,pad:pad + ny, pad:pad + ny]
+                    image_rotated.append(xnew)
+            else:
+                for imt in image:
+                    xpad = xp.zeros((ny_pad, nx_pad), dtype=xp.float32)
+                    xnew = xp.zeros((nch, ny, nx), dtype=xp.float32)
+                    for ch in range(nch):
+                        xpad[pad:pad + ny, pad:pad + ny] = imt[ch]
+                        xnew[ch] = sp.interpolate(xpad, coord, kernel='spline', width=2)
+                    image_rotated.append(xnew)
         else:
-            image_rotated = xp.zeros((nch, ny, nx), dtype=xp.float32)
-            xpad = xp.zeros((ny_pad, nx_pad), dtype=xp.float32)
-            for ch in range(nch):
-                xpad[pad:pad + ny, pad:pad + ny] = image[ch]
-                image_rotated[ch] = sp.interpolate(xpad, coord, kernel='spline', width=2)
+            if crop:
+                image_rotated_uncrop = xp.zeros((nch, ny_pad, nx_pad), dtype=xp.float32)
+                image_rotated = xp.zeros((nch, ny, nx), dtype=xp.float32)
+                for ch in range(nch):
+                    xpad = image[ch]
+                    image_rotated_uncrop[ch] = sp.interpolate(xpad, coord, kernel='spline', width=2)
+                    image_rotated[ch] = image_rotated_uncrop[ch,pad:pad + ny, pad:pad + ny]
+            else:
+                image_rotated = xp.zeros((nch, ny, nx), dtype=xp.float32)
+                xpad = xp.zeros((ny_pad, nx_pad), dtype=xp.float32)
+                for ch in range(nch):
+                    xpad[pad:pad + ny, pad:pad + ny] = image[ch]
+                    image_rotated[ch] = sp.interpolate(xpad, coord, kernel='spline', width=2)
+
+
+
 
     return image_rotated
 
