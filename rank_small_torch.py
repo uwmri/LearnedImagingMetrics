@@ -261,7 +261,7 @@ Labels_cnnT = np.concatenate((Labels[:idV_L], Labels[idV_R:]))
 Labels_cnnV = Labels[idV_L:idV_R]
 
 # Data generator
-BATCH_SIZE = 24
+BATCH_SIZE = 48
 logging.info(f'batchsize={BATCH_SIZE}')
 
 if SAMPLER:
@@ -424,7 +424,7 @@ else:
         # get best paramters and initialize optimizier here manually
 
         #optimizer = optim.SGD(classifier.parameters(), lr=0.003152130338485237, momentum=0.27102874871343374)
-        learning_rate = 1e-3
+        learning_rate = 1e-4
         learning_rate_Classifier = 1e-3
         learning_rate_MSE = 1e-3
         learning_rate_SSIM = 1e-3
@@ -501,6 +501,11 @@ diff_scoreV = []
 diff_mseV = []
 diff_ssimV = []
 
+mixed_training = False
+
+if mixed_training:
+    scaler = torch.cuda.amp.GradScaler()
+
 for epoch in range(Nepoch):
 
     # Setup counter to keep track of loss
@@ -540,30 +545,40 @@ for epoch in range(Nepoch):
 
     for i, data in enumerate(loader_T, 0):
 
+        # zero the parameter gradients, backward and update
+        optimizer.zero_grad()
+
         # get the inputs
         im1, im2, imt, labels = data             # im (sl, ch , 396, 396)
         im1, im2, imt = im1.cuda(), im2.cuda(), imt.cuda()
         labels = labels.to(device, dtype=torch.long)
 
-        # classifier and scores for each image
-        delta, score1, score2 = classifier(im1, im2, imt)
+        if mixed_training:
+            with torch.cuda.amp.autocast():
+                # classifier and scores for each image
+                delta, score1, score2 = classifier(im1, im2, imt)
 
-        # print(f'delta shape {delta.shape}')
-        # print(f'label shape {labels.shape}')
-        # mean_score = torch.mean(score1) + torch.mean(score2)
-        # print(f'Score1, score2, mean_score = {score1}, {score2}, {mean_score}')
+                # Cross entropy
+                loss = loss_func(delta, labels)
+                # Add L2 norm for kernels
+                l2_lambda = 0.001
+                l2_reg = torch.tensor(0.).cuda()
+                for param in classifier.rank.parameters():
+                    l2_reg += torch.norm(param)
+                loss += l2_lambda * l2_reg
+        else:
+            # classifier and scores for each image
+            delta, score1, score2 = classifier(im1, im2, imt)
 
-        #loss_scale = (0.5*mean_score - 1.0)**2
-        #print(f'Loss Score = {loss_scale}')
-
-        # Cross entropy
-        loss = loss_func(delta, labels)
-        # Add L2 norm for kernels
-        l2_lambda = 0.01
-        l2_reg = torch.tensor(0.).cuda()
-        for param in classifier.rank.parameters():
-            l2_reg += torch.norm(param)
-        loss += l2_lambda * l2_reg
+            # Cross entropy
+            loss = loss_func(delta, labels)
+            # Add L2 norm for kernels
+            l2_lambda = 0.001
+            #l2_lambda = 0.0
+            l2_reg = torch.tensor(0.).cuda()
+            for param in classifier.rank.parameters():
+                l2_reg += torch.norm(param)
+            loss += l2_lambda * l2_reg
 
         # Track loss
         train_avg.update(loss.item(), n=BATCH_SIZE)  # here is total loss of all batches
@@ -579,15 +594,17 @@ for epoch in range(Nepoch):
         #if i % 30 == 0:
         #    print(train_acc.avg())
 
-        # zero the parameter gradients, backward and update
-        optimizer.zero_grad()
-        loss.backward()
+        if mixed_training:
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss.backward()
+            if CLIP:
+                clipping_value = 1e-2  # arbitrary value of your choosing
+                torch.nn.utils.clip_grad_norm_(classifier.parameters(), clipping_value)
+            optimizer.step()
 
-        if CLIP:
-            clipping_value = 1e-2  # arbitrary value of your choosing
-            torch.nn.utils.clip_grad_norm_(classifier.parameters(), clipping_value)
-
-        optimizer.step()
 
         # train on MSE
         if trainScoreandMSE:

@@ -222,7 +222,7 @@ class L2cnnBlock(nn.Module):
 
 
 class L2cnn(nn.Module):
-    def __init__(self, channel_base=32, channels_in=1,  channel_scale=1, group_depth=8, bias=False, init_scale=1.0):
+    def __init__(self, channel_base=32, channels_in=1,  channel_scale=1, group_depth=5, bias=False, init_scale=1.0):
 
         super(L2cnn, self).__init__()
         pool_rate = 2
@@ -239,7 +239,7 @@ class L2cnn(nn.Module):
         self.layers = nn.ModuleList()
         for block in range(group_depth):
 
-            self.layers.append(L2cnnBlock(channels_in, channels_out, pool_rate, bias=bias))
+            self.layers.append(L2cnnBlock(channels_in, channels_out, pool_rate, bias=bias, activation=True))
 
             # Update channels
             channels_in = channels_out
