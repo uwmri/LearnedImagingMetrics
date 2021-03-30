@@ -99,8 +99,10 @@ def trans_motion(kspace, dir_motion=2, maxshift=10, prob=1, startPE=180,fix_shif
             num_x, num_y = input.shape[1:]
             startdir = np.random.randint(0,1)   # Always start in PE (column)
             if fix_shift:
-                shift_bulk0 = (2 * np.random.randint(0, 2) - 1) * maxshift
-                shift_bulk1 = (2 * np.random.randint(0, 2) - 1) * maxshift*0
+                #shift_bulk0 = (2 * np.random.randint(0, 2) - 1) * maxshift
+                shift_bulk0 = 0
+                shift_bulk1 = maxshift
+                #shift_bulk1 = (2 * np.random.randint(0, 2) - 1) * maxshift*0
             else:
                 shift_bulk0 = (2 * np.random.randint(0, 2) - 1) * np.random.randint(0, maxshift)  # shift in x
                 shift_bulk1 = (2 * np.random.randint(0, 2) - 1) * np.random.randint(0, maxshift)  # shift in y
@@ -142,14 +144,14 @@ def trans_motion(kspace, dir_motion=2, maxshift=10, prob=1, startPE=180,fix_shif
                                                    (1 / num_x) * (ii - num_x / 2)))
                     percent_corruptedPE = (num_y-start)/num_y
                 elif start < central_rangeL:
-
-                    logger.info(f'motion starts from column #0 to {start}')
-                    for ii in range(num_x):
-                        for jj in range(0,start):
-                            input[:, ii, jj] = input[:, ii, jj] * np.exp(
-                                -1j * 2 * np.pi * (-shift_bulk0 * (1 / num_y) * (jj - num_y / 2) - shift_bulk1 *
-                                                   (1 / num_x) * (ii - num_x / 2)))
-                    percent_corruptedPE = start/num_y
+                    percent_corruptedPE = 0
+                    # logger.info(f'motion starts from column #0 to {start}')
+                    # for ii in range(num_x):
+                    #     for jj in range(0,start):
+                    #         input[:, ii, jj] = input[:, ii, jj] * np.exp(
+                    #             -1j * 2 * np.pi * (-shift_bulk0 * (1 / num_y) * (jj - num_y / 2) - shift_bulk1 *
+                    #                                (1 / num_x) * (ii - num_x / 2)))
+                    # percent_corruptedPE = start/num_y
 
                 else:
                     logger.info(f'motion starts too close to the central region, abort')

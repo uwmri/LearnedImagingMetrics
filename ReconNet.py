@@ -34,7 +34,7 @@ spdevice = sp.Device(0)
 Ntrial = randrange(10000)
 
 # load RankNet
-DGX = True
+DGX = False
 if DGX:
     filepath_rankModel = Path('/raid/DGXUserDataRaid/cxt004/NYUbrain')
     filepath_train = Path('/raid/DGXUserDataRaid/cxt004/NYUbrain')

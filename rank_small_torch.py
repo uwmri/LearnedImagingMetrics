@@ -45,41 +45,24 @@ MOBILE = False
 EFF = False
 BO = False
 RESNET = False
-ResumeTrain = False
 CLIP = False
 SAMPLER = False
 WeightedLoss = False
-Pretrain = 'pretrained'   # pretraining(train on corrupted/truth pair) or pretrained (for actual training) or none
 
 trainScoreandMSE = True    # train score based classifier and mse(im1)-mse(im2) based classifier at the same time
 trainScoreandSSIM = True    # train score based classifier and mse(im1)-mse(im2) based classifier at the same time
 
-
-
 maxMatSize = 396  # largest matrix size seems to be 396
-if Pretrain == 'pretraining':
-    # use Image_pairs_0506 and 0507 for pretraining
-    NEXAMPLES = 13116
-    NEXAMPLES1 = 5016
-    NEXAMPLES2 = 8100
-else:
-    NEXAMPLES = 2920
+NEXAMPLES = 2920
 
-# Ranks
-if Pretrain == 'pretraining':
-    ranks = np.zeros((NEXAMPLES, 3), dtype=np.int)
-    ranks[:,1] = 1
-    ranks[:, 2] = np.arange(NEXAMPLES,  dtype=np.int)
-
-else:
-    # Load the ranks
-    ranks = []
-    print(args.file_csv)
-    with open(args.file_csv) as csvfile:
-        readCSV = csv.reader(csvfile, delimiter=',')
-        for row in readCSV:
-            ranks.append(row)
-    ranks = np.array(ranks, dtype=np.int)
+# Load the ranks
+ranks = []
+print(args.file_csv)
+with open(args.file_csv) as csvfile:
+    readCSV = csv.reader(csvfile, delimiter=',')
+    for row in readCSV:
+        ranks.append(row)
+ranks = np.array(ranks, dtype=np.int)
 
 # make sure to use consensus -> consensus_mode.csv
 # import scipy.stats
@@ -123,75 +106,32 @@ X_T = np.zeros((NEXAMPLES, maxMatSize, maxMatSize, nch), dtype=np.float32)
 # X_T = np.zeros((NEXAMPLES, maxMatSize, maxMatSize),dtype=np.complex64)
 Labels = np.zeros(NRANKS, dtype=np.int32)
 
-if Pretrain == 'pretraining':
-    filepath_images = Path("I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_05062020")
-    path2 = Path("I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_05072020")
-    file = 'TRAINING_IMAGES_v7.h5'
-    file1 = os.path.join(filepath_images, file)
-    file2 = os.path.join(path2, file)
+hf = h5.File(name=args.file_images, mode='r')
 
-    hf1 = h5.File(name=file1, mode='r')
-    hf2 = h5.File(name=file2, mode='r')
-    for i in range(NEXAMPLES):
-        if i<NEXAMPLES1:
-            nameT = 'EXAMPLE_%07d_TRUTH' % (i+1)
-            name1 = 'EXAMPLE_%07d_IMAGE_%04d' % (i+1, 0)
-            name2 = 'EXAMPLE_%07d_IMAGE_%04d' % (i+1, 1)
+# Just read and subtract truth for now, index later
+for i in range(NEXAMPLES):
 
-            im1 = zero_pad2D(np.array(hf1[name1]), maxMatSize, maxMatSize)
-            im2 = zero_pad2D(np.array(hf1[name2]), maxMatSize, maxMatSize)
-            truth = zero_pad2D(np.array(hf1[nameT]), maxMatSize, maxMatSize)
-        else:
-            nameT = 'EXAMPLE_%07d_TRUTH' % (i + 1 - NEXAMPLES1)
-            name1 = 'EXAMPLE_%07d_IMAGE_%04d' % (i + 1- NEXAMPLES1, 0)
-            name2 = 'EXAMPLE_%07d_IMAGE_%04d' % (i + 1- NEXAMPLES1, 1)
-
-            im1 = zero_pad2D(np.array(hf2[name1]), maxMatSize, maxMatSize)
-            im2 = zero_pad2D(np.array(hf2[name2]), maxMatSize, maxMatSize)
-            truth = zero_pad2D(np.array(hf2[nameT]), maxMatSize, maxMatSize)
-
-        if train_on_mag:
-            X_1[i] = np.sqrt(np.sum(np.square(im1), axis=-1, keepdims=True))
-            X_2[i] = np.sqrt(np.sum(np.square(im2), axis=-1, keepdims=True))
-            X_T[i] = np.sqrt(np.sum(np.square(truth), axis=-1, keepdims=True))
-
-        else:
-            X_1[i] = im1
-            X_2[i] = im2
-            X_T[i] = truth
-
-        if i % 1e2 == 0:
-            print(f'loading example pairs {i + 1}')
+    nameT = 'EXAMPLE_%07d_TRUTH' % (i+1)
+    name1 = 'EXAMPLE_%07d_IMAGE_%04d' % (i+1, 0)
+    name2 = 'EXAMPLE_%07d_IMAGE_%04d' % (i+1, 1)
 
 
+    im1 = zero_pad2D(np.array(hf[name1]), maxMatSize, maxMatSize)
+    im2 = zero_pad2D(np.array(hf[name2]), maxMatSize, maxMatSize)
+    truth = zero_pad2D(np.array(hf[nameT]), maxMatSize, maxMatSize)
 
-else:
-    hf = h5.File(name=args.file_images, mode='r')
+    if train_on_mag:
+        X_1[i] = np.sqrt(np.sum(np.square(im1), axis=-1, keepdims=True))
+        X_2[i] = np.sqrt(np.sum(np.square(im2), axis=-1, keepdims=True))
+        X_T[i] = np.sqrt(np.sum(np.square(truth), axis=-1, keepdims=True))
 
-    # Just read and subtract truth for now, index later
-    for i in range(NEXAMPLES):
+    else:
+        X_1[i] = im1
+        X_2[i] = im2
+        X_T[i] = truth
 
-        nameT = 'EXAMPLE_%07d_TRUTH' % (i+1)
-        name1 = 'EXAMPLE_%07d_IMAGE_%04d' % (i+1, 0)
-        name2 = 'EXAMPLE_%07d_IMAGE_%04d' % (i+1, 1)
-
-
-        im1 = zero_pad2D(np.array(hf[name1]), maxMatSize, maxMatSize)
-        im2 = zero_pad2D(np.array(hf[name2]), maxMatSize, maxMatSize)
-        truth = zero_pad2D(np.array(hf[nameT]), maxMatSize, maxMatSize)
-
-        if train_on_mag:
-            X_1[i] = np.sqrt(np.sum(np.square(im1), axis=-1, keepdims=True))
-            X_2[i] = np.sqrt(np.sum(np.square(im2), axis=-1, keepdims=True))
-            X_T[i] = np.sqrt(np.sum(np.square(truth), axis=-1, keepdims=True))
-
-        else:
-            X_1[i] = im1
-            X_2[i] = im2
-            X_T[i] = truth
-
-        if i % 1e2 == 0:
-            print(f'loading example pairs {i + 1}')
+    if i % 1e2 == 0:
+        print(f'loading example pairs {i + 1}')
 
 # All labels
 for i in range(0, NRANKS):
@@ -207,15 +147,10 @@ for i in range(0, NRANKS):
         # X_1 is better
         Labels[i] = 2
 
-
-
 # torch tensor should be minibatch * channel * H*W
 X_1 = np.transpose(X_1, [0, 3, 1, 2])
 X_2 = np.transpose(X_2, [0, 3, 1, 2])
 X_T = np.transpose(X_T, [0, 3, 1, 2])
-
-if Pretrain == 'pretraining':
-    X_1 = X_T
 
 print(f'X_1 shape {X_1.shape}')
 
@@ -262,7 +197,10 @@ Labels_cnnV = Labels[idV_L:idV_R]
 
 # Data generator
 BATCH_SIZE = 48
+BATCH_SIZE_EVAL = 1
 logging.info(f'batchsize={BATCH_SIZE}')
+logging.info(f'batchsize_eval={BATCH_SIZE_EVAL}')
+
 
 if SAMPLER:
     # deal with imbalanced class
@@ -272,13 +210,13 @@ if SAMPLER:
     loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=False, sampler=samplerT, drop_last=True)
 
     validationset = DataGenerator_rank(X_1, X_2, X_T, Labels_cnnV, idV, augmentation=False, pad_channels=0)
-    loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=False, sampler=samplerV, drop_last=True)
+    loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE_EVAL, shuffle=False, sampler=samplerV, drop_last=True)
 else:
     trainingset = DataGenerator_rank(X_1, X_2, X_T, Labels_cnnT, idT, augmentation=True, pad_channels=0)
     loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=True, drop_last=True)
 
     validationset = DataGenerator_rank(X_1, X_2, X_T, Labels_cnnV, idV, augmentation=False, pad_channels=0)
-    loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=False, drop_last=True)
+    loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE_EVAL, shuffle=False, drop_last=True)
 
 if WeightedLoss:
     weight = get_class_weights(Labels)
@@ -304,7 +242,6 @@ else:
 # Ranknet
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-
 if MOBILE:
     ranknet = mobilenet_v2(pretrained=False, num_classes=1) # Less than ResNet18
 elif EFF:
@@ -319,7 +256,6 @@ else:
 torchsummary.summary(ranknet, [(X_1.shape[-3], maxMatSize, maxMatSize)
                               ,(X_1.shape[-3], maxMatSize, maxMatSize)], device="cpu")
 
-
 # Bayesian
 # optimize classification accuracy on the validation set as a function of the learning rate and momentum
 def train_evaluate(parameterization):
@@ -333,152 +269,67 @@ def train_evaluate(parameterization):
         device=device
     )
 
-
-if ResumeTrain:
-    # load RankNet
-    if DGX:
-        filepath_rankModel = Path('/raid/DGXUserDataRaid/cxt004/NYUbrain')
-    else:
-        filepath_rankModel = Path('I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_05062020')
-    file_rankModel = os.path.join(filepath_rankModel, "RankClassifier847_pretraining.pt")
-    classifier = Classifier(ranknet)
-    #classifier.rank.register_backward_hook(printgradnorm)
-    loss_func = nn.CrossEntropyLoss(weight=weight)
-
-    state = torch.load(file_rankModel)
-    classifier.load_state_dict(state['state_dict'], strict=True)
-    classifier.cuda()
-
-    learning_rate = 1e-4
-    learning_rate_Classifier=1e-5
-    learning_rate_MSE=1e-3
-    learning_rate_SSIM=1e-3
-    optimizer = optim.Adam([
-        {'params': classifier.f.parameters()},
-        {'params': classifier.g.parameters()},
-        {'params': classifier.rank.parameters(), 'lr': learning_rate_Classifier}
-    ], lr=learning_rate)
-    optimizer.load_state_dict(state['optimizer'])
-
-    if trainScoreandMSE:
-        file_rankModelMSE = os.path.join(filepath_rankModel, "RankClassifier847_pretraining_MSE.pt")
-        mse_module = MSEmodule()
-        classifierMSE = Classifier(mse_module)
-        stateMSE = torch.load(file_rankModelMSE)
-        classifierMSE.load_state_dict(stateMSE['state_dict'], strict=True)
-
-        classifierMSE.cuda()
-
-        optimizerMSE = optim.Adam([
-            {'params': classifierMSE.f.parameters()},
-            {'params': classifierMSE.g.parameters()},
-            {'params': classifierMSE.rank.parameters(), 'lr': 1e-3}
-        ], lr=learning_rate_MSE)
-        optimizerMSE.load_state_dict(stateMSE['optimizer'])
-
-    if trainScoreandSSIM:
-        file_rankModelSSIM = os.path.join(filepath_rankModel, "RankClassifier847_pretraining_SSIM.pt")
-        ssim_module = SSIM()
-        classifierSSIM = Classifier(ssim_module)
-        stateSSIM = torch.load(file_rankModelSSIM)
-        classifierSSIM.load_state_dict(stateSSIM['state_dict'], strict=True)
-
-        classifierSSIM.cuda()
-
-        optimizerSSIM = optim.Adam([
-            {'params': classifierSSIM.f.parameters()},
-            {'params': classifierSSIM.g.parameters()},
-            {'params': classifierSSIM.rank.parameters(), 'lr': 1e-3}
-        ], lr=learning_rate_SSIM)
-        optimizerSSIM.load_state_dict(stateSSIM['optimizer'])
-
-
-else:
-
-    classifier = Classifier(ranknet)
-    if trainScoreandMSE:
-        mse_module = MSEmodule()
-        classifierMSE = Classifier(mse_module)
-
-    if trainScoreandSSIM:
-        ssim_module = SSIM()
-        classifierSSIM = Classifier(ssim_module)
-
-    if BO:
-        best_parameters, values, experiment, model = optimize(
-            parameters=[
-                {"name": "lr", "type": "range", "bounds": [1e-6, 0.4], "log_scale": True},
-                {"name": "momentum", "type": "range", "bounds": [0.0, 1.0]},
-            ],
-            evaluation_function=train_evaluate,
-            objective_name='accuracy',
-        )
-
-        optimizer = optim.SGD(classifier.parameters(), lr=best_parameters['lr'], momentum=best_parameters['momentum'])
-
-        print(best_parameters)
-        logging.info(f'{best_parameters}')
-    else:
-
-        # NEED to set trainOnMSE in train_evaluate manually for both MSE and score-based,
-        # get best paramters and initialize optimizier here manually
-
-        #optimizer = optim.SGD(classifier.parameters(), lr=0.003152130338485237, momentum=0.27102874871343374)
-        learning_rate = 1e-4
-        learning_rate_Classifier = 1e-3
-        learning_rate_MSE = 1e-3
-        learning_rate_SSIM = 1e-3
-
-        optimizer = optim.Adam([
-            {'params': classifier.f.parameters()},
-            {'params': classifier.g.parameters()},
-            {'params': classifier.rank.parameters(), 'lr': learning_rate_Classifier}
-        ], lr=learning_rate)
-
-        logging.info(f'Adam, lr={learning_rate}')
-        if trainScoreandMSE:
-            optimizerMSE = optim.Adam([
-                {'params': classifierMSE.f.parameters()},
-                {'params': classifierMSE.g.parameters()},
-                {'params': classifierMSE.rank.parameters(), 'lr': 1e-3}
-            ], lr=learning_rate_MSE)
-
-        if trainScoreandSSIM:
-            optimizerSSIM = optim.Adam([
-                {'params': classifierSSIM.f.parameters()},
-                {'params': classifierSSIM.g.parameters()},
-                {'params': classifierSSIM.rank.parameters(), 'lr': 1e-3}
-            ], lr=learning_rate_SSIM)
-
-
-    #classifier.rank.register_backward_hook(printgradnorm)
-
-    loss_func = nn.CrossEntropyLoss(weight=weight)
-
-    #loss_func = nn.MultiMarginLoss()
-    classifier.cuda();
-
-    if trainScoreandMSE:
-        classifierMSE.cuda()
-
-    if trainScoreandSSIM:
-        classifierSSIM.cuda()
-
-logging.info(f'leaning rate = {learning_rate}')
-logging.info(f'leaning rate Classifier = {learning_rate_Classifier}')
+classifier = Classifier(ranknet)
 if trainScoreandMSE:
-    logging.info(f'leaning rate Classifier = {learning_rate_MSE}')
+    mse_module = MSEmodule()
+    classifierMSE = Classifier(mse_module)
 
 if trainScoreandSSIM:
-    logging.info(f'leaning rate Classifier = {learning_rate_SSIM}')
+    ssim_module = SSIM()
+    classifierSSIM = Classifier(ssim_module)
+
+learning_rate_classifier = 1e-3
+learning_rate_rank = 1e-4
+learning_rate_MSE = 1e-3
+learning_rate_SSIM = 1e-3
+
+optimizer = optim.Adam([
+    {'params': classifier.f.parameters()},
+    {'params': classifier.g.parameters()},
+    {'params': classifier.rank.parameters(), 'lr': learning_rate_rank}
+], lr=learning_rate_classifier)
+
+logging.info(f'Adam, lr={learning_rate_rank}')
+if trainScoreandMSE:
+    optimizerMSE = optim.Adam([
+        {'params': classifierMSE.f.parameters()},
+        {'params': classifierMSE.g.parameters()},
+        {'params': classifierMSE.rank.parameters(), 'lr': learning_rate_MSE}
+    ], lr=learning_rate_classifier)
+
+if trainScoreandSSIM:
+    optimizerSSIM = optim.Adam([
+        {'params': classifierSSIM.f.parameters()},
+        {'params': classifierSSIM.g.parameters()},
+        {'params': classifierSSIM.rank.parameters(), 'lr': learning_rate_SSIM}
+    ], lr=learning_rate_classifier)
+
+
+#classifier.rank.register_backward_hook(printgradnorm)
+loss_func = nn.CrossEntropyLoss(weight=weight)
+
+#loss_func = nn.MultiMarginLoss()
+classifier.cuda()
+
+if trainScoreandMSE:
+    classifierMSE.cuda()
+
+if trainScoreandSSIM:
+    classifierSSIM.cuda()
+
+logging.info(f'learning rate classifier = {learning_rate_classifier}')
+logging.info(f'leaning rate rank = {learning_rate_rank}')
+if trainScoreandMSE:
+    logging.info(f'leaning rate MSE = {learning_rate_MSE}')
+
+if trainScoreandSSIM:
+    logging.info(f'leaning rate MSE = {learning_rate_SSIM}')
 
 # Training
 writer_train = SummaryWriter(os.path.join(log_dir,f'runs/rank/train_{Ntrial}'))
 writer_val = SummaryWriter(os.path.join(log_dir,f'runs/rank/val_{Ntrial}'))
 
-
 score_mse_file = os.path.join(f'score_mse_file_{Ntrial}.h5')
-
 
 Nepoch = 500
 lossT = np.zeros(Nepoch)
@@ -605,9 +456,10 @@ for epoch in range(Nepoch):
                 torch.nn.utils.clip_grad_norm_(classifier.parameters(), clipping_value)
             optimizer.step()
 
-
         # train on MSE
         if trainScoreandMSE:
+            optimizerMSE.zero_grad()
+
             deltaMSE, mse1, mse2  = classifierMSE(im1, im2, imt)
             lossMSE = loss_func(deltaMSE, labels)
             train_avgMSE.update(lossMSE.item(), n=BATCH_SIZE)  # here is total loss of all batches
@@ -617,7 +469,6 @@ for epoch in range(Nepoch):
             train_accMSE.update(accMSE, n=1)
 
             # zero the parameter gradients, backward and update
-            optimizerMSE.zero_grad()
             lossMSE.backward()
             if CLIP:
                 clipping_value = 1e-2  # arbitrary value of your choosing
@@ -627,6 +478,8 @@ for epoch in range(Nepoch):
 
         # train on SSIM
         if trainScoreandSSIM:
+            optimizerSSIM.zero_grad()
+
             deltaSSIM, ssim1, ssim2  = classifierSSIM(im1, im2, imt)
             lossSSIM = loss_func(deltaSSIM, labels)
             train_avgSSIM.update(lossSSIM.item(), n=BATCH_SIZE)  # here is total loss of all batches
@@ -635,27 +488,23 @@ for epoch in range(Nepoch):
             accSSIM = acc_calc(deltaSSIM, labels, BatchSize=BATCH_SIZE)
             train_accSSIM.update(accSSIM, n=1)
 
-            # zero the parameter gradients, backward and update
-            optimizerSSIM.zero_grad()
             lossSSIM.backward()
             if CLIP:
                 clipping_value = 1e-2  # arbitrary value of your choosing
                 torch.nn.utils.clip_grad_norm_(classifierSSIM.parameters(), clipping_value)
-
             optimizerSSIM.step()
 
         # get the score for a plot
-        with torch.no_grad():
-            scorelistT.append(score1.detach().cpu().numpy())
-            scorelistT.append(score2.detach().cpu().numpy())
+        scorelistT.append(score1.detach().cpu().numpy())
+        scorelistT.append(score2.detach().cpu().numpy())
 
-            if trainScoreandMSE:
-                mselistT.append(mse1.cpu().numpy())
-                mselistT.append(mse2.cpu().numpy())
+        if trainScoreandMSE:
+            mselistT.append(mse1.detach().cpu().numpy())
+            mselistT.append(mse2.detach().cpu().numpy())
 
-            if trainScoreandSSIM:
-                ssimlistT.append(ssim1.cpu().numpy())
-                ssimlistT.append(ssim2.cpu().numpy())
+        if trainScoreandSSIM:
+            ssimlistT.append(ssim1.detach().cpu().numpy())
+            ssimlistT.append(ssim2.detach().cpu().numpy())
 
     scorelistT = np.concatenate(scorelistT).ravel()
 
@@ -682,53 +531,52 @@ for epoch in range(Nepoch):
     if trainScoreandSSIM:
         classifierSSIM.eval()
 
-    with torch.no_grad():
-        for i, data in enumerate(loader_V, 0):
+    for i, data in enumerate(loader_V, 0):
 
-            # get the inputs
-            im1, im2, imt, labels = data  # im (sl, 3 , 396, 396)
-            im1, im2, imt = im1.cuda(), im2.cuda(), imt.cuda()
+        # get the inputs
+        im1, im2, imt, labels = data  # im (sl, 3 , 396, 396)
+        im1, im2, imt = im1.cuda(), im2.cuda(), imt.cuda()
 
-            labels = labels.to(device, dtype=torch.long)
+        labels = labels.to(device, dtype=torch.long)
 
-            # forward
-            delta, score1, score2 = classifier(im1, im2, imt)
+        # forward
+        delta, score1, score2 = classifier(im1, im2, imt)
 
-            # loss
-            loss = loss_func(delta, labels)
-            eval_avg.update(loss.item(), n=BATCH_SIZE)
+        # loss
+        loss = loss_func(delta, labels)
+        eval_avg.update(loss.item(), n=BATCH_SIZE_EVAL)
 
-            # acc
-            acc = acc_calc(delta, labels, BatchSize=BATCH_SIZE)
-            # print(f'Val: acc of minibatch {i} is {acc}')
-            eval_acc.update(acc, n=1)
+        # acc
+        acc = acc_calc(delta, labels, BatchSize=BATCH_SIZE_EVAL)
+        # print(f'Val: acc of minibatch {i} is {acc}')
+        eval_acc.update(acc, n=1)
 
-            # mse-based classifier
-            if trainScoreandMSE:
-                deltaMSE, mse1, mse2 = classifierMSE(im1, im2, imt)
-                lossMSE = loss_func(deltaMSE, labels)
-                eval_avgMSE.update(lossMSE.item(), n=BATCH_SIZE)
+        # mse-based classifier
+        if trainScoreandMSE:
+            deltaMSE, mse1, mse2 = classifierMSE(im1, im2, imt)
+            lossMSE = loss_func(deltaMSE, labels)
+            eval_avgMSE.update(lossMSE.item(), n=BATCH_SIZE_EVAL)
 
-                accMSE = acc_calc(deltaMSE, labels, BatchSize=BATCH_SIZE)
-                eval_accMSE.update(accMSE, n=1)
+            accMSE = acc_calc(deltaMSE, labels, BatchSize=BATCH_SIZE_EVAL)
+            eval_accMSE.update(accMSE, n=1)
 
-                mselistV.append(mse1.cpu().numpy())
-                mselistV.append(mse2.cpu().numpy())
+            mselistV.append(mse1.detach().cpu().numpy())
+            mselistV.append(mse2.detach().cpu().numpy())
 
-            if trainScoreandSSIM:
-                deltaSSIM, ssim1, ssim2 = classifierSSIM(im1, im2, imt)
-                lossSSIM = loss_func(deltaSSIM, labels)
-                eval_avgSSIM.update(lossSSIM.item(), n=BATCH_SIZE)
+        if trainScoreandSSIM:
+            deltaSSIM, ssim1, ssim2 = classifierSSIM(im1, im2, imt)
+            lossSSIM = loss_func(deltaSSIM, labels)
+            eval_avgSSIM.update(lossSSIM.item(), n=BATCH_SIZE_EVAL)
 
-                accSSIM = acc_calc(deltaSSIM, labels, BatchSize=BATCH_SIZE)
-                eval_accSSIM.update(accSSIM, n=1)
+            accSSIM = acc_calc(deltaSSIM, labels, BatchSize=BATCH_SIZE_EVAL)
+            eval_accSSIM.update(accSSIM, n=1)
 
-                ssimlistV.append(ssim1.cpu().numpy())
-                ssimlistV.append(ssim2.cpu().numpy())
+            ssimlistV.append(ssim1.detach().cpu().numpy())
+            ssimlistV.append(ssim2.detach().cpu().numpy())
 
-            # get scores and mse
-            scorelistV.append(score1.cpu().numpy())
-            scorelistV.append(score2.cpu().numpy())
+        # get scores and mse
+        scorelistV.append(score1.detach().cpu().numpy())
+        scorelistV.append(score2.detach().cpu().numpy())
 
     scorelistV = np.concatenate(scorelistV).ravel()
 
@@ -795,7 +643,7 @@ for epoch in range(Nepoch):
         'optimizer': optimizer.state_dict(),
         'epoch': epoch
     }
-    torch.save(state,os.path.join(log_dir,f'RankClassifier{Ntrial}_{Pretrain}.pt'))
+    torch.save(state,os.path.join(log_dir,f'RankClassifier{Ntrial}.pt'))
 
     if trainScoreandMSE:
         stateMSE = {
@@ -803,7 +651,7 @@ for epoch in range(Nepoch):
             'optimizer': optimizerMSE.state_dict(),
             'epoch': epoch
         }
-        torch.save(stateMSE, os.path.join(log_dir, f'RankClassifier{Ntrial}_{Pretrain}_MSE.pt'))
+        torch.save(stateMSE, os.path.join(log_dir, f'RankClassifier{Ntrial}_MSE.pt'))
 
     if trainScoreandSSIM:
         stateSSIM = {
@@ -811,7 +659,7 @@ for epoch in range(Nepoch):
             'optimizer': optimizerSSIM.state_dict(),
             'epoch': epoch
         }
-        torch.save(stateSSIM, os.path.join(log_dir, f'RankClassifier{Ntrial}_{Pretrain}_SSIM.pt'))
+        torch.save(stateSSIM, os.path.join(log_dir, f'RankClassifier{Ntrial}_SSIM.pt'))
 
     with h5py.File(score_mse_file, 'a') as hf:
         hf.create_dataset(f'scoreT_epoch{epoch}', data=scorelistT)
