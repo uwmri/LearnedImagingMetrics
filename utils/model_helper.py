@@ -496,7 +496,7 @@ class ResNet2(nn.Module):
 
 
 
-def sigpy_image_rotate2( image, theta, verbose=False, device=sp.Device(0), crop=True):
+def sigpy_image_rotate2( image, theta, verbose=False, device=sp.Device(0), crop=False):
     """
     SIgpy based 2D image rotation
 
@@ -543,7 +543,7 @@ def sigpy_image_rotate2( image, theta, verbose=False, device=sp.Device(0), crop=
                                xp.arange(0, nx_pad, dtype=xp.float32),
                                indexing='ij')
             x -= cx_pad
-            y -= cx_pad
+            y -= cy_pad
         else:
             y, x = xp.meshgrid(xp.arange(0, ny, dtype=xp.float32),
                            xp.arange(0, nx, dtype=xp.float32),
@@ -551,7 +551,7 @@ def sigpy_image_rotate2( image, theta, verbose=False, device=sp.Device(0), crop=
 
             #subtract center of coordinates
             x -= cx
-            y -= cx
+            y -= cy
 
         # Rotate the coordinates
         coord = xp.stack((y, x), axis=-1)
