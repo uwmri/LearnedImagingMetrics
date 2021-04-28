@@ -7,7 +7,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 import torchvision
 import torchsummary
-
+import torch.utils.checkpoint as checkpoint
 from utils.model_helper import *
 from utils.CreateImagePairs import get_smaps, add_gaussian_noise
 from utils.unet_componets import *
@@ -751,6 +751,12 @@ class MoDL(nn.Module):
         self.lam2[:] = scale
         self.lam1[:] = 1.0 - self.lam2
 
+    def checkpoint_fn(self, module):
+        def custom_forward(*inputs):
+            inputs = module(inputs[0])
+            return inputs
+        return custom_forward
+
     def forward(self, image, kspace, encoding_op, decoding_op):
 
         for i in range(self.inner_iter):
@@ -813,8 +819,8 @@ class MoDL(nn.Module):
             #print(pad_f)
             y_pred = nn.functional.pad(y_pred,pad_f, "circular")
             #print(y_pred.shape)
-            y_pred = self.denoiser(y_pred)
-
+            #y_pred = self.denoiser(y_pred)
+            y_pred = checkpoint.checkpoint(self.checkpoint_fn(self.denoiser), y_pred)
             # cropping for UNet
             y_pred = y_pred[:,:,pad_amount2:-pad_amount2,pad_amount1:-pad_amount1]
 
