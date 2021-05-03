@@ -1,7 +1,7 @@
 import torch
 import torchvision
 import torch.optim as optim
-import torchsummary
+from torchinfo import summary
 from torch.utils.tensorboard import SummaryWriter
 import torch.linalg
 
@@ -73,7 +73,7 @@ else:
 rank_channel = 1
 rank_trained_on_mag = False
 BO = False
-file_rankModel = os.path.join(filepath_rankModel, "RankClassifier475_pretrained.pt")
+file_rankModel = os.path.join(filepath_rankModel, "RankClassifier7199.pt")
 os.chdir(filepath_rankModel)
 
 log_dir = filepath_rankModel
@@ -127,7 +127,7 @@ print(mask.shape)
 print(f'padx = {(padx, xres - padx - mask.shape[0])}, {(pady, yres - pady - mask.shape[1])}')
 pad = ((padx, xres - padx - mask.shape[0]), (pady, yres - pady - mask.shape[1]))
 mask = np.pad(mask, pad, 'constant', constant_values=0)
-print(mask.shape)
+
 
 [kx, ky] = np.meshgrid(np.linspace(-1, 1, act_xres), np.linspace(-1, 1, act_yres), indexing='ij')
 kr = (kx ** 2 + ky ** 2) ** 0.5
@@ -148,8 +148,8 @@ mask_gpu = sp.to_device(mask, spdevice)
 mask_torch = sp.to_pytorch(mask_gpu, requires_grad=False)
 
 # Data generator
-Ntrain = 18
-Nval = 2
+Ntrain = 1
+Nval = 1
 BATCH_SIZE = 1
 prefetch_data = False
 logging.info(f'Load train data from {filepath_train}')
@@ -164,15 +164,17 @@ loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=Fals
 
 UNROLL = True
 if UNROLL:
+    denoiser = 'varnet'
+    logging.info(f'denoiser is {denoiser}')
     INNER_ITER = 5
-    ReconModel = MoDL(inner_iter=INNER_ITER)
+    ReconModel = MoDL(inner_iter=INNER_ITER, DENOISER=denoiser)
     logging.info(f'MoDL, inner iter = {INNER_ITER}')
 else:
     NUM_CASCADES = 12
     ReconModel = EEVarNet(num_cascades=NUM_CASCADES)
     logging.info(f'EEVarNet, {NUM_CASCADES} cascades')
 ReconModel.cuda();
-# torchsummary.summary(ReconModel.denoiser, input_size=(2,768,396), batch_size=16)
+# summary(ReconModel.denoiser, input_size=(2,768,396), batch_size=16)
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 writer_train = SummaryWriter(f'runs/recon/train_{Ntrial}')
@@ -189,7 +191,7 @@ elif WHICH_LOSS == 'patchGAN':
 elif WHICH_LOSS == 'ssim':
     ssim_module = SSIM()
 
-Nepoch = 200
+Nepoch = 1
 epochMSE = 0
 logging.info(f'MSE for first {epochMSE} epochs then switch to learned')
 lossT = np.zeros(Nepoch)
@@ -243,7 +245,7 @@ for epoch in range(Nepoch):
     ReconModel.train()
     tt = time.time()
 
-    for i, data in enumerate(loader_T, 0):
+    for i, data in enumerate(loader_T,0):
         # print(f'-------------------------------beginning of training, epoch {epoch}-------------------------------')
         # print_mem()
         tstart_batch = time.time()
@@ -406,7 +408,6 @@ for epoch in range(Nepoch):
                 imEst2 = ReconModel(imEst, kspaceU_sl, A_torch, Ah_torch)
             else:
                 imEst2 = ReconModel(kspaceU_sl, mask_torch, A_torch, Ah_torch)
-
 
             if WHICH_LOSS == 'mse':
                 loss = mseloss_fcn(imEst2, im_sl)

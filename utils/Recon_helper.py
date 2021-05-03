@@ -11,6 +11,8 @@ import torch.utils.checkpoint as checkpoint
 from utils.model_helper import *
 from utils.CreateImagePairs import get_smaps, add_gaussian_noise
 from utils.unet_componets import *
+from utils.unet_components_complex import *
+from utils.varnet_components_complex import *
 
 spdevice = sp.Device(0)
 
@@ -726,7 +728,7 @@ class MoDL(nn.Module):
     '''output: image (sl, 768, 396, 2) '''
 
     # def __init__(self, inner_iter=10):
-    def __init__(self, scale_init=1.0, inner_iter=1, sequential=False):
+    def __init__(self, scale_init=1.0, inner_iter=1, DENOISER='unet'):
         super(MoDL, self).__init__()
 
         self.inner_iter = inner_iter
@@ -735,7 +737,14 @@ class MoDL(nn.Module):
         self.lam2 = nn.Parameter(0.5*torch.ones([inner_iter]), requires_grad=True)
 
         # Options for UNET
-        self.denoiser = UNet2D(2, 2, depth=5, final_activation='none', f_maps=32, layer_order='cl')
+        if DENOISER == 'unet':
+            self.denoiser = ComplexUNet2D(1, 1, depth=5, final_activation='none', f_maps=32, layer_order='cl')
+        elif DENOISER == 'varnet':
+            self.varnets = nn.ModuleList()
+            for i in range(self.inner_iter):
+                self.varnets.append(VarNet())
+            self.denoiser = None
+
 
         #self.refiner = UNet2D(2, 2, depth=3, final_activation='none', f_maps=32, layer_order='cl')
         #self.denoiser = CNN_shortcut()
@@ -760,7 +769,6 @@ class MoDL(nn.Module):
     def forward(self, image, kspace, encoding_op, decoding_op):
 
         for i in range(self.inner_iter):
-
             # Ex
             Ex = encoding_op.apply(image)      # For slice by slice:(20, 768, 396, 2) or by case:([slice, 20, 768, 396, 2])
 
@@ -791,18 +799,16 @@ class MoDL(nn.Module):
             Ex -= kspace
 
             # image = image - scale*E.H*(Ex-d)
-            image = image - self.scale_layers[i] * decoding_op.apply(Ex)   # (768, 396, 2)
+            y_pred = image - self.scale_layers[i] * decoding_op.apply(Ex)   # (768, 396, 2)
 
-            y_pred = image
             dim = y_pred.ndim
             if dim == 3:
                 y_pred = torch.unsqueeze(y_pred,0)
-
+                image_complex = torch.unsqueeze(image, 0)
+                # print(f'image_complex reguires grad {image_complex.requires_grad}')
             y_pred = y_pred.permute(0, -1, 1, 2).contiguous()
-           
-            # Padding for UNet donoise
-            #if isinstance(self.denoiser, UNet2D):
-            #    y_pred = nn.functional.pad(y_pred,(2,2), "constant", 0)
+            image_complex = image_complex.permute(0, -1, 1, 2).contiguous()
+            # print(f'image_complex reguires grad {image_complex.requires_grad}')
 
             # Pad to prevent edge effects, circular pad to keep image statistics
             target_size1 = 32 * math.ceil( (64 + y_pred.shape[-1]) / 32)
@@ -817,16 +823,32 @@ class MoDL(nn.Module):
 
             pad_f = (pad_amount1,pad_amount1,pad_amount2, pad_amount2)
             #print(pad_f)
-            y_pred = nn.functional.pad(y_pred,pad_f, "circular")
-            #print(y_pred.shape)
-            #y_pred = self.denoiser(y_pred)
-            y_pred = checkpoint.checkpoint(self.checkpoint_fn(self.denoiser), y_pred)
+            y_pred = nn.functional.pad(y_pred, pad_f, "circular")
+            image_complex = nn.functional.pad(image_complex, pad_f, "circular")
+            # print(f'image_complex reguires grad {image_complex.requires_grad}')
+
+            # to complex
+            y_pred = y_pred.permute(0,2,3,1).contiguous()
+            y_pred = torch.view_as_complex(y_pred)
+            y_pred = y_pred[None, ...]
+
+            if self.denoiser is None:
+                image_complex = image_complex.permute(0, 2, 3, 1).contiguous()
+                image_complex = torch.view_as_complex(image_complex)
+                image_complex = image_complex[None, ...]
+                # print(f'image_complex reguires grad {image_complex.requires_grad}')
+
+                temp = checkpoint.checkpoint(self.checkpoint_fn(self.varnets[i]),image_complex)
+                y_pred += temp
+            else:
+                #print(self.denoiser)
+                y_pred = checkpoint.checkpoint(self.checkpoint_fn(self.denoiser), y_pred)
             # cropping for UNet
             y_pred = y_pred[:,:,pad_amount2:-pad_amount2,pad_amount1:-pad_amount1]
 
-
-            # # back to 2 channel
+            # back to 2 channel
             y_pred = y_pred.permute(0, 2, 3, 1).contiguous()
+            y_pred = torch.view_as_real(y_pred[...,0])
             if dim==3:
                 y_pred = torch.squeeze(y_pred)
 
@@ -840,6 +862,7 @@ class MoDL(nn.Module):
         image = image[idxL:idxR,:,:]
 
         return image
+
 
 class EEVarNet_Block(nn.Module):
     def __init__(self, model, scale_init=1.0):
@@ -889,6 +912,7 @@ class EEVarNet_Block(nn.Module):
         dc = torch.view_as_real(dc_complex)
 
         return kspace + dc - refinement
+
 
 class EEVarNet(nn.Module):
     def __init__(self, num_cascades=12):
@@ -959,7 +983,7 @@ class MoDL_CG(nn.Module):
             image = torch.cat((image, zeros), dim=1)
 
             # denoised
-            print(image.dtype)
+            #print(image.dtype)
             image = self.denoiser(image)  # torch.Size([1, 3, 396, 396])
 
             # back to 2 channel
