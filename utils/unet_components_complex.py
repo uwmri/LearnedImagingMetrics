@@ -12,7 +12,7 @@ class ComplexReLu(nn.Module):
 
     def forward(self, input):
         mag = torch.abs( input)
-        return torch.nn.functional.relu(mag, inplace=self.inplace).type(torch.complex64)
+        return torch.nn.functional.relu(mag, inplace=self.inplace).type(torch.complex64)/(mag+1e-6)*input
 
 
 class ComplexLeakyReLu(nn.Module):
@@ -22,7 +22,7 @@ class ComplexLeakyReLu(nn.Module):
 
     def forward(self, input):
         mag = torch.abs(input)
-        return torch.nn.functional.leaky_relu(mag, negative_slope=0.1, inplace=self.inplace).type(torch.complex64)
+        return torch.nn.functional.leaky_relu(mag, negative_slope=0.1, inplace=self.inplace).type(torch.complex64)/(mag+1e-6)*input
 
 
 class ComplexELU(nn.Module):

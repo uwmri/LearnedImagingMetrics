@@ -164,7 +164,7 @@ loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=Fals
 
 UNROLL = True
 if UNROLL:
-    denoiser = 'varnet'
+    denoiser = 'unet'
     logging.info(f'denoiser is {denoiser}')
     INNER_ITER = 5
     ReconModel = MoDL(inner_iter=INNER_ITER, DENOISER=denoiser)
@@ -191,7 +191,7 @@ elif WHICH_LOSS == 'patchGAN':
 elif WHICH_LOSS == 'ssim':
     ssim_module = SSIM()
 
-Nepoch = 1
+Nepoch = 2
 epochMSE = 0
 logging.info(f'MSE for first {epochMSE} epochs then switch to learned')
 lossT = np.zeros(Nepoch)

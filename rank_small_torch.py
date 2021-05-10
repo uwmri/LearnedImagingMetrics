@@ -4,7 +4,7 @@ import h5py as h5
 import csv
 import logging
 from scipy.stats import pearsonr
-
+from pathlib import Path
 from torchvision.models import mobilenet_v2
 import torchsummary
 from torch.utils.tensorboard import SummaryWriter
@@ -14,9 +14,9 @@ import argparse
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--pname', type=str, default=f'learned_ranking')
-parser.add_argument('--dgx', action='store_true', default=True)
-parser.add_argument('--file_csv', type=str)
-parser.add_argument('--file_images', type=str)
+parser.add_argument('--dgx', action='store_true', default=False)
+parser.add_argument('--file_csv', type=str, default=Path(r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\consensus_mode_all.csv'))
+parser.add_argument('--file_images', type=str, default=Path(r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\TRAINING_IMAGES_04032020.h5'))
 args = parser.parse_args()
 
 DGX = args.dgx
@@ -44,7 +44,7 @@ shuffle_observers = False
 MOBILE = False
 EFF = False
 BO = False
-RESNET = False
+RESNET = True
 CLIP = False
 SAMPLER = False
 WeightedLoss = False
@@ -179,7 +179,7 @@ from random import randrange
 Ntrial = randrange(10000)
 log_dir = os.path.dirname(args.file_images)
 logging.basicConfig(filename=os.path.join(log_dir,f'runs/rank/ranking_{Ntrial}.log'), filemode='w', level=logging.INFO)
-logging.info('With L2cnn classifier')
+logging.info('With ISOresnet classifier')
 logging.info(f'{Ntrial}')
 
 CV = 1
@@ -247,14 +247,14 @@ if MOBILE:
 elif EFF:
     ranknet = EfficientNet.from_name('efficientnet-b0', override_params={'num_classes': 1})
 elif RESNET:
-    ranknet = ResNet2(BasicBlock, [2,2,2,2], for_denoise=False)  # Less than ResNet18
+    ranknet = ISOResNet2(BasicBlock, [2,2,2,2], for_denoise=False)  # Less than ResNet18
 else:
     ranknet = L2cnn(channels_in=1)
 
 # Print summary
 # print(ranknet)
-torchsummary.summary(ranknet, [(X_1.shape[-3], maxMatSize, maxMatSize)
-                              ,(X_1.shape[-3], maxMatSize, maxMatSize)], device="cpu")
+torchsummary.summary(ranknet.cuda(), [(X_1.shape[-3], maxMatSize, maxMatSize)
+                              ,(X_1.shape[-3], maxMatSize, maxMatSize)])
 
 # Bayesian
 # optimize classification accuracy on the validation set as a function of the learning rate and momentum
@@ -306,6 +306,14 @@ if trainScoreandSSIM:
 
 
 #classifier.rank.register_backward_hook(printgradnorm)
+def loss_ortho(model, outputs, targets, lam=1e-4):
+    loss_func = nn.CrossEntropyLoss(weight=weight)
+    loss = loss_func(outputs, targets)
+    o_loss = model.rank.loss_ortho()
+    loss += o_loss.item()
+    loss += o_loss * lam
+
+    return loss
 loss_func = nn.CrossEntropyLoss(weight=weight)
 
 #loss_func = nn.MultiMarginLoss()
@@ -421,8 +429,11 @@ for epoch in range(Nepoch):
             # classifier and scores for each image
             delta, score1, score2 = classifier(im1, im2, imt)
 
-            # Cross entropy
-            loss = loss_func(delta, labels)
+            if RESNET:
+                loss = loss_ortho(classifier, delta, labels)
+            else:
+                # Cross entropy
+                loss = loss_func(delta, labels)
             # Add L2 norm for kernels
             l2_lambda = 0.001
             #l2_lambda = 0.0
@@ -543,7 +554,10 @@ for epoch in range(Nepoch):
         delta, score1, score2 = classifier(im1, im2, imt)
 
         # loss
-        loss = loss_func(delta, labels)
+        if RESNET:
+            loss = loss_ortho(classifier, delta, labels)
+        else:
+            loss = loss_func(delta, labels)
         eval_avg.update(loss.item(), n=BATCH_SIZE_EVAL)
 
         # acc
