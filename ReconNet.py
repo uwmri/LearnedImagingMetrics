@@ -33,56 +33,44 @@ spdevice = sp.Device(0)
 
 Ntrial = randrange(10000)
 
+# Argument parser
+import argparse
+parser = argparse.ArgumentParser(description='Process some integers.')
+parser.add_argument('--data_folder', type=str,
+                    default='/raid/DGXUserDataRaid/cxt004/NYUbrain',
+                    help='Data path')
+parser.add_argument('--metric_file', type=str,
+                    default='/raid/DGXUserDataRaid/cxt004/NYUbrain/RankClassifier7199.pt',
+                    help='Name of learned metric file')
+parser.add_argument('--log_dir', type=str,
+                    default='/raid/DGXUserDataRaid/cxt004/NYUbrain/',
+                    help='Directory to log files')
+parser.add_argument('--pname', type=str, default=f'chenwei_recon_{Ntrial}')
+args = parser.parse_args()
+
+# Set folders
+log_dir = args.log_dir
+data_folder = args.data_folder
+metric_file = args.metric_file
+
 # load RankNet
-DGX = False
-if DGX:
-    filepath_rankModel = Path('/raid/DGXUserDataRaid/cxt004/NYUbrain')
-    filepath_train = Path('/raid/DGXUserDataRaid/cxt004/NYUbrain')
-    filepath_val = Path('/raid/DGXUserDataRaid/cxt004/NYUbrain')
-
-    try:
-        import setproctitle
-        import argparse
-
-        parser = argparse.ArgumentParser()
-        parser.add_argument('--pname', type=str, default=f'chenwei_recon_{Ntrial}')
-        args = parser.parse_args()
-
-        setproctitle.setproctitle(args.pname)
-        print(f'Setting program name to {args.pname}')
-    except:
-        print('setproctitle not installled,unavailable, or failed')
-
-
-else:
-    filepath_rankModel = Path('I:/code/LearnedImagingMetrics_pytorch/Rank_NYU/ImagePairs_Pack_04032020')
-    filepath_train = Path("I:/NYUbrain")
-    filepath_val = Path("I:/NYUbrain")
-
-    # On Kevins machine
-    filepath_rankModel = Path('E:/LearnedImageMetric/ImagePairs_Pack_04032020/')
-    filepath_train = Path("Q:/LearnedImageMetric")
-    filepath_val = Path("Q:/LearnedImageMetric")
-
-    # Chenweis machine
-    filepath_rankModel = Path('I:/code/LearnedImagingMetrics_pytorch/Rank_NYU/ImagePairs_Pack_04032020/rank_trained')
-    filepath_train = Path("I:/NYUbrain")
-    filepath_val = Path("I:/NYUbrain")
-
+try:
+    import setproctitle
+    setproctitle.setproctitle(args.pname)
+    print(f'Setting program name to {args.pname}')
+except:
+    print('setproctitle not installled,unavailable, or failed')
 
 rank_channel = 1
 rank_trained_on_mag = False
 BO = False
-file_rankModel = os.path.join(filepath_rankModel, "RankClassifier7199.pt")
-os.chdir(filepath_rankModel)
 
-log_dir = filepath_rankModel
-logging.basicConfig(filename=os.path.join(log_dir,f'Recon_{Ntrial}_dgx{DGX}.log'), filemode='w', level=logging.INFO)
+logging.basicConfig(filename=os.path.join(log_dir,f'Recon_{Ntrial}.log'), filemode='w', level=logging.INFO)
 
 ranknet = L2cnn(channels_in=rank_channel)
 classifier = Classifier(ranknet)
 
-state = torch.load(file_rankModel)
+state = torch.load(metric_file)
 classifier.load_state_dict(state['state_dict'], strict=True)
 classifier.eval()
 for param in classifier.parameters():
@@ -152,13 +140,13 @@ Ntrain = 1
 Nval = 1
 BATCH_SIZE = 1
 prefetch_data = False
-logging.info(f'Load train data from {filepath_train}')
-trainingset = DataGeneratorRecon(filepath_train, file_train, num_cases=Ntrain, rank_trained_on_mag=rank_trained_on_mag,
+logging.info(f'Load train data from {data_folder}')
+trainingset = DataGeneratorRecon(data_folder, file_train, num_cases=Ntrain, rank_trained_on_mag=rank_trained_on_mag,
                                  data_type=smap_type)
 loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=True)
 
-logging.info(f'Load eval data from {filepath_val}')
-validationset = DataGeneratorRecon(filepath_val, file_val, num_cases=Ntrain, rank_trained_on_mag=rank_trained_on_mag,
+logging.info(f'Load eval data from {data_folder}')
+validationset = DataGeneratorRecon(data_folder, file_val, num_cases=Ntrain, rank_trained_on_mag=rank_trained_on_mag,
                                    data_type=smap_type)
 loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=False)
 

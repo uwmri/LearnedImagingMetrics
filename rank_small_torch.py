@@ -77,9 +77,7 @@ ranks = np.array(ranks, dtype=np.int)
 #     new_ranks[count,:] = m
 # ranks = new_ranks
 
-
 NRANKS = ranks.shape[0]
-
 
 # # Human consistency on duplicated pairs
 # _, countR = np.unique(ranks, axis=0, return_counts=True)
@@ -91,7 +89,6 @@ NRANKS = ranks.shape[0]
 if shuffle_observers:
     np.random.shuffle(ranks)
 # np.savetxt("consensus_mode_all.csv", ranks, fmt='%d', delimiter=',')
-
 
 if train_on_mag:
     nch = 1
@@ -196,7 +193,7 @@ Labels_cnnT = np.concatenate((Labels[:idV_L], Labels[idV_R:]))
 Labels_cnnV = Labels[idV_L:idV_R]
 
 # Data generator
-BATCH_SIZE = 48
+BATCH_SIZE = 24
 BATCH_SIZE_EVAL = 1
 logging.info(f'batchsize={BATCH_SIZE}')
 logging.info(f'batchsize_eval={BATCH_SIZE_EVAL}')
@@ -212,8 +209,8 @@ if SAMPLER:
     validationset = DataGenerator_rank(X_1, X_2, X_T, Labels_cnnV, idV, augmentation=False, pad_channels=0)
     loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE_EVAL, shuffle=False, sampler=samplerV, drop_last=True)
 else:
-    trainingset = DataGenerator_rank(X_1, X_2, X_T, Labels_cnnT, idT, augmentation=True, pad_channels=0)
-    loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=True, drop_last=True)
+    trainingset = DataGenerator_rank(X_1, X_2, X_T, Labels_cnnT, idT, augmentation=False, pad_channels=0)
+    loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=False, drop_last=True)
 
     validationset = DataGenerator_rank(X_1, X_2, X_T, Labels_cnnV, idV, augmentation=False, pad_channels=0)
     loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE_EVAL, shuffle=False, drop_last=True)
@@ -278,8 +275,8 @@ if trainScoreandSSIM:
     ssim_module = SSIM()
     classifierSSIM = Classifier(ssim_module)
 
-learning_rate_classifier = 1e-3
-learning_rate_rank = 1e-4
+learning_rate_classifier = 1e-5
+learning_rate_rank = 1e-5
 learning_rate_MSE = 1e-3
 learning_rate_SSIM = 1e-3
 
@@ -436,7 +433,6 @@ for epoch in range(Nepoch):
                 loss = loss_func(delta, labels)
             # Add L2 norm for kernels
             l2_lambda = 0.001
-            #l2_lambda = 0.0
             l2_reg = torch.tensor(0.).cuda()
             for param in classifier.rank.parameters():
                 l2_reg += torch.norm(param)
