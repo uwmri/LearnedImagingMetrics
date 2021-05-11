@@ -225,7 +225,7 @@ def sneakpeek(dataset, Ncoils=20, rank_trained_on_mag=True):
 def mseloss_fcn(output, target):
     # output = crop_im(output)
     # target = crop_im(target)
-    loss = torch.sum((output - target) ** 2)** 0.5
+    loss = torch.mean(torch.abs(output - target) ** 2)** 0.5
     return loss
 
 
@@ -253,10 +253,13 @@ def learnedloss_fcn(output, target, scoreModel, rank_trained_on_mag=False):
     if rank_trained_on_mag and output.shape[-1] == 2:
         output = torch.sqrt(torch.sum(output**2, axis=-1, keepdims=True))
 
+    output = torch.abs(output.unsqueeze(0).unsqueeze(0))
+    target = torch.abs(target.unsqueeze(0).unsqueeze(0))
+
     # output = crop_im(output)
     # target = crop_im(target)
-    output = output.permute(0, -1, 1,2)
-    target = target.permute(0, -1, 1,2)
+    #output = output.permute(0, -1, 1,2)
+    #target = target.permute(0, -1, 1,2)
 
     Nslice = output.shape[0]
 
@@ -738,7 +741,7 @@ class MoDL(nn.Module):
 
         # Options for UNET
         if DENOISER == 'unet':
-            self.denoiser = ComplexUNet2D(1, 1, depth=5, final_activation='none', f_maps=32, layer_order='cl')
+            self.denoiser = ComplexUNet2D(1, 1, depth=5, final_activation='none', f_maps=32, layer_order='cr')
         elif DENOISER == 'varnet':
             self.varnets = nn.ModuleList()
             for i in range(self.inner_iter):
@@ -796,19 +799,10 @@ class MoDL(nn.Module):
             # Ex = encoding_op.apply(image_inter)
 
             # Ex - d
-            Ex -= kspace
+            diff = Ex - kspace
 
             # image = image - scale*E.H*(Ex-d)
-            y_pred = image - self.scale_layers[i] * decoding_op.apply(Ex)   # (768, 396, 2)
-
-            dim = y_pred.ndim
-            if dim == 3:
-                y_pred = torch.unsqueeze(y_pred,0)
-                image_complex = torch.unsqueeze(image, 0)
-                # print(f'image_complex reguires grad {image_complex.requires_grad}')
-            y_pred = y_pred.permute(0, -1, 1, 2).contiguous()
-            image_complex = image_complex.permute(0, -1, 1, 2).contiguous()
-            # print(f'image_complex reguires grad {image_complex.requires_grad}')
+            y_pred = image - self.scale_layers[i] * decoding_op.apply(diff)   # (768, 396)
 
             # Pad to prevent edge effects, circular pad to keep image statistics
             target_size1 = 32 * math.ceil( (64 + y_pred.shape[-1]) / 32)
@@ -817,20 +811,13 @@ class MoDL(nn.Module):
 
             pad_amount1 = (target_size1 - y_pred.shape[-1]) // 2
             pad_amount2 = (target_size2 - y_pred.shape[-2]) // 2
-            #print(f'Target size {pad_amount1} {pad_amount2}')
+            #print(f'Pad amount {pad_amount1} {pad_amount2}')
 
-            #print(f'Target size = {target_size}, pad_amount {pad_amount} input = {y_pred.shape}')
-
-            pad_f = (pad_amount1,pad_amount1,pad_amount2, pad_amount2)
+            pad_f = (pad_amount1, pad_amount1, pad_amount2, pad_amount2)
             #print(pad_f)
-            y_pred = nn.functional.pad(y_pred, pad_f, "circular")
-            image_complex = nn.functional.pad(image_complex, pad_f, "circular")
+            y_pred = nn.functional.pad(y_pred, pad_f)
+            #image_complex = nn.functional.pad(image_complex, pad_f)
             # print(f'image_complex reguires grad {image_complex.requires_grad}')
-
-            # to complex
-            y_pred = y_pred.permute(0,2,3,1).contiguous()
-            y_pred = torch.view_as_complex(y_pred)
-            y_pred = y_pred[None, ...]
 
             if self.denoiser is None:
                 image_complex = image_complex.permute(0, 2, 3, 1).contiguous()
@@ -842,24 +829,21 @@ class MoDL(nn.Module):
                 y_pred += temp
             else:
                 #print(self.denoiser)
+                y_pred = y_pred.unsqueeze(0).unsqueeze(0)
                 y_pred = checkpoint.checkpoint(self.checkpoint_fn(self.denoiser), y_pred)
+                y_pred = y_pred.squeeze(0).squeeze(0)
+
+
             # cropping for UNet
-            y_pred = y_pred[:,:,pad_amount2:-pad_amount2,pad_amount1:-pad_amount1]
-
-            # back to 2 channel
-            y_pred = y_pred.permute(0, 2, 3, 1).contiguous()
-            y_pred = torch.view_as_real(y_pred[...,0])
-            if dim==3:
-                y_pred = torch.squeeze(y_pred)
-
-            #image = self.lam1[i]*image + self.lam2[i]*y_pred
+            y_pred = y_pred[pad_amount2:-pad_amount2,pad_amount1:-pad_amount1]
 
             # Return Image
             image = self.lam2[i]*y_pred
+
         # crop to square
         idxL = int((image.shape[0] - image.shape[1]) / 2)
         idxR = int(idxL + image.shape[1])
-        image = image[idxL:idxR,:,:]
+        image = image[idxL:idxR,:]
 
         return image
 

@@ -315,7 +315,7 @@ class ComplexUNet2D(nn.Module):
     """
 
     def __init__(self, in_channels, out_channels, f_maps=64, layer_order='cl', num_groups=0,
-                 depth=4, layer_growth=2.0, residual=True, **kwargs):
+                 depth=4, layer_growth=2.0, residual=False, **kwargs):
         super(ComplexUNet2D, self).__init__()
 
         if isinstance(f_maps, int):
