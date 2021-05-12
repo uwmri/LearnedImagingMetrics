@@ -179,7 +179,7 @@ elif WHICH_LOSS == 'patchGAN':
 elif WHICH_LOSS == 'ssim':
     ssim_module = SSIM()
 
-Nepoch = 2
+Nepoch = 20
 epochMSE = 0
 logging.info(f'MSE for first {epochMSE} epochs then switch to learned')
 lossT = np.zeros(Nepoch)
@@ -242,8 +242,6 @@ for epoch in range(Nepoch):
         smaps = sp.to_device(smaps, device=spdevice)
         smaps = spdevice.xp.squeeze(smaps)
 
-        if UNROLL:
-            kspace *= 1e6
         kspace = sp.to_device(kspace, device=spdevice)
         kspace = chan2_complex(spdevice.xp.squeeze(kspace))  # cupy array on cuda
 
@@ -283,10 +281,11 @@ for epoch in range(Nepoch):
             im_sl = sp.to_pytorch(Atruth.H * (kspace_sl * mask_truth), requires_grad=False)
             idxL = int((im_sl.shape[0] - im_sl.shape[1]) / 2)
             idxR = int(idxL + im_sl.shape[1])
-            im_sl = im_sl[idxL:idxR, :, :]
+            im_sl = im_sl[idxL:idxR, :]
 
-            A_torch = sp.to_pytorch_function(A, input_iscomplex=True, output_iscomplex=True)
-            Ah_torch = sp.to_pytorch_function(Ah, input_iscomplex=True, output_iscomplex=True)
+            # Get PyTorch functions
+            A_torch = sp.to_pytorch_function(A)
+            Ah_torch = sp.to_pytorch_function(Ah)
             imEst = 0.0 * sp.to_pytorch(Ah * kspaceU_sl, requires_grad=True)
             t = time.time()
             kspaceU_sl = sp.to_pytorch(kspaceU_sl)  # torch.Size([20, 768, 396, 2])
@@ -311,7 +310,7 @@ for epoch in range(Nepoch):
             else:
                 if epoch < epochMSE:
                     loss = mseloss_fcn(imEst2, im_sl) * 5e2
-                    loss_mse_tensor = loss
+                    loss_mse_tensor = loss.item()
                 else:
                     loss = learnedloss_fcn(imEst2, im_sl, score, rank_trained_on_mag=rank_trained_on_mag)
                     loss_mse_tensor = mseloss_fcn(imEst2, im_sl).detach()
@@ -322,7 +321,7 @@ for epoch in range(Nepoch):
             if WHICH_LOSS == 'learned':
                 with torch.no_grad():
                     loss_learnedT.append(loss.detach().item())
-                    loss_mseT.append(float(loss_mse_tensor))
+                    loss_mseT.append(loss_mse_tensor.detach().cpu().item())
 
             loss_avg += loss.detach().item()
             loss_avg /= Nslices
@@ -363,8 +362,6 @@ for epoch in range(Nepoch):
         smaps = chan2_complex(spdevice.xp.squeeze(smaps))
         Nslices = smaps.shape[0]
 
-        if UNROLL:
-            kspace *= 1e6
         kspace = sp.to_device(kspace, device=spdevice)
         kspace = spdevice.xp.squeeze(kspace)
         kspace = chan2_complex(kspace)
@@ -383,10 +380,10 @@ for epoch in range(Nepoch):
             im_sl = sp.to_pytorch(Atruth.H * (kspace_sl * mask_truth), requires_grad=False)
             idxL = int((im_sl.shape[0] - im_sl.shape[1]) / 2)
             idxR = int(idxL + im_sl.shape[1])
-            im_sl = im_sl[idxL:idxR, :, :]
+            im_sl = im_sl[idxL:idxR, :]
 
-            A_torch = sp.to_pytorch_function(A, input_iscomplex=True, output_iscomplex=True)
-            Ah_torch = sp.to_pytorch_function(Ah, input_iscomplex=True, output_iscomplex=True)
+            A_torch = sp.to_pytorch_function(A)
+            Ah_torch = sp.to_pytorch_function(Ah)
 
             imEst = 0.0 * sp.to_pytorch(Ah * kspaceU_sl, requires_grad=False)
 
@@ -422,7 +419,7 @@ for epoch in range(Nepoch):
             if WHICH_LOSS == 'learned':
                 with torch.no_grad():
                     loss_learnedV.append(loss.detach().item())
-                    loss_mseV.append(float(loss_mse_tensor))
+                    loss_mseV.append(loss_mse_tensor.cpu())
 
             if i == 1 and sl == 4:
                 truthplt = chan2_complex(torch.squeeze(im_sl.detach().cpu()))
@@ -464,15 +461,15 @@ for epoch in range(Nepoch):
                 del truthplt, noisyplt, imEstplt
 
             del smaps_sl, kspaceU_sl, im_sl
-        del imEst
-        del smaps, im, kspace
-        A = None
-        Ah = None
-        A_torch = None
-        Ah_torch = None
-        mempool.free_all_blocks()
-        pinned_mempool.free_all_blocks()
-        torch.cuda.empty_cache()
+        #del imEst
+        #del smaps, im, kspace
+        #A = None
+        #Ah = None
+        #A_torch = None
+        #Ah_torch = None
+        #mempool.free_all_blocks()
+        #pinned_mempool.free_all_blocks()
+        #torch.cuda.empty_cache()
 
         # if i == Nval:
         #     break
