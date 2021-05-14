@@ -275,7 +275,8 @@ if trainScoreandSSIM:
     ssim_module = SSIM()
     classifierSSIM = Classifier(ssim_module)
 
-learning_rate_classifier = 1e-5
+
+learning_rate_classifier = 1e-4
 learning_rate_rank = 1e-5
 learning_rate_MSE = 1e-3
 learning_rate_SSIM = 1e-3
@@ -307,7 +308,7 @@ def loss_ortho(model, outputs, targets, lam=1e-4):
     loss_func = nn.CrossEntropyLoss(weight=weight)
     loss = loss_func(outputs, targets)
     o_loss = model.rank.loss_ortho()
-    loss += o_loss.item()
+
     loss += o_loss * lam
 
     return loss

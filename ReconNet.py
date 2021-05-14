@@ -154,7 +154,7 @@ UNROLL = True
 if UNROLL:
     denoiser = 'unet'
     logging.info(f'denoiser is {denoiser}')
-    INNER_ITER = 5
+    INNER_ITER = 1
     ReconModel = MoDL(inner_iter=INNER_ITER, DENOISER=denoiser)
     logging.info(f'MoDL, inner iter = {INNER_ITER}')
 else:

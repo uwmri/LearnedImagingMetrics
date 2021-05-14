@@ -13,14 +13,14 @@ from utils.utils_DL import *
 spdevice = sp.Device(0)
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-filepath_rankModel = Path(r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\rank_trained')
+filepath_rankModel = Path(r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\rank_trained_ISONET')
 filepath_train = Path("I:/NYUbrain")
 filepath_val = Path("I:/NYUbrain")
-file_rankModel = os.path.join(filepath_rankModel, "RankClassifier8367_pretrained.pt")
+file_rankModel = os.path.join(filepath_rankModel, "RankClassifier5542.pt")
 log_dir = filepath_rankModel
 
 rank_channel =1
-ranknet = L2cnn(channels_in=rank_channel)
+ranknet = ISOResNet2(BasicBlock, [2,2,2,2], for_denoise=False)
 classifier = Classifier(ranknet)
 
 state = torch.load(file_rankModel)
@@ -36,8 +36,8 @@ val_folder = Path("D:/NYUbrain/brain_multicoil_val/multicoil_val")
 test_folder = Path("D:/NYUbrain/brain_multicoil_test/multicoil_test")
 files = find("*.h5", train_folder)
 
-#CORRUPTIONS = ['Motion Corrupted PE (%)','Total shift in pixels', 'gaussian', '% random undersampling', '% PE removed randomly']
-CORRUPTIONS = ['Motion Corrupted PE (%)']
+CORRUPTIONS = ['% PE Motion Corrupted','Total shift (pixels)', 'Gaussian noise level(a.u.)', '% random undersampling', '% PE removed randomly']
+#CORRUPTIONS = ['Total shift in pixels']
 SAME_IMAGE = '(the same image)'
 # out_name = os.path.join(f'corrupted_images_{WHICH_CORRUPTION}.h5')
 # try:
@@ -45,25 +45,18 @@ SAME_IMAGE = '(the same image)'
 # except OSError:
 #     pass
 
-Ntrials = 300
-num_slices = 4
+Ntrials = 500
 Nxmax = 396
 Nymax = 768
 count = 0
 
 
-# for index_file in range(len(os.listdir(train_folder))):
-file = 'D:\\NYUbrain\\brain_multicoil_train\\multicoil_train\\file_brain_AXT2_200_6002139.h5'
-while count == 0:
+for index_file in range(1):
+#file = 'D:\\NYUbrain\\brain_multicoil_train\\multicoil_train\\file_brain_AXT2_200_6002139.h5'
+#while count == 0:
 
-    #file = files[np.random.randint(len(os.listdir(train_folder)))]
-    # file_size = os.path.getsize(file)
-    # if file_size < 700000000:
-    #     pass
-    # else:
+    file = files[np.random.randint(len(os.listdir(train_folder)))]
 
-    s = 1
-    print(f'{file}, slice{s}')
     count += 1
     hf = h5py.File(file, mode='r')
 
@@ -96,8 +89,10 @@ while count == 0:
     #     if num_duplicates == 0 and num_outrange == 0:
     #         break
 
-    # for s in slice_nums:
-    #     s = int(s)
+    #for s in slice_nums:
+        #s = int(s)
+    s = np.random.randint(tot_slices)
+    print(f'{file}, slice{s}')
     ksp_full = ksp[s]
     ksp_full_gpu = sp.to_device(ksp_full, device=spdevice)
 
@@ -123,18 +118,18 @@ while count == 0:
         for i in range(Ntrials):
 
             # Get corrupted
-            if WHICH_CORRUPTION == 'Motion Corrupted PE (%)':
+            if WHICH_CORRUPTION == '% PE Motion Corrupted':
                 # corruption_mag is from which PE line the motion started/total PEs
                 maxshift=20
                 ksp2, corruption_mag = trans_motion(ksp_full, dir_motion=2, maxshift=maxshift, prob=1, startPE=180,
                                                     fix_shift=True, fix_start=False)
-            if WHICH_CORRUPTION == 'Total shift in pixels':
+            if WHICH_CORRUPTION == 'Total shift (pixels)':
                 # corruption_mag is magnitude of the motion
-                startPE=180
+                startPE=210
                 ksp2, corruption_mag = trans_motion(ksp_full, dir_motion=2, maxshift=50, prob=1,
                                                     startPE=startPE,fix_shift=False, fix_start=True)
 
-            elif WHICH_CORRUPTION == 'gaussian':
+            elif WHICH_CORRUPTION == 'Gaussian noise level(a.u.)':
                 gaussian_ulim = 12
                 gaussian_level = np.random.randint(0, gaussian_ulim)
                 ksp2, sigma_real, sigma_imag = add_gaussian_noise(ksp_full, 1, kedge_len=30,level=gaussian_level, mode=1, mean=0)
@@ -172,7 +167,7 @@ while count == 0:
             image_truth_tensor = image_truth_tensor.permute(0, -1, 1, 2).cuda()
             score = scoreNet(image_tensor, image_truth_tensor)
 
-            if i%300 ==0:
+            if i%150 ==0:
                 fig = plt.figure()
                 fig.suptitle(f'{mse}, {ssim}, {score.cpu().numpy().item()}')
                 plt.subplot(121)
@@ -217,44 +212,52 @@ while count == 0:
 
         fig, ax1 = plt.subplots()
         color = 'tab:red'
-        ax1.set_xlabel(f'{WHICH_CORRUPTION} {SAME_IMAGE} bulk1')
-        ax1.set_ylabel('1-ssim', color=color)
+        ax1.set_xlabel(f'{WHICH_CORRUPTION}', fontsize=18)
+        ax1.set_ylabel('1-ssim', color=color, fontsize=18)
         ax1.scatter(corruption_magList, ssimList, color=color, alpha=0.2)
         ax1.tick_params(axis='y', labelcolor=color)
+        ax1.tick_params(axis='both', labelsize=14)
 
         ax2 = ax1.twinx()  # instantiate a second axes that shares the same x-axis
         color = 'tab:blue'
-        ax2.set_ylabel('score', color=color)  # we already handled the x-label with ax1
+        ax2.set_ylabel('score', color=color, fontsize=18)  # we already handled the x-label with ax1
         ax2.scatter(corruption_magList, scoreList, color=color, alpha=0.2)
         ax2.tick_params(axis='y', labelcolor=color)
+        ax2.tick_params(axis='both', labelsize=14)
         fig.tight_layout()  # otherwise the right y-label is slightly clipped
         plt.show()
 
         fig, ax1 = plt.subplots()
         color = 'tab:red'
-        ax1.set_xlabel(f'{WHICH_CORRUPTION} {SAME_IMAGE}bulk1')
-        ax1.set_ylabel('mse', color=color)
+        ax1.set_xlabel(f'{WHICH_CORRUPTION}', fontsize=18)
+        ax1.set_ylabel('mse', color=color, fontsize=18)
         ax1.scatter(corruption_magList, mseList, color=color, alpha=0.2)
         ax1.tick_params(axis='y', labelcolor=color)
+        ax1.tick_params(axis='both', labelsize=14)
 
         ax2 = ax1.twinx()  # instantiate a second axes that shares the same x-axis
         color = 'tab:blue'
-        ax2.set_ylabel('score', color=color)  # we already handled the x-label with ax1
+        ax2.set_ylabel('score', color=color, fontsize=18)  # we already handled the x-label with ax1
         ax2.scatter(corruption_magList, scoreList, color=color, alpha=0.15)
         ax2.tick_params(axis='y', labelcolor=color)
+        ax2.tick_params(axis='both', labelsize=14)
         fig.tight_layout()  # otherwise the right y-label is slightly clipped
         plt.show()
 
-        fig_mseVscore = plt.figure()
-        plt.scatter(mseList, scoreList, alpha=0.5)
-        plt.title(f'{WHICH_CORRUPTION} {SAME_IMAGE}bulk1')
-        plt.xlabel('MSE')
-        plt.ylabel('score')
+        fig_mseVscore, ax3 = plt.subplots()
+        ax3.scatter(mseList, scoreList, alpha=0.5)
+        ax3.set_title(f'{WHICH_CORRUPTION}', fontsize=18)
+        ax3.set_xlabel('MSE', fontsize=18)
+        ax3.set_ylabel('score', fontsize=18)
+        ax3.tick_params(axis='both', labelsize=14)
+        fig_mseVscore.tight_layout()
         plt.show()
 
-        fig_ssimVscore = plt.figure()
-        plt.scatter(ssimList, scoreList, alpha=0.5)
-        plt.title(f'{WHICH_CORRUPTION} {SAME_IMAGE}bulk1')
-        plt.xlabel('SSIM')
-        plt.ylabel('score')
+        fig_ssimVscore, ax4 = plt.subplots()
+        ax4.scatter(ssimList, scoreList, alpha=0.5)
+        ax4.set_title(f'{WHICH_CORRUPTION}', fontsize=18)
+        ax4.set_xlabel('SSIM', fontsize=18)
+        ax4.set_ylabel('score', fontsize=18)
+        ax4.tick_params(axis='both', labelsize=14)
+        fig_ssimVscore.tight_layout()
         plt.show()
