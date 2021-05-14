@@ -112,7 +112,6 @@ for i in range(NEXAMPLES):
     name1 = 'EXAMPLE_%07d_IMAGE_%04d' % (i+1, 0)
     name2 = 'EXAMPLE_%07d_IMAGE_%04d' % (i+1, 1)
 
-
     im1 = zero_pad2D(np.array(hf[name1]), maxMatSize, maxMatSize)
     im2 = zero_pad2D(np.array(hf[name2]), maxMatSize, maxMatSize)
     truth = zero_pad2D(np.array(hf[nameT]), maxMatSize, maxMatSize)

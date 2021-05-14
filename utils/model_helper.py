@@ -268,12 +268,14 @@ class L2cnn(nn.Module):
         # for i in range(2):
         #     input[:, i, :, :] *= self.scale[i]
 
-        diff = input - truth
+        diff_mag = torch.abs(input - truth)
         # if train on 2chan (real and imag) images
 
         # Update to use sqrt
-        diff_sq = torch.sum( diff ** 2, dim=1, keepdim=True)
-        diff_mag = diff_sq ** (0.5)
+        #diff_sq = torch.sum( diff ** 2, dim=1, keepdim=True)
+        #diff_mag = diff_sq ** (0.5)
+        #diff_sq = torch.sum( torch.square(diff), dim=1, keepdim=True)
+        #diff_mag = torch.sqrt(diff_sq)
 
         # Mean square error
         #mse = self.layer_mse(diff_mag)
