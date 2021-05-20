@@ -26,10 +26,11 @@ from utils.utils_DL import *
 from random import randrange
 #from fastmri.models.varnet import *
 
+
 mempool = cupy.get_default_memory_pool()
 pinned_mempool = cupy.get_default_pinned_memory_pool()
-xp = spdevice.xp
 spdevice = sp.Device(0)
+xp = spdevice.xp
 
 Ntrial = randrange(10000)
 
@@ -136,10 +137,10 @@ mask_gpu = sp.to_device(mask, spdevice)
 mask_torch = sp.to_pytorch(mask_gpu, requires_grad=False)
 
 # Data generator
-Ntrain = 10
-Nval = 1
+Ntrain = 300
+Nval = 10
 BATCH_SIZE = 1
-prefetch_data = False
+prefetch_data = True
 logging.info(f'Load train data from {data_folder}')
 trainingset = DataGeneratorRecon(data_folder, file_train, num_cases=Ntrain, rank_trained_on_mag=rank_trained_on_mag,
                                  data_type=smap_type)
@@ -178,7 +179,7 @@ elif WHICH_LOSS == 'patchGAN':
 elif WHICH_LOSS == 'ssim':
     ssim_module = SSIM()
 
-Nepoch = 20
+Nepoch = 100
 epochMSE = 0
 logging.info(f'MSE for first {epochMSE} epochs then switch to learned')
 lossT = np.zeros(Nepoch)
@@ -239,14 +240,15 @@ for epoch in range(Nepoch):
             # print_mem()
             tstart_batch = time.time()
 
-            smaps, im, kspace = data
+            smaps, kspace = data
             smaps = sp.to_device(smaps, device=spdevice)
             smaps = spdevice.xp.squeeze(smaps)
+            kspace = kspace[0]
 
             kspace = sp.to_device(kspace, device=spdevice)
-            kspace = chan2_complex(spdevice.xp.squeeze(kspace))  # cupy array on cuda
+            #kspace = chan2_complex(spdevice.xp.squeeze(kspace))  # cupy array on cuda
 
-            im = torch.squeeze(im, dim=0)  # torch.Size([16, 768, 396, ch=2])
+            #im = torch.squeeze(im, dim=0)  # torch.Size([16, 768, 396, ch=2])
 
             # seems jsense and espirit wants (coil,h,w), can't do (sl, coil, h, w)
             redo_smaps = False
@@ -259,7 +261,7 @@ for epoch in range(Nepoch):
                                                  device=spdevice, show_pbar=True).run()
                     smaps[sl] = sp.to_device(mps, spdevice)
 
-            smaps = chan2_complex(spdevice.xp.squeeze(smaps))  # (slice, coil, 768, 396)
+            #smaps = chan2_complex(spdevice.xp.squeeze(smaps))  # (slice, coil, 768, 396)
             Nslices = smaps.shape[0]
 
             t_case = time.time()
@@ -363,18 +365,19 @@ for epoch in range(Nepoch):
 
     ReconModel.eval()
     for i, data in enumerate(loader_V, 0):
-        smaps, im, kspace = data
+        smaps, kspace = data
 
-        im = torch.squeeze(im, dim=0)
+        #im = torch.squeeze(im, dim=0)
 
         smaps = sp.to_device(smaps, device=spdevice)
         smaps = spdevice.xp.squeeze(smaps)
-        smaps = chan2_complex(spdevice.xp.squeeze(smaps))
+        #smaps = chan2_complex(spdevice.xp.squeeze(smaps))
         Nslices = smaps.shape[0]
 
         kspace = sp.to_device(kspace, device=spdevice)
         kspace = spdevice.xp.squeeze(kspace)
-        kspace = chan2_complex(kspace)
+        #kspace = kspace[0]
+        #kspace = chan2_complex(kspace)
 
         for sl in range(smaps.shape[0]):
             smaps_sl = xp.copy(smaps[sl])
@@ -527,3 +530,4 @@ for epoch in range(Nepoch):
         'loss_cal': lossV
     }
     torch.save(state, os.path.join(log_dir, f'Recon{Ntrial}_{WHICH_LOSS}.pt'))
+

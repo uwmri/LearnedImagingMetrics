@@ -1,5 +1,7 @@
 import pickle
 from typing import Dict
+
+import numpy as np
 import sigpy as sp
 import torch
 import torch.optim as optim
@@ -75,34 +77,36 @@ class DataGeneratorRecon(Dataset):
         else:
             smaps = np.array(self.hf[self.scans[idx]]['smaps'])
 
-        smaps = complex_2chan(smaps)
+        #smaps = complex_2chan(smaps)
         #print(f'Get smap ={time.time()-t}, {smaps.dtype} {smaps.shape}')
 
-        t = time.time()
-        truth = np.array(self.hf[self.scans[idx]]['truths'])
-        truth = complex_2chan(truth)
-        if self.rank_trained_on_mag:
-            truth = np.sqrt(np.sum(np.square(truth), axis=-1, keepdims=True))
-        truth = zero_pad_truth(truth)
-        truth = torch.from_numpy(truth)     # ([16, 768, 396, ch])
-
-        # normalize truth to 0 and 1
-        # maxt_truth shape  (sl, 1, 1, 1)
-        max_truth, _ = torch.max(truth, dim=1, keepdim=True)
-        max_truth, _ = torch.max(max_truth, dim=2, keepdim=True)
-        max_truth, _ = torch.max(max_truth, dim=3, keepdim=True)
-        truth /= max_truth
-        #print(f'Get truth {time.time() - t} {truth.dtype} {truth.shape}')
+        truth = None
+        # t = time.time()
+        # truth = np.array(self.hf[self.scans[idx]]['truths'])
+        # #truth = complex_2chan(truth)
+        # #if self.rank_trained_on_mag:
+        # #    truth = np.sqrt(np.sum(np.square(truth), axis=-1, keepdims=True))
+        # truth = zero_pad_truth(truth)
+        # truth = torch.from_numpy(truth)     # ([16, 768, 396, ch])
+        #
+        # # normalize truth to 0 and 1
+        # # maxt_truth shape  (sl, 1, 1, 1)
+        # max_truth, _ = torch.max(truth, dim=1, keepdim=True)
+        # max_truth, _ = torch.max(max_truth, dim=2, keepdim=True)
+        # max_truth, _ = torch.max(max_truth, dim=3, keepdim=True)
+        # truth /= max_truth
+        # #print(f'Get truth {time.time() - t} {truth.dtype} {truth.shape}')
 
         t = time.time()
         kspace = np.array(self.hf[self.scans[idx]]['kspace'])
         kspace = zero_pad4D(kspace)  # array (sl, coil, 768, 396)
+        kspace /= np.max(np.abs(kspace))/np.prod(kspace.shape[-2:])
 
-        max_truth = torch.unsqueeze(max_truth, -1)
-        kspace = complex_2chan(kspace)  # (slice, coil, h, w, 2)
-        kspace /= max_truth
+        #max_truth = torch.unsqueeze(max_truth, -1)
+        #kspace = complex_2chan(kspace)  # (slice, coil, h, w, 2)
+        #kspace /= max_truth
 
-        return smaps, truth, kspace
+        return smaps, kspace
 
 
 class DataGeneratorDenoise(Dataset):
@@ -757,7 +761,7 @@ class MoDL(nn.Module):
 
         # Options for UNET
         if DENOISER == 'unet':
-            self.denoiser = ComplexUNet2D(1, 1, depth=5, final_activation='none', f_maps=32, layer_order='cr')
+            self.denoiser = ComplexUNet2D(1, 1, depth=3, final_activation='none', f_maps=32, layer_order='cr')
         elif DENOISER == 'varnet':
             self.varnets = nn.ModuleList()
             for i in range(self.inner_iter):
