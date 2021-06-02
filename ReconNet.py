@@ -137,7 +137,7 @@ mask_gpu = sp.to_device(mask, spdevice)
 mask_torch = sp.to_pytorch(mask_gpu, requires_grad=False)
 
 # Data generator
-Ntrain = 300
+Ntrain = 100
 Nval = 10
 BATCH_SIZE = 1
 prefetch_data = True
@@ -155,7 +155,7 @@ UNROLL = True
 if UNROLL:
     denoiser = 'unet'
     logging.info(f'denoiser is {denoiser}')
-    INNER_ITER = 1
+    INNER_ITER = 6
     ReconModel = MoDL(inner_iter=INNER_ITER, DENOISER=denoiser)
     logging.info(f'MoDL, inner iter = {INNER_ITER}')
 else:
@@ -163,7 +163,7 @@ else:
     ReconModel = EEVarNet(num_cascades=NUM_CASCADES)
     logging.info(f'EEVarNet, {NUM_CASCADES} cascades')
 ReconModel.cuda();
-# summary(ReconModel.denoiser, input_size=(2,768,396), batch_size=16)
+#summary(ReconModel.denoiser, input_size=(1,768,396))
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 writer_train = SummaryWriter(os.path.join(log_dir,f'runs/recon/train_{Ntrial}'))
@@ -188,8 +188,8 @@ lossV = np.zeros(Nepoch)
 out_name = os.path.join(log_dir,f'Images_training{Ntrial}_{WHICH_LOSS}.h5')
 print(f'Logging to {out_name}')
 
-LR = 1e-5
-# optimizer = optim.SGD(ReconModel.parameters(), lr=LR, momentum=0.9)
+LR = 1e-3
+# optimizer = optim.SGD(ReonModel.parameters(), lr=LR, momentum=0.9)
 optimizer = optim.Adam(ReconModel.parameters(), lr=LR)
 #scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=40, gamma=0.1)
 # if epochMSE != 0:
@@ -241,49 +241,32 @@ for epoch in range(Nepoch):
             tstart_batch = time.time()
 
             smaps, kspace = data
-            smaps = sp.to_device(smaps, device=spdevice)
-            smaps = spdevice.xp.squeeze(smaps)
+            smaps = smaps[0]
             kspace = kspace[0]
 
-            kspace = sp.to_device(kspace, device=spdevice)
-            #kspace = chan2_complex(spdevice.xp.squeeze(kspace))  # cupy array on cuda
-
-            #im = torch.squeeze(im, dim=0)  # torch.Size([16, 768, 396, ch=2])
-
-            # seems jsense and espirit wants (coil,h,w), can't do (sl, coil, h, w)
-            redo_smaps = False
-            if redo_smaps:
-                smaps = spdevice.xp.zeros(kspace.shape, dtype=kspace.dtype)
-                for sl in range(kspace.shape[0]):
-                    ksp_gpu = sp.to_device(kspace[sl], device=sp.Device(0))
-                    mps = sp.mri.app.JsenseRecon(ksp_gpu, ksp_calib_width=24, mps_ker_width=16, lamda=0.001,
-                                                 max_iter=20, max_inner_iter=10,
-                                                 device=spdevice, show_pbar=True).run()
-                    smaps[sl] = sp.to_device(mps, spdevice)
-
-            #smaps = chan2_complex(spdevice.xp.squeeze(smaps))  # (slice, coil, 768, 396)
-            Nslices = smaps.shape[0]
+            # # seems jsense and espirit wants (coil,h,w), can't do (sl, coil, h, w)
+            # redo_smaps = False
+            # if redo_smaps:
+            #     smaps = spdevice.xp.zeros(kspace.shape, dtype=kspace.dtype)
+            #     for sl in range(kspace.shape[0]):
+            #         ksp_gpu = sp.to_device(kspace[sl], device=sp.Device(0))
+            #         mps = sp.mri.app.JsenseRecon(ksp_gpu, ksp_calib_width=24, mps_ker_width=16, lamda=0.001,
+            #                                      max_iter=20, max_inner_iter=10,
+            #                                      device=spdevice, show_pbar=True).run()
+            #         smaps[sl] = sp.to_device(mps, spdevice)
 
             t_case = time.time()
             optimizer.zero_grad()
             loss_avg = 0.0
-            for sl in range(Nslices):
+            for sl in range(smaps.shape[0]):
                 t_sl = time.time()
 
-                smaps_sl = xp.copy(smaps[sl])  # ndarray on cuda (20, 768, 396), complex64
-                kspace_sl = xp.copy(kspace[sl])  # ndarray (20, 768, 396), complex64
+                # Clone to torch
+                smaps_sl = torch.clone(smaps[sl]).cuda()  # ndarray on cuda (20, 768, 396), complex64
+                kspace_sl = torch.clone(kspace[sl]).cuda()  # ndarray (20, 768, 396), complex64
 
                 # Move to torch
-                kspace_sl = sp.to_pytorch(kspace_sl)
-                smaps_sl = sp.to_pytorch(smaps_sl)
                 kspaceU_sl = kspace_sl * mask_torch
-
-                # with spdevice:
-                #     A = sp.mri.linop.Sense(smaps_sl, coil_batch_size=None, weights=mask_gpu)
-                #     Ah = A.H
-                #     Atruth = sp.mri.linop.Sense(smaps_sl, coil_batch_size=None, weights=mask_truth)
-                #     # A ishape (768, 396), oshape (20, 768, 396)
-                #     # Ah ishape (20,768,396), oshape(768,396)
 
                 # Get truth on the fly
                 #im_sl = sp.to_pytorch(Atruth.H * (kspace_sl * mask_truth), requires_grad=False)
@@ -322,7 +305,7 @@ for epoch in range(Nepoch):
                         loss = mseloss_fcn(imEst2, im_sl) * 5e2
                         loss_mse_tensor = loss.item()
                     else:
-                        loss = learnedloss_fcn(imEst2, im_sl, score, rank_trained_on_mag=rank_trained_on_mag)
+                        loss = 1e-4*learnedloss_fcn(imEst2, im_sl, score, rank_trained_on_mag=rank_trained_on_mag)
                         loss_mse_tensor = mseloss_fcn(imEst2, im_sl).detach()
 
                 loss.backward(retain_graph=True)
@@ -334,7 +317,7 @@ for epoch in range(Nepoch):
                         loss_learnedT.append(loss.detach().item())
                         loss_mseT.append(loss_mse_tensor.detach().cpu().item())
 
-                loss_avg += loss.detach().item() / Nslices
+                loss_avg += loss.detach().item()
                 train_avg.update(loss.detach().item())
                 train_avg_mse.update(loss_mse_tensor.detach().cpu().item())
 
@@ -366,25 +349,14 @@ for epoch in range(Nepoch):
     ReconModel.eval()
     for i, data in enumerate(loader_V, 0):
         smaps, kspace = data
+        smaps = smaps[0]
+        kspace = kspace[0]
 
-        #im = torch.squeeze(im, dim=0)
-
-        smaps = sp.to_device(smaps, device=spdevice)
-        smaps = spdevice.xp.squeeze(smaps)
-        #smaps = chan2_complex(spdevice.xp.squeeze(smaps))
         Nslices = smaps.shape[0]
 
-        kspace = sp.to_device(kspace, device=spdevice)
-        kspace = spdevice.xp.squeeze(kspace)
-        #kspace = kspace[0]
-        #kspace = chan2_complex(kspace)
-
         for sl in range(smaps.shape[0]):
-            smaps_sl = xp.copy(smaps[sl])
-            kspace_sl = xp.copy(kspace[sl])
-
-            smaps_sl = sp.to_pytorch(smaps_sl)
-            kspace_sl = sp.to_pytorch(kspace_sl)
+            smaps_sl = torch.clone(smaps[sl]).cuda()
+            kspace_sl = torch.clone(kspace[sl]).cuda()
 
             kspaceU_sl = kspace_sl * mask_torch
 
@@ -429,7 +401,7 @@ for epoch in range(Nepoch):
                     loss_mse_tensor = loss
                 else:
                     loss_mse_tensor = mseloss_fcn(imEst2, im_sl).detach()
-                    loss = learnedloss_fcn(imEst2, im_sl, score, rank_trained_on_mag=rank_trained_on_mag)
+                    loss = 1e-4*learnedloss_fcn(imEst2, im_sl, score, rank_trained_on_mag=rank_trained_on_mag)
 
             eval_avg.update(loss.detach().item(), n=BATCH_SIZE)
             eval_avg_mse.update(loss_mse_tensor.detach().cpu().item())

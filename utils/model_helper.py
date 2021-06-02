@@ -251,7 +251,7 @@ class L2cnn(nn.Module):
         self.layers = nn.ModuleList()
         for block in range(group_depth):
 
-            self.layers.append(L2cnnBlock(channels_in, channels_out, pool_rate, bias=bias, activation=True))
+            self.layers.append(L2cnnBlock(channels_in, channels_out, pool_rate, bias=bias, activation=False))
 
             # Update channels
             channels_in = channels_out

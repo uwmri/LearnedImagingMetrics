@@ -65,10 +65,10 @@ class DataGeneratorRecon(Dataset):
         return self.len
 
     def __getitem__(self, idx):
-        import time
+        #import time
 
-        print(f'Load {self.scans[idx]}')
-        t = time.time()
+        #print(f'Load {self.scans[idx]}')
+        #t = time.time()
         if self.data_type == 'smap16':
             smaps = np.array(self.hf[self.scans[idx]]['smaps'])
             smaps = smaps.view(np.int16).astype(np.float32).view(np.complex64)
@@ -80,7 +80,7 @@ class DataGeneratorRecon(Dataset):
         #smaps = complex_2chan(smaps)
         #print(f'Get smap ={time.time()-t}, {smaps.dtype} {smaps.shape}')
 
-        truth = None
+        #truth = None
         # t = time.time()
         # truth = np.array(self.hf[self.scans[idx]]['truths'])
         # #truth = complex_2chan(truth)
@@ -97,10 +97,14 @@ class DataGeneratorRecon(Dataset):
         # truth /= max_truth
         # #print(f'Get truth {time.time() - t} {truth.dtype} {truth.shape}')
 
-        t = time.time()
+        #t = time.time()
         kspace = np.array(self.hf[self.scans[idx]]['kspace'])
         kspace = zero_pad4D(kspace)  # array (sl, coil, 768, 396)
         kspace /= np.max(np.abs(kspace))/np.prod(kspace.shape[-2:])
+
+        # Copy to torch
+        kspace = torch.from_numpy(kspace)
+        smaps = torch.from_numpy(smaps)
 
         #max_truth = torch.unsqueeze(max_truth, -1)
         #kspace = complex_2chan(kspace)  # (slice, coil, h, w, 2)
@@ -824,21 +828,24 @@ class MoDL(nn.Module):
             #y_pred = image - self.scale_layers[i] * decoding_op.apply(diff)   # (768, 396)
             image = image - self.scale_layers[i] * sense_adjoint(maps, diff)   # (768, 396)
 
-            # Pad to prevent edge effects, circular pad to keep image statistics
-            target_size1 = 32 * math.ceil( (64 + image.shape[-1]) / 32)
-            target_size2 = 32 * math.ceil( (64 + image.shape[-2]) / 32)
-            #print(f'Target size {target_size1} {target_size2}')
+            PAD=False
 
-            pad_amount1 = (target_size1 - image.shape[-1]) // 2
-            pad_amount2 = (target_size2 - image.shape[-2]) // 2
-            #print(f'Pad amount {pad_amount1} {pad_amount2}')
+            if PAD:
+                # Pad to prevent edge effects, circular pad to keep image statistics
+                target_size1 = 32 * math.ceil( (64 + image.shape[-1]) / 32)
+                target_size2 = 32 * math.ceil( (64 + image.shape[-2]) / 32)
+                #print(f'Target size {target_size1} {target_size2}')
 
-            pad_f = (pad_amount1, pad_amount1, pad_amount2, pad_amount2, 0, 0)
-            #print(f'Image in {image.shape} pad_f {pad_f}')
-            image = nn.functional.pad(image, pad_f)
-            #image_complex = nn.functional.pad(image_complex, pad_f)
-            # print(f'image_complex reguires grad {image_complex.requires_grad}')
-            #print(f'Image in {image.shape} pad_f {pad_f}')
+                pad_amount1 = (target_size1 - image.shape[-1]) // 2
+                pad_amount2 = (target_size2 - image.shape[-2]) // 2
+                #print(f'Pad amount {pad_amount1} {pad_amount2}')
+
+                pad_f = (pad_amount1, pad_amount1, pad_amount2, pad_amount2, 0, 0)
+                #print(f'Image in {image.shape} pad_f {pad_f}')
+                image = nn.functional.pad(image, pad_f)
+                #image_complex = nn.functional.pad(image_complex, pad_f)
+                # print(f'image_complex reguires grad {image_complex.requires_grad}')
+                #print(f'Image in {image.shape} pad_f {pad_f}')
 
             if self.denoiser is None:
                 image = image.permute(0, 2, 3, 1).contiguous()
@@ -851,12 +858,13 @@ class MoDL(nn.Module):
             else:
                 #print(self.denoiser)
                 image = image.unsqueeze(0)
-                #y_pred = checkpoint.checkpoint(self.checkpoint_fn(self.denoiser), y_pred)
-                image = self.denoiser(image)
+                image = checkpoint.checkpoint(self.checkpoint_fn(self.denoiser), image)
+                #image = self.denoiser(image)
                 image = image.squeeze(0)
 
-            # cropping for UNet
-            image = image[:, pad_amount2:-pad_amount2,pad_amount1:-pad_amount1]
+            if PAD:
+                # cropping for UNet
+                image = image[:, pad_amount2:-pad_amount2,pad_amount1:-pad_amount1]
 
 
         # crop to square
