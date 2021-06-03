@@ -97,6 +97,7 @@ def trans_motion(kspace, dir_motion=2, maxshift=10, prob=1, startPE=180,fix_shif
         if np.random.randint(prob) == 0:
 
             num_x, num_y = input.shape[1:]
+            num_y_nnz = np.max(np.nonzero(input[0,0,:]))-np.min(np.nonzero(input[0,0,:]))+1
             startdir = np.random.randint(0,1)   # Always start in PE (column)
             if fix_shift:
                 #shift_bulk0 = (2 * np.random.randint(0, 2) - 1) * maxshift
@@ -127,7 +128,7 @@ def trans_motion(kspace, dir_motion=2, maxshift=10, prob=1, startPE=180,fix_shif
                 mu_start = num_y/2
                 sigma_start = num_y/2*.075
                 if fix_shift:
-                    start = np.random.randint(0, num_y)
+                    start = np.random.randint(np.min(np.nonzero(input[0,0,:])), np.max(np.nonzero(input[0,0,:])))
                 else:
                     start = np.int(np.floor(np.random.normal(mu_start, sigma_start)))
                 if fix_start:
@@ -142,7 +143,7 @@ def trans_motion(kspace, dir_motion=2, maxshift=10, prob=1, startPE=180,fix_shif
                             input[:, ii, jj] = input[:, ii, jj] * np.exp(
                                 -1j * 2 * np.pi * (shift_bulk0 * (1 / num_y) * (jj - num_y / 2) + shift_bulk1 *
                                                    (1 / num_x) * (ii - num_x / 2)))
-                    percent_corruptedPE = (num_y-start)/num_y
+                    percent_corruptedPE = (np.max(np.nonzero(input[0,0,:])) -start)/num_y_nnz
                 elif start < central_rangeL:
                     percent_corruptedPE = 0
                     # logger.info(f'motion starts from column #0 to {start}')
@@ -268,6 +269,9 @@ def add_incoherent_noise(ksp, prob=None, central=0.4, mode=1, num_corrupted=0, d
     centralL = np.int(np.floor(kspace_width * central))
     centralR = np.int(np.floor(kspace_width * (1-central)))
 
+    nnzL = np.min(np.nonzero(kspace[0,0,:]))
+    nnzR = np.max(np.nonzero(kspace[0,0,:]))
+
     if np.random.randint(prob) == 0:
         logger.info('Incoherent noise added')
         if mode == 1:
@@ -285,7 +289,8 @@ def add_incoherent_noise(ksp, prob=None, central=0.4, mode=1, num_corrupted=0, d
             randuni_edge = np.random.choice([0, 1], size=(centralL+(kspace.shape[-1]-centralR),), p=[1 - percent, percent])
             randuni_col = np.concatenate((randuni_edge[:centralL],np.ones(centralR-centralL), randuni_edge[centralL:]))
             randuni_colm = np.tile(randuni_col, (len(kspace[0, :, 0]),1))
-            percent_actualRemoved = (1- (1-2*central+np.count_nonzero(randuni_edge)/kspace_width)) * 100
+            percent_actualRemoved = (1- (1-2*central+np.count_nonzero(randuni_edge[nnzL:nnzR])/kspace_width)) * 100
+            #percent_actualRemoved = (1- (1-2*central+np.count_nonzero(randuni_edge)/kspace_width)) * 100
 
             for c in range(len(kspace[:,0,0])):
                 kspace[c, :, :] = kspace[c, :, :] * randuni_colm
@@ -310,7 +315,7 @@ def add_incoherent_noise(ksp, prob=None, central=0.4, mode=1, num_corrupted=0, d
 
             for c in range(len(kspace[:,0,0])):
                 kspace[c, :, :] = kspace[c, :, :] * randuni_m
-            percent_actualRemoved=(1-percent) * 100
+            percent_actualRemoved=((nnzR-nnzL+1)/kspace_width-percent) * 100
     else:
         mode = 0
         percent = 0.99

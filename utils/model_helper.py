@@ -103,14 +103,17 @@ class SSIM(torch.nn.Module):
     def forward(self, img1, img2):
         (_, channel, _, _) = img1.size()
 
-        if channel == self.channel and self.window.dtype == img1.dtype:
-            window = self.window.to(img1.device).type(img1.dtype)
+        img1_abs = torch.abs(img1)
+        img2_abs = torch.abs(img2)
+
+        if channel == self.channel and self.window.dtype == img1_abs.dtype:
+            window = self.window.to(img1_abs.device).type(img1_abs.dtype)
         else:
-            window = create_window(self.window_size, channel).to(img1.device).type(img1.dtype)
+            window = create_window(self.window_size, channel).to(img1_abs.device).type(img1_abs.dtype)
             self.window = window
             self.channel = channel
 
-        ssimv = ssim(img1, img2, window=window, window_size=self.window_size,
+        ssimv = ssim(img1_abs, img2_abs, window=window, window_size=self.window_size,
                     size_average=self.size_average, val_range=self.val_range)
         ssimv = torch.reshape( ssimv, (-1, 1))
 
@@ -248,7 +251,7 @@ class L2cnn(nn.Module):
         self.layers = nn.ModuleList()
         for block in range(group_depth):
 
-            self.layers.append(L2cnnBlock(channels_in, channels_out, pool_rate, bias=bias, activation=True))
+            self.layers.append(L2cnnBlock(channels_in, channels_out, pool_rate, bias=bias, activation=False))
 
             # Update channels
             channels_in = channels_out
@@ -268,12 +271,14 @@ class L2cnn(nn.Module):
         # for i in range(2):
         #     input[:, i, :, :] *= self.scale[i]
 
-        diff = input - truth
+        diff_mag = torch.abs(input - truth)
         # if train on 2chan (real and imag) images
 
         # Update to use sqrt
-        diff_sq = torch.sum( diff ** 2, dim=1, keepdim=True)
-        diff_mag = diff_sq ** (0.5)
+        #diff_sq = torch.sum( diff ** 2, dim=1, keepdim=True)
+        #diff_mag = diff_sq ** (0.5)
+        #diff_sq = torch.sum( torch.square(diff), dim=1, keepdim=True)
+        #diff_mag = torch.sqrt(diff_sq)
 
         # Mean square error
         #mse = self.layer_mse(diff_mag)
@@ -785,7 +790,7 @@ class MSEmodule(nn.Module):
         super(MSEmodule, self).__init__()
 
     def forward(self, x, truth):
-        y = x - truth
+        y = torch.abs(x - truth)
         y = y.view(y.shape[0], -1)
         truth = truth.view(truth.shape[0], -1)
         return torch.sum(y**2, dim=1, keepdim=True)**0.5

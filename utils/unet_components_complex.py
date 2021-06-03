@@ -41,28 +41,38 @@ def apply_complex(fr, fi, input, dtype=torch.complex64):
 
 class ComplexConv2d(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=0,
-                 dilation=1, groups=1, bias=USE_BIAS):
+                 dilation=1, groups=1, bias=USE_BIAS, complex_kernel=False):
         super(ComplexConv2d, self).__init__()
+        self.complex_kernel = complex_kernel
         self.conv_r = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias)
-        self.conv_i = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias)
+        if complex_kernel:
+            self.conv_i = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias)
 
     def forward(self, input):
-        return apply_complex(self.conv_r, self.conv_i, input)
+        if self.complex_kernel:
+            return apply_complex(self.conv_r, self.conv_i, input)
+        else:
+            return self.conv_r(input.real) + 1j*self.conv_r(input.imag)
 
 
 class ComplexConvTranspose2d(nn.Module):
 
     def __init__(self,in_channels, out_channels, kernel_size, stride=1, padding=0,
-                 output_padding=0, groups=1, bias=USE_BIAS, dilation=1, padding_mode='zeros'):
+                 output_padding=0, groups=1, bias=USE_BIAS, dilation=1, padding_mode='zeros', complex_kernel=False):
 
         super(ComplexConvTranspose2d, self).__init__()
+        self.complex_kernel = complex_kernel
         self.conv_r = nn.ConvTranspose2d(in_channels, out_channels, kernel_size, stride, padding,
                                        output_padding, groups, bias, dilation, padding_mode)
-        self.conv_i = nn.ConvTranspose2d(in_channels, out_channels, kernel_size, stride, padding,
-                                       output_padding, groups, bias, dilation, padding_mode)
+        if self.complex_kernel:
+            self.conv_i = nn.ConvTranspose2d(in_channels, out_channels, kernel_size, stride, padding,
+                                           output_padding, groups, bias, dilation, padding_mode)
 
     def forward(self, input):
-        return apply_complex(self.conv_r, self.conv_i, input)
+        if self.complex_kernel:
+            return apply_complex(self.conv_r, self.conv_i, input)
+        else:
+            return self.conv_r(input.real) + 1j * self.conv_r(input.imag)
 
 
 class ComplexDepthwise_separable_conv(nn.Module):
@@ -315,7 +325,7 @@ class ComplexUNet2D(nn.Module):
     """
 
     def __init__(self, in_channels, out_channels, f_maps=64, layer_order='cl', num_groups=0,
-                 depth=4, layer_growth=2.0, residual=False, **kwargs):
+                 depth=4, layer_growth=2.0, residual=True, **kwargs):
         super(ComplexUNet2D, self).__init__()
 
         if isinstance(f_maps, int):

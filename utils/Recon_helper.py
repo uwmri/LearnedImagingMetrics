@@ -1,5 +1,7 @@
 import pickle
 from typing import Dict
+
+import numpy as np
 import sigpy as sp
 import torch
 import torch.optim as optim
@@ -63,10 +65,10 @@ class DataGeneratorRecon(Dataset):
         return self.len
 
     def __getitem__(self, idx):
-        import time
+        #import time
 
-        print(f'Load {self.scans[idx]}')
-        t = time.time()
+        #print(f'Load {self.scans[idx]}')
+        #t = time.time()
         if self.data_type == 'smap16':
             smaps = np.array(self.hf[self.scans[idx]]['smaps'])
             smaps = smaps.view(np.int16).astype(np.float32).view(np.complex64)
@@ -75,34 +77,40 @@ class DataGeneratorRecon(Dataset):
         else:
             smaps = np.array(self.hf[self.scans[idx]]['smaps'])
 
-        smaps = complex_2chan(smaps)
+        #smaps = complex_2chan(smaps)
         #print(f'Get smap ={time.time()-t}, {smaps.dtype} {smaps.shape}')
 
-        t = time.time()
-        truth = np.array(self.hf[self.scans[idx]]['truths'])
-        truth = complex_2chan(truth)
-        if self.rank_trained_on_mag:
-            truth = np.sqrt(np.sum(np.square(truth), axis=-1, keepdims=True))
-        truth = zero_pad_truth(truth)
-        truth = torch.from_numpy(truth)     # ([16, 768, 396, ch])
+        #truth = None
+        # t = time.time()
+        # truth = np.array(self.hf[self.scans[idx]]['truths'])
+        # #truth = complex_2chan(truth)
+        # #if self.rank_trained_on_mag:
+        # #    truth = np.sqrt(np.sum(np.square(truth), axis=-1, keepdims=True))
+        # truth = zero_pad_truth(truth)
+        # truth = torch.from_numpy(truth)     # ([16, 768, 396, ch])
+        #
+        # # normalize truth to 0 and 1
+        # # maxt_truth shape  (sl, 1, 1, 1)
+        # max_truth, _ = torch.max(truth, dim=1, keepdim=True)
+        # max_truth, _ = torch.max(max_truth, dim=2, keepdim=True)
+        # max_truth, _ = torch.max(max_truth, dim=3, keepdim=True)
+        # truth /= max_truth
+        # #print(f'Get truth {time.time() - t} {truth.dtype} {truth.shape}')
 
-        # normalize truth to 0 and 1
-        # maxt_truth shape  (sl, 1, 1, 1)
-        max_truth, _ = torch.max(truth, dim=1, keepdim=True)
-        max_truth, _ = torch.max(max_truth, dim=2, keepdim=True)
-        max_truth, _ = torch.max(max_truth, dim=3, keepdim=True)
-        truth /= max_truth
-        #print(f'Get truth {time.time() - t} {truth.dtype} {truth.shape}')
-
-        t = time.time()
+        #t = time.time()
         kspace = np.array(self.hf[self.scans[idx]]['kspace'])
         kspace = zero_pad4D(kspace)  # array (sl, coil, 768, 396)
+        kspace /= np.max(np.abs(kspace))/np.prod(kspace.shape[-2:])
 
-        max_truth = torch.unsqueeze(max_truth, -1)
-        kspace = complex_2chan(kspace)  # (slice, coil, h, w, 2)
-        kspace /= max_truth
+        # Copy to torch
+        kspace = torch.from_numpy(kspace)
+        smaps = torch.from_numpy(smaps)
 
-        return smaps, truth, kspace
+        #max_truth = torch.unsqueeze(max_truth, -1)
+        #kspace = complex_2chan(kspace)  # (slice, coil, h, w, 2)
+        #kspace /= max_truth
+
+        return smaps, kspace
 
 
 class DataGeneratorDenoise(Dataset):
@@ -246,15 +254,19 @@ def loss_fcn_onenet(noisy, output, target, projector, encoder, discriminator, di
 # learned metrics loss
 def learnedloss_fcn(output, target, scoreModel, rank_trained_on_mag=False):
 
+    if output.ndim == 2:
+        output = output.unsqueeze(0).unsqueeze(0)
+        target = target.unsqueeze(0).unsqueeze(0)
     if output.ndim == 3:
         output = torch.unsqueeze(output, 0)
         target = torch.unsqueeze(target, 0)
 
-    if rank_trained_on_mag and output.shape[-1] == 2:
-        output = torch.sqrt(torch.sum(output**2, axis=-1, keepdims=True))
 
-    output = torch.abs(output.unsqueeze(0).unsqueeze(0))
-    target = torch.abs(target.unsqueeze(0).unsqueeze(0))
+    #if rank_trained_on_mag and output.shape[-1] == 2:
+    #    output = torch.sqrt(torch.sum(output**2, axis=-1, keepdims=True))
+
+    #output = torch.abs(output.unsqueeze(0).unsqueeze(0))
+    #target = torch.abs(target.unsqueeze(0).unsqueeze(0))
 
     # output = crop_im(output)
     # target = crop_im(target)
@@ -726,6 +738,20 @@ class ScaleLayer(nn.Module):
         #print(self.scale)
         return input * self.scale
 
+def sense_adjoint( maps, data):
+    im = torch.fft.ifftshift( data, dim=(-2, -1))
+    im = torch.fft.ifft2( im, dim=(-2,-1))
+    im = torch.fft.fftshift( im, dim=(-2,-1))
+    im *= torch.conj(maps)
+    im = torch.sum(im, dim=-3, keepdim=True)
+    return im
+
+def sense( maps, image ):
+    kdata = maps * image
+    kdata = torch.fft.ifftshift(kdata, dim=(-2, -1))
+    kdata = torch.fft.fft2( kdata, dim=(-2,-1))
+    kdata = torch.fft.fftshift(kdata, dim=(-2, -1))
+    return kdata
 
 class MoDL(nn.Module):
     '''output: image (sl, 768, 396, 2) '''
@@ -736,18 +762,15 @@ class MoDL(nn.Module):
 
         self.inner_iter = inner_iter
         self.scale_layers = nn.Parameter(scale_init*torch.ones([inner_iter]), requires_grad=True)
-        self.lam1 = nn.Parameter(0.5*torch.ones([inner_iter]), requires_grad=True)
-        self.lam2 = nn.Parameter(0.5*torch.ones([inner_iter]), requires_grad=True)
 
         # Options for UNET
         if DENOISER == 'unet':
-            self.denoiser = ComplexUNet2D(1, 1, depth=5, final_activation='none', f_maps=32, layer_order='cr')
+            self.denoiser = ComplexUNet2D(1, 1, depth=3, final_activation='none', f_maps=32, layer_order='cr')
         elif DENOISER == 'varnet':
             self.varnets = nn.ModuleList()
             for i in range(self.inner_iter):
                 self.varnets.append(VarNet())
             self.denoiser = None
-
 
         #self.refiner = UNet2D(2, 2, depth=3, final_activation='none', f_maps=32, layer_order='cl')
         #self.denoiser = CNN_shortcut()
@@ -769,12 +792,12 @@ class MoDL(nn.Module):
             return inputs
         return custom_forward
 
-    def forward(self, image, kspace, encoding_op, decoding_op):
+    def forward(self, image, kspace, maps, mask):
 
         for i in range(self.inner_iter):
             # Ex
-            Ex = encoding_op.apply(image)      # For slice by slice:(20, 768, 396, 2) or by case:([slice, 20, 768, 396, 2])
-
+            #Ex = encoding_op.apply(image)      # For slice by slice:(20, 768, 396, 2) or by case:([slice, 20, 768, 396, 2])
+            Ex = sense(maps, image)
             # # kspace correction
             # image_inter = decoding_op.apply(Ex)
             # image_inter_dim = image_inter.ndim
@@ -799,46 +822,50 @@ class MoDL(nn.Module):
             # Ex = encoding_op.apply(image_inter)
 
             # Ex - d
-            diff = Ex - kspace
+            diff = (Ex - kspace)*mask
 
             # image = image - scale*E.H*(Ex-d)
-            y_pred = image - self.scale_layers[i] * decoding_op.apply(diff)   # (768, 396)
+            #y_pred = image - self.scale_layers[i] * decoding_op.apply(diff)   # (768, 396)
+            image = image - self.scale_layers[i] * sense_adjoint(maps, diff)   # (768, 396)
 
-            # Pad to prevent edge effects, circular pad to keep image statistics
-            target_size1 = 32 * math.ceil( (64 + y_pred.shape[-1]) / 32)
-            target_size2 = 32 * math.ceil( (64 + y_pred.shape[-2]) / 32)
-            #print(f'Target size {target_size1} {target_size2}')
+            PAD=False
 
-            pad_amount1 = (target_size1 - y_pred.shape[-1]) // 2
-            pad_amount2 = (target_size2 - y_pred.shape[-2]) // 2
-            #print(f'Pad amount {pad_amount1} {pad_amount2}')
+            if PAD:
+                # Pad to prevent edge effects, circular pad to keep image statistics
+                target_size1 = 32 * math.ceil( (64 + image.shape[-1]) / 32)
+                target_size2 = 32 * math.ceil( (64 + image.shape[-2]) / 32)
+                #print(f'Target size {target_size1} {target_size2}')
 
-            pad_f = (pad_amount1, pad_amount1, pad_amount2, pad_amount2)
-            #print(pad_f)
-            y_pred = nn.functional.pad(y_pred, pad_f)
-            #image_complex = nn.functional.pad(image_complex, pad_f)
-            # print(f'image_complex reguires grad {image_complex.requires_grad}')
+                pad_amount1 = (target_size1 - image.shape[-1]) // 2
+                pad_amount2 = (target_size2 - image.shape[-2]) // 2
+                #print(f'Pad amount {pad_amount1} {pad_amount2}')
+
+                pad_f = (pad_amount1, pad_amount1, pad_amount2, pad_amount2, 0, 0)
+                #print(f'Image in {image.shape} pad_f {pad_f}')
+                image = nn.functional.pad(image, pad_f)
+                #image_complex = nn.functional.pad(image_complex, pad_f)
+                # print(f'image_complex reguires grad {image_complex.requires_grad}')
+                #print(f'Image in {image.shape} pad_f {pad_f}')
 
             if self.denoiser is None:
-                image_complex = image_complex.permute(0, 2, 3, 1).contiguous()
-                image_complex = torch.view_as_complex(image_complex)
-                image_complex = image_complex[None, ...]
+                image = image.permute(0, 2, 3, 1).contiguous()
+                image = torch.image(image_complex)
+                image = image[None, ...]
                 # print(f'image_complex reguires grad {image_complex.requires_grad}')
 
                 temp = checkpoint.checkpoint(self.checkpoint_fn(self.varnets[i]),image_complex)
                 y_pred += temp
             else:
                 #print(self.denoiser)
-                y_pred = y_pred.unsqueeze(0).unsqueeze(0)
-                y_pred = checkpoint.checkpoint(self.checkpoint_fn(self.denoiser), y_pred)
-                y_pred = y_pred.squeeze(0).squeeze(0)
+                image = image.unsqueeze(0)
+                image = checkpoint.checkpoint(self.checkpoint_fn(self.denoiser), image)
+                #image = self.denoiser(image)
+                image = image.squeeze(0)
 
+            if PAD:
+                # cropping for UNet
+                image = image[:, pad_amount2:-pad_amount2,pad_amount1:-pad_amount1]
 
-            # cropping for UNet
-            y_pred = y_pred[pad_amount2:-pad_amount2,pad_amount1:-pad_amount1]
-
-            # Return Image
-            image = self.lam2[i]*y_pred
 
         # crop to square
         idxL = int((image.shape[0] - image.shape[1]) / 2)

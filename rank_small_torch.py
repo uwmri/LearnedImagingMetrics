@@ -44,7 +44,7 @@ shuffle_observers = False
 MOBILE = False
 EFF = False
 BO = False
-RESNET = True
+RESNET = False
 CLIP = False
 SAMPLER = False
 WeightedLoss = False
@@ -62,7 +62,7 @@ with open(args.file_csv) as csvfile:
     readCSV = csv.reader(csvfile, delimiter=',')
     for row in readCSV:
         ranks.append(row)
-ranks = np.array(ranks, dtype=np.int)
+ranks = np.array(ranks, dtype=np.int32)
 
 # make sure to use consensus -> consensus_mode.csv
 # import scipy.stats
@@ -90,15 +90,11 @@ if shuffle_observers:
     np.random.shuffle(ranks)
 # np.savetxt("consensus_mode_all.csv", ranks, fmt='%d', delimiter=',')
 
-if train_on_mag:
-    nch = 1
-else:
-    nch = 2
 
 # Images and truth
-X_1 = np.zeros((NEXAMPLES, maxMatSize, maxMatSize, nch), dtype=np.float32)  # saved as complex128 though
-X_2 = np.zeros((NEXAMPLES, maxMatSize, maxMatSize, nch), dtype=np.float32)
-X_T = np.zeros((NEXAMPLES, maxMatSize, maxMatSize, nch), dtype=np.float32)
+X_1 = np.zeros((NEXAMPLES, 1, maxMatSize, maxMatSize), dtype=np.complex64)  # saved as complex128 though
+X_2 = np.zeros((NEXAMPLES, 1, maxMatSize, maxMatSize), dtype=np.complex64)
+X_T = np.zeros((NEXAMPLES, 1, maxMatSize, maxMatSize), dtype=np.complex64)
 
 # X_T = np.zeros((NEXAMPLES, maxMatSize, maxMatSize),dtype=np.complex64)
 Labels = np.zeros(NRANKS, dtype=np.int32)
@@ -112,23 +108,22 @@ for i in range(NEXAMPLES):
     name1 = 'EXAMPLE_%07d_IMAGE_%04d' % (i+1, 0)
     name2 = 'EXAMPLE_%07d_IMAGE_%04d' % (i+1, 1)
 
-
     im1 = zero_pad2D(np.array(hf[name1]), maxMatSize, maxMatSize)
     im2 = zero_pad2D(np.array(hf[name2]), maxMatSize, maxMatSize)
     truth = zero_pad2D(np.array(hf[nameT]), maxMatSize, maxMatSize)
 
-    if train_on_mag:
-        X_1[i] = np.sqrt(np.sum(np.square(im1), axis=-1, keepdims=True))
-        X_2[i] = np.sqrt(np.sum(np.square(im2), axis=-1, keepdims=True))
-        X_T[i] = np.sqrt(np.sum(np.square(truth), axis=-1, keepdims=True))
-
-    else:
-        X_1[i] = im1
-        X_2[i] = im2
-        X_T[i] = truth
+    # Convert to torch
+    X_1[i, 0] = im1[...,0] + 1j*im1[...,1]
+    X_2[i, 0] = im2[...,0] + 1j*im2[...,1]
+    X_T[i, 0] = truth[...,0] + 1j*truth[...,1]
 
     if i % 1e2 == 0:
         print(f'loading example pairs {i + 1}')
+
+if train_on_mag:
+    X_1 = torch.abs(X_1)
+    X_2 = torch.abs(X_2)
+    X_T = torch.abs(X_T)
 
 # All labels
 for i in range(0, NRANKS):
@@ -143,11 +138,6 @@ for i in range(0, NRANKS):
     else:
         # X_1 is better
         Labels[i] = 2
-
-# torch tensor should be minibatch * channel * H*W
-X_1 = np.transpose(X_1, [0, 3, 1, 2])
-X_2 = np.transpose(X_2, [0, 3, 1, 2])
-X_T = np.transpose(X_T, [0, 3, 1, 2])
 
 print(f'X_1 shape {X_1.shape}')
 

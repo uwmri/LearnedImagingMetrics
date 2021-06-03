@@ -37,7 +37,7 @@ test_folder = Path("D:/NYUbrain/brain_multicoil_test/multicoil_test")
 files = find("*.h5", train_folder)
 
 CORRUPTIONS = ['% PE Motion Corrupted','Total shift (pixels)', 'Gaussian noise level(a.u.)', '% random undersampling', '% PE removed randomly']
-#CORRUPTIONS = ['% PE Motion Corrupted']
+#CORRUPTIONS = ['% PE removed randomly']
 SAME_IMAGE = '(the same image)'
 # out_name = os.path.join(f'corrupted_images_{WHICH_CORRUPTION}.h5')
 # try:
@@ -46,13 +46,13 @@ SAME_IMAGE = '(the same image)'
 #     pass
 
 Ntrials = 500
-Nxmax = 396
-Nymax = 768
+Nxmax = 320
+Nymax = 640
 count = 0
 
 
 #for index_file in range(1):
-file = 'D:\\NYUbrain\\brain_multicoil_train\\multicoil_train\\file_brain_AXT2_209_2090215.h5'
+file = 'D:\\NYUbrain\\brain_multicoil_train\\multicoil_train\\file_brain_AXT1PRE_205_6000160.h5'
 #while count == 0:
 
     # file = files[np.random.randint(len(os.listdir(train_folder)))]
@@ -125,7 +125,7 @@ for WHICH_CORRUPTION in CORRUPTIONS:
                                                 fix_shift=True, fix_start=False)
         if WHICH_CORRUPTION == 'Total shift (pixels)':
             # corruption_mag is magnitude of the motion
-            startPE=210
+            startPE=169
             ksp2, corruption_mag = trans_motion(ksp_full, dir_motion=2, maxshift=50, prob=1,
                                                 startPE=startPE,fix_shift=False, fix_start=True)
 
@@ -210,7 +210,7 @@ for WHICH_CORRUPTION in CORRUPTIONS:
     # plt.ylabel('ssim')
     # plt.show()
 
-    fig, ax1 = plt.subplots()
+    fig_ssim, ax1 = plt.subplots(figsize=(7,5))
     color = 'tab:red'
     ax1.set_xlabel(f'{WHICH_CORRUPTION}', fontsize=18)
     ax1.set_ylabel('1-ssim', color=color, fontsize=18)
@@ -224,10 +224,10 @@ for WHICH_CORRUPTION in CORRUPTIONS:
     ax2.scatter(corruption_magList, scoreList, color=color, alpha=0.2)
     ax2.tick_params(axis='y', labelcolor=color)
     ax2.tick_params(axis='both', labelsize=14)
-    fig.tight_layout()  # otherwise the right y-label is slightly clipped
-    plt.show()
+    fig_ssim.tight_layout()  # otherwise the right y-label is slightly clipped
+    fig_ssim.savefig(f'{WHICH_CORRUPTION}_ssim-score-corruption.png')
 
-    fig, ax1 = plt.subplots()
+    fig_mse, ax1 = plt.subplots(figsize=(7,5))
     color = 'tab:red'
     ax1.set_xlabel(f'{WHICH_CORRUPTION}', fontsize=18)
     ax1.set_ylabel('mse', color=color, fontsize=18)
@@ -241,23 +241,24 @@ for WHICH_CORRUPTION in CORRUPTIONS:
     ax2.scatter(corruption_magList, scoreList, color=color, alpha=0.15)
     ax2.tick_params(axis='y', labelcolor=color)
     ax2.tick_params(axis='both', labelsize=14)
-    fig.tight_layout()  # otherwise the right y-label is slightly clipped
-    plt.show()
+    fig_mse.tight_layout()  # otherwise the right y-label is slightly clipped
+    fig_mse.savefig(f'{WHICH_CORRUPTION}_mse-score-corruption.png')
 
-    fig_mseVscore, ax3 = plt.subplots()
+    fig_mseVscore, ax3 = plt.subplots(figsize=(7,5))
     ax3.scatter(mseList, scoreList, alpha=0.5)
     ax3.set_title(f'{WHICH_CORRUPTION}', fontsize=18)
     ax3.set_xlabel('MSE', fontsize=18)
     ax3.set_ylabel('score', fontsize=18)
     ax3.tick_params(axis='both', labelsize=14)
     fig_mseVscore.tight_layout()
-    plt.show()
+    fig_mseVscore.savefig(f'{WHICH_CORRUPTION}_mse-score.png')
 
-    fig_ssimVscore, ax4 = plt.subplots()
+    fig_ssimVscore, ax4 = plt.subplots(figsize=(7,5))
     ax4.scatter(ssimList, scoreList, alpha=0.5)
     ax4.set_title(f'{WHICH_CORRUPTION}', fontsize=18)
     ax4.set_xlabel('SSIM', fontsize=18)
     ax4.set_ylabel('score', fontsize=18)
     ax4.tick_params(axis='both', labelsize=14)
     fig_ssimVscore.tight_layout()
-    plt.show()
+    fig_ssimVscore.savefig(f'{WHICH_CORRUPTION}_ssim-score.png')
+
