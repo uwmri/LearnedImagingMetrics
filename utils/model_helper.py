@@ -186,7 +186,7 @@ class VarNorm2d(nn.BatchNorm2d):
 
 
 class L2cnnBlock(nn.Module):
-    def __init__(self, channels_in=64, channels_out=64, pool_rate=2, bias=False, batch_norm=False, activation=True):
+    def __init__(self, channels_in=64, channels_out=64, pool_rate=2, bias=False, batch_norm=False, activation=False):
         super(L2cnnBlock, self).__init__()
 
         if activation:
@@ -211,7 +211,7 @@ class L2cnnBlock(nn.Module):
         self.batch_norm = batch_norm
 
     def forward(self,x):
-
+        # input x shape torch.Size([48, 1, 396, 396, 2])
         shortcut = self.shortcut(x)
         x = self.conv1(x)
         x = self.bn1(x)
@@ -561,12 +561,13 @@ def sigpy_image_rotate2( image, theta, verbose=False, device=sp.Device(0)):
         coord[:, :, 0] += cx_pad
         coord[:, :, 1] += cy_pad
 
+
         # Actual rotation
         if isinstance(image, list):
             image_rotated = []
             for imt in image:
-                xpad = xp.zeros((ny_pad, nx_pad), dtype=xp.float32)
-                xnew = xp.zeros((nch, ny, nx), dtype=xp.float32)
+                xpad = xp.zeros((ny_pad, nx_pad), dtype=imt.dtype)
+                xnew = xp.zeros((nch, ny, nx), dtype=imt.dtype)
                 for ch in range(nch):
                     xpad[pad:pad + ny, pad:pad + ny] = imt[ch]
                     xnew[ch] = sp.interpolate(xpad, coord, kernel='spline', width=2)
@@ -769,16 +770,20 @@ class DataGenerator_rank(Dataset):
             x2 = xp.roll(x2, (roll_magLR,roll_magUD),(0,1))
             xt = xp.roll(xt, (roll_magLR, roll_magUD), (0, 1))
 
+        # put back to cpu, then send to torch
+        x1 = x1.get()
+        x2 = x2.get()
+        xt = xt.get()
         x1 = sp.to_pytorch(x1, requires_grad=False)
         x2 = sp.to_pytorch(x2, requires_grad=False)
         xt = sp.to_pytorch(xt, requires_grad=False)
 
-        # make images 3 channel.
-        zeros = torch.zeros(((1,) + x1.shape[1:]), dtype=x1.dtype, device=x1.get_device())
-        for i in range(self.pad_channels):
-            x1 = torch.cat((x1, zeros), dim=0)
-            x2 = torch.cat((x2, zeros), dim=0)
-            xt = torch.cat((xt, zeros), dim=0)
+        # # make images 3 channel.
+        # zeros = torch.zeros(((1,) + x1.shape[1:]), dtype=x1.dtype, device=x1.get_device())
+        # for i in range(self.pad_channels):
+        #     x1 = torch.cat((x1, zeros), dim=0)
+        #     x2 = torch.cat((x2, zeros), dim=0)
+        #     xt = torch.cat((xt, zeros), dim=0)
 
         y = self.Y[idx]
 
@@ -819,6 +824,7 @@ class Classifier(nn.Module):
 
         # Combine the images for batch norm operations
         images_combined = torch.cat([image1, image2], dim=0)    #(batchsize*2, ch=2, 396, 396)
+        print(f'imagecombined shape {images_combined.shape}')
         truth_combined = torch.cat([imaget, imaget], dim=0)
 
         # Calculate scores
@@ -1070,11 +1076,12 @@ class ISOResNet2(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, input, truth):
-        diff = input - truth
-        # if train on 2chan (real and imag) images
-
-        x = torch.sum(diff ** 2, dim=1, keepdim=True)
+        # diff = input - truth
+        # # if train on 2chan (real and imag) images
+        #
+        # x = torch.sum(diff ** 2, dim=1, keepdim=True)
         # x = input.clone()
+        x = torch.abs(input - truth)
 
         x = self.conv1(x)
         #x = self.bn1(x)

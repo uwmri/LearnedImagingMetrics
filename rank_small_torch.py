@@ -44,7 +44,7 @@ shuffle_observers = False
 MOBILE = False
 EFF = False
 BO = False
-RESNET = False
+RESNET = True
 CLIP = False
 SAMPLER = False
 WeightedLoss = False
@@ -199,7 +199,7 @@ if SAMPLER:
     validationset = DataGenerator_rank(X_1, X_2, X_T, Labels_cnnV, idV, augmentation=False, pad_channels=0)
     loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE_EVAL, shuffle=False, sampler=samplerV, drop_last=True)
 else:
-    trainingset = DataGenerator_rank(X_1, X_2, X_T, Labels_cnnT, idT, augmentation=False, pad_channels=0)
+    trainingset = DataGenerator_rank(X_1, X_2, X_T, Labels_cnnT, idT, augmentation=True, pad_channels=0)
     loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=False, drop_last=True)
 
     validationset = DataGenerator_rank(X_1, X_2, X_T, Labels_cnnV, idV, augmentation=False, pad_channels=0)
@@ -238,7 +238,6 @@ elif RESNET:
 else:
     ranknet = L2cnn(channels_in=1)
 
-# Print summary
 # print(ranknet)
 torchsummary.summary(ranknet.cuda(), [(X_1.shape[-3], maxMatSize, maxMatSize)
                               ,(X_1.shape[-3], maxMatSize, maxMatSize)])
@@ -327,7 +326,7 @@ writer_val = SummaryWriter(os.path.join(log_dir,f'runs/rank/val_{Ntrial}'))
 
 score_mse_file = os.path.join(f'score_mse_file_{Ntrial}.h5')
 
-Nepoch = 500
+Nepoch = 1
 lossT = np.zeros(Nepoch)
 lossV = np.zeros(Nepoch)
 
