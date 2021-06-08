@@ -252,7 +252,7 @@ def add_gaussian_noise(input, prob, kedge_len=30, level=1, mode=0,mean=0):
             logger.info('No gaussian noise added')
             noisy = input
 
-    return noisy, sigma_real, sigma_imag
+    return noisy.astype('complex64'), sigma_real, sigma_imag
 
 
 def add_incoherent_noise(ksp, prob=None, central=0.4, mode=1, num_corrupted=0, dump=0.5):

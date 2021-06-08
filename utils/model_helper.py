@@ -824,7 +824,7 @@ class Classifier(nn.Module):
 
         # Combine the images for batch norm operations
         images_combined = torch.cat([image1, image2], dim=0)    #(batchsize*2, ch=2, 396, 396)
-        print(f'imagecombined shape {images_combined.shape}')
+        #print(f'imagecombined shape {images_combined.shape}')
         truth_combined = torch.cat([imaget, imaget], dim=0)
 
         # Calculate scores

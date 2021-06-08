@@ -76,8 +76,8 @@ def plt_scoreVsMse(scorelist, mselist, xname='Learned Score', yname='MSE', add_r
         plt.plot(x, line, 'k', label='y={:.2f}x+{:.2f}'.format(slope, intercept), linewidth=5)
 
 
-    plt.xlim([0, 2*np.median(scorelist)])
-    plt.ylim([0, 2*np.median(mselist)])
+    # plt.xlim([0, 2*np.median(scorelist)])
+    # plt.ylim([0, 2*np.median(mselist)])
     plt.xlabel(xname, fontsize=24)
     plt.ylabel(yname, fontsize=24)
     ax.tick_params(axis='both', which='major', labelsize=20)
@@ -119,8 +119,10 @@ def plt_scores(score1, score2):
         score2 = score2.detach().cpu().numpy()
     figure = plt.figure(figsize=(10, 10))
     plt.scatter(score1.squeeze(), score2.squeeze())
-    plt.xlabel('score of unshifted/unscaled')
-    plt.ylabel('score of shifted/scaled')
+    # plt.xlabel('score of unshifted/unscaled')
+    # plt.ylabel('score of shifted/scaled')
+    plt.xlabel('score of (imt1, imt2))')
+    plt.ylabel('score of (imt, im1))')
 
     return figure
 

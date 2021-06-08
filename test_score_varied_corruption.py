@@ -16,7 +16,7 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 filepath_rankModel = Path(r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\rank_trained_ISONET')
 filepath_train = Path("I:/NYUbrain")
 filepath_val = Path("I:/NYUbrain")
-file_rankModel = os.path.join(filepath_rankModel, "RankClassifier5542.pt")
+file_rankModel = os.path.join(filepath_rankModel, "RankClassifier2143.pt")
 log_dir = filepath_rankModel
 
 rank_channel =1
@@ -37,7 +37,7 @@ test_folder = Path("D:/NYUbrain/brain_multicoil_test/multicoil_test")
 files = find("*.h5", train_folder)
 
 CORRUPTIONS = ['% PE Motion Corrupted','Total shift (pixels)', 'Gaussian noise level(a.u.)', '% random undersampling', '% PE removed randomly']
-#CORRUPTIONS = ['% PE removed randomly']
+#CORRUPTIONS = ['Gaussian noise level(a.u.)', '% random undersampling', '% PE removed randomly']
 SAME_IMAGE = '(the same image)'
 # out_name = os.path.join(f'corrupted_images_{WHICH_CORRUPTION}.h5')
 # try:
@@ -161,10 +161,11 @@ for WHICH_CORRUPTION in CORRUPTIONS:
 
         mse = np.sum((np.abs(imageSQ) - np.abs(image_truthSQ)) ** 2)** 0.5
         ssim = structural_similarity(np.abs(imageSQ), np.abs(image_truthSQ))
-        image_tensor = torch.unsqueeze(torch.from_numpy(complex_2chan(imageSQ)),0)
-        image_truth_tensor = torch.unsqueeze(torch.from_numpy(complex_2chan(image_truthSQ)),0)
-        image_tensor = image_tensor.permute(0,-1,1,2).cuda()
-        image_truth_tensor = image_truth_tensor.permute(0, -1, 1, 2).cuda()
+        image_tensor = torch.unsqueeze(torch.from_numpy(imageSQ.copy()),0)
+        image_tensor = image_tensor.unsqueeze(0)
+        image_truth_tensor = torch.unsqueeze(torch.from_numpy(image_truthSQ.copy()),0)
+        image_truth_tensor = image_truth_tensor.unsqueeze(0)
+        image_truth_tensor, image_tensor = image_truth_tensor.cuda(), image_tensor.cuda()
         score = scoreNet(image_tensor, image_truth_tensor)
 
         if i%150 ==0:
