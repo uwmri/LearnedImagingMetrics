@@ -183,6 +183,28 @@ class VarNorm2d(nn.BatchNorm2d):
 
         return input
 
+class ComplexConv2d(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=0,
+                 dilation=1, groups=1, bias=False, complex_kernel=False):
+        super(ComplexConv2d, self).__init__()
+        self.complex_kernel = complex_kernel
+        self.conv_r = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias)
+        if complex_kernel:
+            self.conv_i = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias)
+
+    def forward(self, input):
+        if self.complex_kernel:
+            return apply_complex(self.conv_r, self.conv_i, input)
+        else:
+            return self.conv_r(input.real) + 1j*self.conv_r(input.imag)
+
+class ComplexAvgPool(nn.Module):
+    def __init__(self, pool_rate):
+        super(ComplexAvgPool, self).__init__()
+        self.pool = nn.AvgPool2d(pool_rate)
+
+    def forward(self, input):
+        return self.pool(input.real) + 1j * self.pool(input.imag)
 
 
 class L2cnnBlock(nn.Module):
@@ -201,23 +223,24 @@ class L2cnnBlock(nn.Module):
             self.bn2 = nn.BatchNorm2d(channels_out)
             self.shortcut = nn.Conv2d( channels_in, channels_out, kernel_size=1, padding=0, stride=1, bias=bias)
         else:
-            self.conv1 = nn.Conv2d(channels_in, channels_out, kernel_size=3, padding=1, stride=1, bias=bias)
-            self.conv2 = nn.Conv2d(channels_out, channels_out, kernel_size=3, padding=1, stride=1, bias=bias)
-            self.shortcut = nn.Conv2d(channels_in, channels_out, kernel_size=1, padding=0, stride=1, bias=bias)
+            self.conv1 = ComplexConv2d(channels_in, channels_out, kernel_size=3, padding=1, stride=1, bias=bias)
+            self.conv2 = ComplexConv2d(channels_out, channels_out, kernel_size=3, padding=1, stride=1, bias=bias)
+            self.shortcut = ComplexConv2d(channels_in, channels_out, kernel_size=1, padding=0, stride=1, bias=bias)
             self.bn1 = VarNorm2d(channels_out)
             self.bn2 = VarNorm2d(channels_out)
 
-        self.pool = nn.AvgPool2d(pool_rate)
+
+        self.pool = ComplexAvgPool(pool_rate)
         self.batch_norm = batch_norm
 
     def forward(self,x):
         # input x shape torch.Size([48, 1, 396, 396, 2])
         shortcut = self.shortcut(x)
         x = self.conv1(x)
-        x = self.bn1(x)
+        #x = self.bn1(x)
         x = self.act_func(x)
         x = self.conv2(x)
-        x = self.bn2(x)
+        #x = self.bn2(x)
         x = x + shortcut
         x = self.act_func(x)
         x = self.pool(x)
@@ -259,7 +282,7 @@ class L2cnn(nn.Module):
 
     def layer_mse(self, x):
         y = x.view(x.shape[0], -1)
-        return 1e3*torch.sum(y**2, dim=1, keepdim=True)**0.5
+        return 1e3*torch.sum(torch.abs(y)**2, dim=1, keepdim=True)**0.5
 
     def forward(self, input, truth):
         x = input.clone()
@@ -271,7 +294,7 @@ class L2cnn(nn.Module):
         # for i in range(2):
         #     input[:, i, :, :] *= self.scale[i]
 
-        diff_mag = torch.abs(input - truth)
+        diff_mag = input - truth
         # if train on 2chan (real and imag) images
 
         # Update to use sqrt

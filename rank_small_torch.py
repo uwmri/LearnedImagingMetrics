@@ -183,7 +183,7 @@ Labels_cnnT = np.concatenate((Labels[:idV_L], Labels[idV_R:]))
 Labels_cnnV = Labels[idV_L:idV_R]
 
 # Data generator
-BATCH_SIZE = 24
+BATCH_SIZE = 48
 BATCH_SIZE_EVAL = 1
 logging.info(f'batchsize={BATCH_SIZE}')
 logging.info(f'batchsize_eval={BATCH_SIZE_EVAL}')
@@ -236,11 +236,11 @@ elif EFF:
 elif RESNET:
     ranknet = ISOResNet2(BasicBlock, [2,2,2,2], for_denoise=False)  # Less than ResNet18
 else:
-    ranknet = L2cnn(channels_in=1)
+    ranknet = L2cnn(channels_in=1, channel_base=16)
 
 # print(ranknet)
-torchsummary.summary(ranknet.cuda(), [(X_1.shape[-3], maxMatSize, maxMatSize)
-                              ,(X_1.shape[-3], maxMatSize, maxMatSize)])
+#torchsummary.summary(ranknet.cuda(), [(X_1.shape[-3], maxMatSize, maxMatSize)
+#                              ,(X_1.shape[-3], maxMatSize, maxMatSize)])
 
 # Bayesian
 # optimize classification accuracy on the validation set as a function of the learning rate and momentum
@@ -407,7 +407,7 @@ for epoch in range(Nepoch):
                 # Cross entropy
                 loss = loss_func(delta, labels)
                 # Add L2 norm for kernels
-                l2_lambda = 0.001
+                l2_lambda = 1e-5
                 l2_reg = torch.tensor(0.).cuda()
                 for param in classifier.rank.parameters():
                     l2_reg += torch.norm(param)
@@ -422,7 +422,7 @@ for epoch in range(Nepoch):
                 # Cross entropy
                 loss = loss_func(delta, labels)
             # Add L2 norm for kernels
-            l2_lambda = 0.001
+            l2_lambda = 1e-5
             l2_reg = torch.tensor(0.).cuda()
             for param in classifier.rank.parameters():
                 l2_reg += torch.norm(param)
