@@ -14,6 +14,13 @@ class ComplexReLu(nn.Module):
         mag = torch.abs( input)
         return torch.nn.functional.relu(mag, inplace=self.inplace).type(torch.complex64)/(mag+1e-6)*input
 
+class CReLu(nn.Module):
+    def __init__(self):
+        super(CReLu, self).__init__()
+
+    def forward(self, input):
+        return torch.nn.functional.relu(input.real, inplace=False) + 1j*torch.nn.functional.relu(input.imag, inplace=False)
+
 
 class ComplexLeakyReLu(nn.Module):
     def __init__(self,  inplace=False):
@@ -110,7 +117,8 @@ def create_conv(in_channels, out_channels, kernel_size, order, num_groups, paddi
     modules = []
     for i, char in enumerate(order):
         if char == 'r':
-            modules.append((f'ReLU{i}', ComplexReLu(inplace=True)))
+            #modules.append((f'ReLU{i}', ComplexReLu(inplace=True)))
+            modules.append((f'CReLU{i}',CReLu()))
         elif char == 'l':
             modules.append((f'LeakyReLU{i}', ComplexLeakyReLu(inplace=True)))
         elif char == 'e':
@@ -211,7 +219,8 @@ class ResBottle(nn.Module):
 
         # Shortcut
         self.convshortcut = SingleConv(conv1_in_channels, conv2_out_channels, 1, 'c',  num_groups, padding=0)
-        self.activation = ComplexReLu(inplace=True)
+        #self.activation = ComplexReLu(inplace=True)
+        self.activation = CReLu()
 
     def forward(self, x):
         shortcut = self.convshortcut(x)
@@ -219,7 +228,6 @@ class ResBottle(nn.Module):
         x = self.conv2(x)
         x += shortcut
         x = self.activation(x)
-
         return x
 
 
@@ -250,6 +258,7 @@ class Encoder(nn.Module):
             self.pool_scale = 1.0
 
     def forward(self, x):
+
         x = self.downsample(x*self.pool_scale)
         x = self.basic_module(x)
 
@@ -386,8 +395,7 @@ class ComplexUNet2D(nn.Module):
     def forward(self, x):
 
         # Keep x
-        input = x
-
+        input = x.clone()
         # encoder part
         encoders_features = []
         for encoder in self.encoders:

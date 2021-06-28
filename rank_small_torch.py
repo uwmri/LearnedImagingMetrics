@@ -44,7 +44,7 @@ shuffle_observers = False
 MOBILE = False
 EFF = False
 BO = False
-RESNET = True
+RESNET = False
 CLIP = False
 SAMPLER = False
 WeightedLoss = False
@@ -236,10 +236,10 @@ elif EFF:
 elif RESNET:
     ranknet = ISOResNet2(BasicBlock, [2,2,2,2], for_denoise=False)  # Less than ResNet18
 else:
-    ranknet = L2cnn(channels_in=1, channel_base=16)
+    ranknet = L2cnn(channels_in=1, channel_base=6)
 
-# print(ranknet)
-#torchsummary.summary(ranknet.cuda(), [(X_1.shape[-3], maxMatSize, maxMatSize)
+print(ranknet)
+# torchsummary.summary(ranknet.cuda(), [(X_1.shape[-3], maxMatSize, maxMatSize)
 #                              ,(X_1.shape[-3], maxMatSize, maxMatSize)])
 
 # Bayesian
@@ -265,7 +265,7 @@ if trainScoreandSSIM:
     classifierSSIM = Classifier(ssim_module)
 
 
-learning_rate_classifier = 1e-4
+learning_rate_classifier = 1e-5
 learning_rate_rank = 1e-5
 learning_rate_MSE = 1e-3
 learning_rate_SSIM = 1e-3
@@ -326,7 +326,7 @@ writer_val = SummaryWriter(os.path.join(log_dir,f'runs/rank/val_{Ntrial}'))
 
 score_mse_file = os.path.join(f'score_mse_file_{Ntrial}.h5')
 
-Nepoch = 1
+Nepoch = 200
 lossT = np.zeros(Nepoch)
 lossV = np.zeros(Nepoch)
 

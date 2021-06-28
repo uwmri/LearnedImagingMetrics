@@ -13,14 +13,15 @@ from utils.utils_DL import *
 spdevice = sp.Device(0)
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-filepath_rankModel = Path(r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\rank_trained_ISONET')
+filepath_rankModel = Path(r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\rank_trained_L2cnn')
 filepath_train = Path("I:/NYUbrain")
 filepath_val = Path("I:/NYUbrain")
-file_rankModel = os.path.join(filepath_rankModel, "RankClassifier2143.pt")
+file_rankModel = os.path.join(filepath_rankModel, "RankClassifier5624.pt")
 log_dir = filepath_rankModel
 
 rank_channel =1
-ranknet = ISOResNet2(BasicBlock, [2,2,2,2], for_denoise=False)
+#ranknet = ISOResNet2(BasicBlock, [2,2,2,2], for_denoise=False)
+ranknet = L2cnn(channels_in=rank_channel, channel_base=2)
 classifier = Classifier(ranknet)
 
 state = torch.load(file_rankModel)
@@ -152,7 +153,7 @@ for WHICH_CORRUPTION in CORRUPTIONS:
         corruption_magList.append(corruption_mag)
         ksp2_gpu = sp.to_device(ksp2, device=spdevice)
 
-        image = mri.app.SenseRecon(ksp2_gpu, smaps, lamda=0.005, device=spdevice, max_iter=20).run()
+        image = mri.app.SenseRecon(ksp2_gpu, smaps, lamda=0.005, device=spdevice, max_iter=100).run()
         # print('corrupted recon done')
         image = sp.to_device(image, sp.cpu_device)
         imageSQ = crop_flipud(image)

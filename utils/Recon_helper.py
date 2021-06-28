@@ -15,6 +15,7 @@ from utils.CreateImagePairs import get_smaps, add_gaussian_noise
 from utils.unet_componets import *
 from utils.unet_components_complex import *
 from utils.varnet_components_complex import *
+from mri_unet.unet import MRI_UNet
 
 spdevice = sp.Device(0)
 
@@ -300,25 +301,29 @@ def learnedloss_fcn(output, target, scoreModel, rank_trained_on_mag=False):
                 target_sl = torch.unsqueeze(target[sl], 0).permute(0,1,3,2)
 
             bias = scoreModel(target_sl, target_sl)
-            delta_sl = torch.abs(scoreModel(output_sl, target_sl)+bias)
+            #delta_sl = torch.abs(scoreModel(output_sl, target_sl) - bias)
+            delta_sl = scoreModel(output_sl, target_sl)
             delta += delta_sl
 
             # Flip Up/Dn
             output_sl2 = torch.flip(output_sl, dims=(-1,))
             target_sl2 = torch.flip(target_sl, dims=(-1,))
-            delta_sl = torch.abs(scoreModel(output_sl2, target_sl2)+bias)
+            #delta_sl = torch.abs(scoreModel(output_sl2, target_sl2) - bias)
+            delta_sl = scoreModel(output_sl2, target_sl2)
             delta += delta_sl
 
             # Flip L/R
             output_sl2 = torch.flip(output_sl, dims=(-2,))
             target_sl2 = torch.flip(target_sl, dims=(-2,))
-            delta_sl = torch.abs(scoreModel(output_sl2, target_sl2)+bias)
+            #delta_sl = torch.abs(scoreModel(output_sl2, target_sl2) - bias)
+            delta_sl = scoreModel(output_sl2, target_sl2)
             delta += delta_sl
 
             # Flip Both
             output_sl2 = torch.flip(output_sl, dims=(-2,-1))
             target_sl2 = torch.flip(target_sl, dims=(-2,-1))
-            delta_sl = torch.abs(scoreModel(output_sl2, target_sl2)+bias)
+            #delta_sl = torch.abs(scoreModel(output_sl2, target_sl2) - bias)
+            delta_sl = scoreModel(output_sl2, target_sl2)
             delta += delta_sl
 
 
@@ -514,9 +519,9 @@ class conv_bn(nn.Module):
 
     def __init__(self, Nkernels=64, BN=True):
         super(conv_bn, self).__init__()
-        self.conv = nn.Conv2d(Nkernels, Nkernels, kernel_size=3, padding=1)
+        self.conv = ComplexConv2d(Nkernels, Nkernels, kernel_size=3, padding=1)
         self.norm = nn.BatchNorm2d(Nkernels)
-        self.relu = nn.ReLU(inplace=True)
+        self.relu = CReLu()
         self.BN = BN
 
     def forward(self, x):
@@ -534,13 +539,13 @@ class CNN_shortcut(nn.Module):
 
     def __init__(self, Nkernels=10):
         super(CNN_shortcut, self).__init__()
-        self.conv_in = nn.Sequential(nn.Conv2d(2, Nkernels, kernel_size=3, stride=1, padding=1),
-                                     nn.ReLU(inplace=True))
+        self.conv_in = nn.Sequential(ComplexConv2d(1, Nkernels, kernel_size=3, stride=1, padding=1),
+                                     CReLu())
         self.block1 = conv_bn(Nkernels=Nkernels, BN=False)
         self.block2 = conv_bn(Nkernels=Nkernels, BN=False)
-        self.block3 = conv_bn(Nkernels=Nkernels, BN=True)
-        self.block4 = conv_bn(Nkernels=Nkernels, BN=True)
-        self.conv_out = nn.Conv2d(Nkernels, 2, kernel_size=3, padding=1)
+        self.block3 = conv_bn(Nkernels=Nkernels, BN=False)
+        self.block4 = conv_bn(Nkernels=Nkernels, BN=False)
+        self.conv_out = ComplexConv2d(Nkernels, 1, kernel_size=3, padding=1)
 
     def forward(self, x):
         identity = x
@@ -766,15 +771,16 @@ class MoDL(nn.Module):
 
         # Options for UNET
         if DENOISER == 'unet':
-            self.denoiser = ComplexUNet2D(1, 1, depth=3, final_activation='none', f_maps=32, layer_order='cr')
+            #self.denoiser =  MRI_UNet(in_channels=1, out_channels=1, f_maps=64,
+            #     layer_order='cr', complex_kernel=False, complex_input=True)
+            self.denoiser = ComplexUNet2D(1, 1, depth=6, final_activation='none', f_maps=32, layer_order='cr')
         elif DENOISER == 'varnet':
             self.varnets = nn.ModuleList()
             for i in range(self.inner_iter):
                 self.varnets.append(VarNet())
             self.denoiser = None
-
-        #self.refiner = UNet2D(2, 2, depth=3, final_activation='none', f_maps=32, layer_order='cl')
-        #self.denoiser = CNN_shortcut()
+        else:
+            self.denoiser = CNN_shortcut()
         # self.denoiser = Projector(ENC=False)
 
     def call_denoiser(self, image):
@@ -829,15 +835,15 @@ class MoDL(nn.Module):
             #y_pred = image - self.scale_layers[i] * decoding_op.apply(diff)   # (768, 396)
             image = image - self.scale_layers[i] * sense_adjoint(maps, diff)   # (768, 396)
 
-            dim = y_pred.ndim
-            if dim == 3:
-                y_pred = torch.unsqueeze(y_pred,0)
-                image_complex = torch.unsqueeze(image, 0)
-                # print(f'image_complex reguires grad {image_complex.requires_grad}')
-            y_pred = y_pred.permute(0, -1, 1, 2).contiguous()
-            image_complex = image_complex.permute(0, -1, 1, 2).contiguous()
+            # dim = y_pred.ndim
+            # if dim == 3:
+            #     y_pred = torch.unsqueeze(y_pred,0)
+            #     image_complex = torch.unsqueeze(image, 0)
+            #     # print(f'image_complex reguires grad {image_complex.requires_grad}')
+            # y_pred = y_pred.permute(0, -1, 1, 2).contiguous()
+            # image_complex = image_complex.permute(0, -1, 1, 2).contiguous()
 
-            PAD=False
+            PAD=True
 
             if PAD:
                 # Pad to prevent edge effects, circular pad to keep image statistics
@@ -855,10 +861,10 @@ class MoDL(nn.Module):
                 #image_complex = nn.functional.pad(image_complex, pad_f)
                 # print(f'image_complex reguires grad {image_complex.requires_grad}')
                 #print(f'Image in {image.shape} pad_f {pad_f}')
-            # to complex
-            y_pred = y_pred.permute(0, 2, 3, 1).contiguous()
-            y_pred = torch.view_as_complex(y_pred)
-            y_pred = y_pred[None, ...]
+            # # to complex
+            # y_pred = y_pred.permute(0, 2, 3, 1).contiguous()
+            # y_pred = torch.view_as_complex(y_pred)
+            # y_pred = y_pred[None, ...]
             if self.denoiser is None:
                 image_complex = image_complex.permute(0, 2, 3, 1).contiguous()
                 image_complex = torch.view_as_complex(image_complex)
@@ -866,25 +872,27 @@ class MoDL(nn.Module):
                 # print(f'image_complex reguires grad {image_complex.requires_grad}')
 
                 temp = checkpoint.checkpoint(self.checkpoint_fn(self.varnets[i]),image_complex)
-                y_pred += temp
+                image += temp
             else:
-                #print(self.denoiser)
-                y_pred = checkpoint.checkpoint(self.checkpoint_fn(self.denoiser), y_pred)
+                image = image.unsqueeze(0)  #complex64, (1,1,h,w)
+                image = checkpoint.checkpoint(self.checkpoint_fn(self.denoiser), image)
+                # image = self.denoiser(image)
+                image = image.squeeze(0)
 
             if PAD:
                 # cropping for UNet
                 image = image[:, pad_amount2:-pad_amount2,pad_amount1:-pad_amount1]
 
-            # back to 2 channel
-            y_pred = y_pred.permute(0, 2, 3, 1).contiguous()
-            y_pred = torch.view_as_real(y_pred[...,0])
-            if dim==3:
-                y_pred = torch.squeeze(y_pred)
-
-            #image = self.lam1[i]*image + self.lam2[i]*y_pred
-
-            # Return Image
-            image = self.lam2[i]*y_pred
+            # # back to 2 channel
+            # y_pred = y_pred.permute(0, 2, 3, 1).contiguous()
+            # y_pred = torch.view_as_real(y_pred[...,0])
+            # if dim==3:
+            #     y_pred = torch.squeeze(y_pred)
+            #
+            # #image = self.lam1[i]*image + self.lam2[i]*y_pred
+            #
+            # # Return Image
+            # image = self.lam2[i]*y_pred
         # crop to square
         idxL = int((image.shape[0] - image.shape[1]) / 2)
         idxR = int(idxL + image.shape[1])

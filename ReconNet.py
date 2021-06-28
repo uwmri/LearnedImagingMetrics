@@ -41,7 +41,7 @@ parser.add_argument('--data_folder', type=str,
                     default=r'I:\NYUbrain',
                     help='Data path')
 parser.add_argument('--metric_file', type=str,
-                    default=r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\rank_trained_ISONET\RankClassifier7615.pt',
+                    default=r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\rank_trained_L2cnn\RankClassifier5624.pt',
                     help='Name of learned metric file')
 parser.add_argument('--log_dir', type=str,
                     default=r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020',
@@ -69,8 +69,8 @@ BO = False
 
 logging.basicConfig(filename=os.path.join(log_dir,f'Recon_{Ntrial}.log'), filemode='w', level=logging.INFO)
 
-# ranknet = L2cnn(channels_in=rank_channel)
-ranknet = ISOResNet2(BasicBlock, [2,2,2,2], for_denoise=False)
+ranknet = L2cnn(channels_in=rank_channel, channel_base=2)
+#ranknet = ISOResNet2(BasicBlock, [2,2,2,2], for_denoise=False)
 classifier = Classifier(ranknet)
 
 state = torch.load(metric_file)
@@ -93,7 +93,7 @@ act_xres = 512
 act_yres = 256
 
 acc = 8
-WHICH_MASK = 'randLines'
+WHICH_MASK = 'poisson'
 logging.info(f'Acceleration = {acc}, {WHICH_MASK} mask')
 if WHICH_MASK == 'poisson':
     # Sample elipsoid to not be overly optimistic
@@ -155,12 +155,12 @@ loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=Fals
 
 UNROLL = True
 if UNROLL:
-    denoiser = 'unet'
+    denoiser = 'cnn_shortcut'
     logging.info(f'denoiser is {denoiser}')
 
     INNER_ITER = 1
-    ReconModel = unrolledK(inner_iter=INNER_ITER, DENOISER=denoiser)
-    #ReconModel = MoDL(inner_iter=INNER_ITER, DENOISER=denoiser)
+    #ReconModel = unrolledK(inner_iter=INNER_ITER, DENOISER=denoiser)
+    ReconModel = MoDL(inner_iter=INNER_ITER, DENOISER=denoiser)
     logging.info(f'MoDL, inner iter = {INNER_ITER}')
 else:
     NUM_CASCADES = 12
@@ -183,7 +183,7 @@ elif WHICH_LOSS == 'patchGAN':
 elif WHICH_LOSS == 'ssim':
     ssim_module = SSIM()
 
-Nepoch = 100
+Nepoch = 200
 epochMSE = 0
 logging.info(f'MSE for first {epochMSE} epochs then switch to learned')
 lossT = np.zeros(Nepoch)
@@ -192,7 +192,7 @@ lossV = np.zeros(Nepoch)
 out_name = os.path.join(log_dir,f'Images_training{Ntrial}_{WHICH_LOSS}.h5')
 print(f'Logging to {out_name}')
 
-LR = 3e-4
+LR = 1e-4
 # optimizer = optim.SGD(ReonModel.parameters(), lr=LR, momentum=0.9)
 optimizer = optim.Adam(ReconModel.parameters(), lr=LR)
 #scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=40, gamma=0.1)
@@ -202,7 +202,7 @@ optimizer = optim.Adam(ReconModel.parameters(), lr=LR)
 
 logging.info(f'Adam, lr = {LR}')
 logging.info('case averaged loss')
-logging.info('Denoiser = Unet')
+logging.info('Denoiser = cnn_shortcut')
 logging.info(f'{Ntrain} cases training, {Nval} cases validation')
 logging.info(f'loss = {WHICH_LOSS}')
 logging.info(f'acc = {acc}, mask is {WHICH_MASK}')
@@ -309,7 +309,7 @@ for epoch in range(Nepoch):
                         loss = mseloss_fcn(imEst2, im_sl) * 5e2
                         loss_mse_tensor = loss.item()
                     else:
-                        loss = learnedloss_fcn(imEst2, im_sl, score, rank_trained_on_mag=rank_trained_on_mag)
+                        loss = 1e-4 * learnedloss_fcn(imEst2, im_sl, score, rank_trained_on_mag=rank_trained_on_mag)
                         loss_mse_tensor = mseloss_fcn(imEst2, im_sl).detach()
 
                 loss.backward(retain_graph=True)
@@ -323,7 +323,8 @@ for epoch in range(Nepoch):
 
                 loss_avg += loss.detach().item()
                 train_avg.update(loss.detach().item())
-                train_avg_mse.update(loss_mse_tensor.detach().cpu().item())
+                if WHICH_LOSS != 'mse':
+                    train_avg_mse.update(loss_mse_tensor.detach().cpu().item())
 
                 del smaps_sl, kspaceU_sl, kspace_sl, im_sl
 
@@ -405,10 +406,11 @@ for epoch in range(Nepoch):
                     loss_mse_tensor = loss
                 else:
                     loss_mse_tensor = mseloss_fcn(imEst2, im_sl).detach()
-                    loss = learnedloss_fcn(imEst2, im_sl, score, rank_trained_on_mag=rank_trained_on_mag)
+                    loss = 1e-4 * learnedloss_fcn(imEst2, im_sl, score, rank_trained_on_mag=rank_trained_on_mag)
 
             eval_avg.update(loss.detach().item(), n=BATCH_SIZE)
-            eval_avg_mse.update(loss_mse_tensor.detach().cpu().item())
+            if WHICH_LOSS != 'mse':
+                eval_avg_mse.update(loss_mse_tensor.detach().cpu().item())
 
             if WHICH_LOSS == 'learned':
                 with torch.no_grad():
@@ -431,12 +433,12 @@ for epoch in range(Nepoch):
                 # SENSE
                 if epoch == 0:
                     kspaceU_sl_gpu = sp.to_device(sp.from_pytorch(kspaceU_sl.cpu()), sp.Device(0))
-                    smaps_sl = sp.to_device(sp.from_pytorch(smaps_sl.cpu()), sp.Device(0))
-                    imSense = sp.mri.app.SenseRecon(kspaceU_sl_gpu, smaps_sl, weights=mask_gpu, lamda=.01,
+                    smaps_sl_gpu = sp.to_device(sp.from_pytorch(smaps_sl.cpu()), sp.Device(0))
+                    imSense = sp.mri.app.SenseRecon(kspaceU_sl_gpu, smaps_sl_gpu, weights=mask_gpu, lamda=.01,
                                                     max_iter=20, device=spdevice).run()
                     #imSense = imSense[idxL:idxR,:]
                     # L1-wavelet
-                    imL1 = sp.mri.app.L1WaveletRecon(kspaceU_sl_gpu, smaps_sl, weights=mask_gpu, lamda=.001,
+                    imL1 = sp.mri.app.L1WaveletRecon(kspaceU_sl_gpu, smaps_sl_gpu, weights=mask_gpu, lamda=.001,
                                                      max_iter=20, device=spdevice).run()
                     #imL1 = imL1[idxL:idxR,:]
 

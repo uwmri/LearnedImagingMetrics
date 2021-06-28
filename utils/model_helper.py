@@ -197,6 +197,7 @@ class ComplexConv2d(nn.Module):
             return apply_complex(self.conv_r, self.conv_i, input)
         else:
             return self.conv_r(input.real) + 1j*self.conv_r(input.imag)
+            # return self.conv_r(input) + self.conv_r(input)
 
 class ComplexAvgPool(nn.Module):
     def __init__(self, pool_rate):
@@ -205,14 +206,15 @@ class ComplexAvgPool(nn.Module):
 
     def forward(self, input):
         return self.pool(input.real) + 1j * self.pool(input.imag)
+        #return self.pool(input) +  self.pool(input)
 
 
 class L2cnnBlock(nn.Module):
-    def __init__(self, channels_in=64, channels_out=64, pool_rate=2, bias=False, batch_norm=False, activation=False):
+    def __init__(self, channels_in=64, channels_out=64, pool_rate=2, bias=False, batch_norm=False, activation=True):
         super(L2cnnBlock, self).__init__()
 
         if activation:
-            self.act_func = nn.ReLU(inplace=True)
+            self.act_func = nn.ReLU(inplace=False)
         else:
             self.act_func = nn.Identity()
 
@@ -234,15 +236,17 @@ class L2cnnBlock(nn.Module):
         self.batch_norm = batch_norm
 
     def forward(self,x):
-        # input x shape torch.Size([48, 1, 396, 396, 2])
+
         shortcut = self.shortcut(x)
         x = self.conv1(x)
         #x = self.bn1(x)
-        x = self.act_func(x)
+        # x = self.act_func(x) + self.act_func(x)
+        x = self.act_func(x.real) + 1j* self.act_func(x.imag)
         x = self.conv2(x)
         #x = self.bn2(x)
         x = x + shortcut
-        x = self.act_func(x)
+        # x = self.act_func(x) + self.act_func(x)
+        x = self.act_func(x.real) + 1j* self.act_func(x.imag)
         x = self.pool(x)
         return x
 
@@ -274,7 +278,7 @@ class L2cnn(nn.Module):
         self.layers = nn.ModuleList()
         for block in range(group_depth):
 
-            self.layers.append(L2cnnBlock(channels_in, channels_out, pool_rate, bias=bias, activation=False))
+            self.layers.append(L2cnnBlock(channels_in, channels_out, pool_rate, bias=bias, activation=True))
 
             # Update channels
             channels_in = channels_out
@@ -295,17 +299,6 @@ class L2cnn(nn.Module):
         #     input[:, i, :, :] *= self.scale[i]
 
         diff_mag = input - truth
-        # if train on 2chan (real and imag) images
-
-        # Update to use sqrt
-        #diff_sq = torch.sum( diff ** 2, dim=1, keepdim=True)
-        #diff_mag = diff_sq ** (0.5)
-        #diff_sq = torch.sum( torch.square(diff), dim=1, keepdim=True)
-        #diff_mag = torch.sqrt(diff_sq)
-
-        # Mean square error
-        #mse = self.layer_mse(diff_mag)
-
 
         # Convolutional pathway with MSE at multiple scales
         for l in self.layers:
@@ -1100,12 +1093,9 @@ class ISOResNet2(nn.Module):
 
     def forward(self, input, truth):
         # diff = input - truth
-        # # if train on 2chan (real and imag) images
-        #
         # x = torch.sum(diff ** 2, dim=1, keepdim=True)
         # x = input.clone()
         x = torch.abs(input - truth)
-
         x = self.conv1(x)
         #x = self.bn1(x)
         x = self.relu(x)
