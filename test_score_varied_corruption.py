@@ -16,7 +16,7 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 filepath_rankModel = Path(r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\rank_trained_L2cnn')
 filepath_train = Path("I:/NYUbrain")
 filepath_val = Path("I:/NYUbrain")
-file_rankModel = os.path.join(filepath_rankModel, "RankClassifier5624.pt")
+file_rankModel = os.path.join(filepath_rankModel, "RankClassifier5144.pt")
 log_dir = filepath_rankModel
 
 rank_channel =1
@@ -37,8 +37,8 @@ val_folder = Path("D:/NYUbrain/brain_multicoil_val/multicoil_val")
 test_folder = Path("D:/NYUbrain/brain_multicoil_test/multicoil_test")
 files = find("*.h5", train_folder)
 
-CORRUPTIONS = ['% PE Motion Corrupted','Total shift (pixels)', 'Gaussian noise level(a.u.)', '% random undersampling', '% PE removed randomly']
-#CORRUPTIONS = ['Gaussian noise level(a.u.)', '% random undersampling', '% PE removed randomly']
+#CORRUPTIONS = ['% PE Motion Corrupted','Total shift (pixels)', 'Gaussian noise level(a.u.)', '% random undersampling', '% PE removed randomly']
+CORRUPTIONS = ['% PE Motion Corrupted']
 SAME_IMAGE = '(the same image)'
 # out_name = os.path.join(f'corrupted_images_{WHICH_CORRUPTION}.h5')
 # try:
@@ -49,6 +49,8 @@ SAME_IMAGE = '(the same image)'
 Ntrials = 500
 Nxmax = 320
 Nymax = 640
+#Nxmax = 396
+#Nymax = 768
 count = 0
 
 
@@ -101,7 +103,7 @@ smaps = get_smaps(ksp_full_gpu, device=spdevice, maxiter=50)
 smaps = sp.to_device(smaps, device=spdevice)
 
 # Get Truth
-image_truth = mri.app.SenseRecon(ksp_full_gpu, smaps, lamda=0.005, device=spdevice, max_iter=20).run()
+image_truth = mri.app.SenseRecon(ksp_full_gpu, smaps, lamda=0.005, device=spdevice, max_iter=100).run()
 
 # send to cpu and normalize
 image_truth = sp.to_device(image_truth, sp.cpu_device)
@@ -130,11 +132,12 @@ for WHICH_CORRUPTION in CORRUPTIONS:
             ksp2, corruption_mag = trans_motion(ksp_full, dir_motion=2, maxshift=50, prob=1,
                                                 startPE=startPE,fix_shift=False, fix_start=True)
 
-        elif WHICH_CORRUPTION == 'Gaussian noise level(a.u.)':
+        elif WHICH_CORRUPTION == 'Gaussian noise level':
             gaussian_ulim = 12
             gaussian_level = np.random.randint(0, gaussian_ulim)
             ksp2, sigma_real, sigma_imag = add_gaussian_noise(ksp_full, 1, kedge_len=30,level=gaussian_level, mode=1, mean=0)
-            corruption_mag = (sigma_real**2 + sigma_imag**2)**0.5
+            #corruption_mag = (sigma_real**2 + sigma_imag**2)**0.5
+            corruption_mag = gaussian_level
         elif WHICH_CORRUPTION == 'blurring':
             ksp2, corruption_mag = blurring(ksp_full, 20)
         elif WHICH_CORRUPTION == '% random undersampling':
@@ -158,7 +161,7 @@ for WHICH_CORRUPTION in CORRUPTIONS:
         image = sp.to_device(image, sp.cpu_device)
         imageSQ = crop_flipud(image)
         scale = np.sum(np.conj(imageSQ).T * image_truthSQ) / np.sum(np.conj(imageSQ).T * imageSQ)
-        image *= scale
+        image *= scale      #imageSQ is scaled here
 
         mse = np.sum((np.abs(imageSQ) - np.abs(image_truthSQ)) ** 2)** 0.5
         ssim = structural_similarity(np.abs(imageSQ), np.abs(image_truthSQ))

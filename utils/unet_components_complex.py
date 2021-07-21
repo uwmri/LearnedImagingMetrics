@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
 
 USE_BIAS=False
 
@@ -20,6 +21,80 @@ class CReLu(nn.Module):
 
     def forward(self, input):
         return torch.nn.functional.relu(input.real, inplace=False) + 1j*torch.nn.functional.relu(input.imag, inplace=False)
+
+class SReLU(nn.Module):
+    """Shifted ReLU"""
+
+    def __init__(self, nc):
+        super(SReLU, self).__init__()
+        self.srelu_bias = nn.Parameter(torch.Tensor(1, nc, 1, 1))
+        self.srelu_relu = nn.ReLU(inplace=True)
+        nn.init.constant_(self.srelu_bias, -1.0)
+
+    def forward(self, x):
+        return self.srelu_relu(x - self.srelu_bias) + self.srelu_bias
+
+
+class CReLU_bias(nn.Module):
+    def __init__(self, nc):
+        super(CReLU_bias, self).__init__()
+        self.srelu_bias = nn.Parameter(torch.Tensor(1, nc, 1, 1))
+        self.srelu_relu = nn.ReLU(inplace=False)
+        nn.init.constant_(self.srelu_bias, -1.0)
+
+    def forward(self, x):
+        activated_re = self.srelu_relu(x.real - self.srelu_bias) + self.srelu_bias
+        activated_im = self.srelu_relu(x.imag - self.srelu_bias) + self.srelu_bias
+        return activated_re + 1j*activated_im
+
+
+class ZReLU(nn.Module):
+    def __init__(self):
+        super(ZReLU, self).__init__()
+
+    def forward(self, input):
+        phase = torch.angle(input)
+        zeros = torch.zeros_like(input)
+
+        le = torch.le(phase, math.pi/2)
+        input = torch.where(le, input, zeros)
+        ge = torch.ge(phase, 0)
+        input = torch.where(ge, input, zeros)
+        return input
+
+
+class modReLU(nn.Module):
+    '''
+    A PyTorch module to apply relu activation on the magnitude of the signal. Phase is preserved
+    '''
+    def __init__(self,in_channels=None, ndims=2):
+        super(modReLU, self).__init__()
+        self.act = nn.ReLU(inplace=False)
+        shape = (1, in_channels) + tuple(1 for _ in range(ndims))
+        self.bias = nn.Parameter(torch.zeros(shape), requires_grad=True)
+
+    def forward(self, input):
+        mag = input.abs()
+        return self.act(mag+self.bias) * input / (mag + torch.finfo(mag.dtype).eps)
+
+
+class SCReLU(nn.Module):
+    """Shifted ReLU"""
+
+    def __init__(self, nc):
+        super(SCReLU, self).__init__()
+        self.srelu_bias_re = nn.Parameter(torch.Tensor(1, nc, 1, 1))
+        self.srelu_bias_im = nn.Parameter(torch.Tensor(1, nc, 1, 1))
+
+        self.srelu_relu = nn.ReLU(inplace=False)
+        nn.init.constant_(self.srelu_bias_re, -1.0)
+        nn.init.constant_(self.srelu_bias_im, -1.0)
+
+
+    def forward(self, x):
+        activated_re = self.srelu_relu(x.real - self.srelu_bias_re) + self.srelu_bias_re
+        activated_im = self.srelu_relu(x.imag - self.srelu_bias_im) + self.srelu_bias_im
+        return activated_re + 1j*activated_im
 
 
 class ComplexLeakyReLu(nn.Module):
@@ -94,7 +169,7 @@ class ComplexDepthwise_separable_conv(nn.Module):
         return out
 
 
-def create_conv(in_channels, out_channels, kernel_size, order, num_groups, padding=1):
+def create_conv(in_channels, out_channels, kernel_size, order, num_groups, padding=1, ndims=2):
     """
     Create a list of modules with together constitute a single conv layer with non-linearity
     and optional batchnorm/groupnorm.
@@ -116,9 +191,15 @@ def create_conv(in_channels, out_channels, kernel_size, order, num_groups, paddi
 
     modules = []
     for i, char in enumerate(order):
-        if char == 'r':
+        if char == 'z':
+            modules.append((f'ZReLU{i}',ZReLU()))
+        elif char == 'r':
             #modules.append((f'ReLU{i}', ComplexReLu(inplace=True)))
             modules.append((f'CReLU{i}',CReLu()))
+        elif char =='s':
+            modules.append((f'SCReLU{i}', SCReLU(nc=in_channels)))
+        elif char == 'm':
+            modules.append((f'modReLU{i}', modReLU(in_channels=in_channels, ndims=ndims)))
         elif char == 'l':
             modules.append((f'LeakyReLU{i}', ComplexLeakyReLu(inplace=True)))
         elif char == 'e':
@@ -142,7 +223,7 @@ def create_conv(in_channels, out_channels, kernel_size, order, num_groups, paddi
         elif char == 'b':
             modules.append((f'batchnorm{i}', nn.BatchNorm2d(out_channels)))
         else:
-            raise ValueError(f"Unsupported layer type '{char}'. MUST be one of ['b', 'g', 'r', 'l', 'e', 'c', 'C', 'i']")
+            raise ValueError(f"Unsupported layer type '{char}'. MUST be one of ['b', 'g', 'r', 'l', 'e', 'c', 'C', 'i', 'm', 'z']")
 
     return modules
 
@@ -213,14 +294,15 @@ class ResBottle(nn.Module):
             conv2_in_channels, conv2_out_channels = out_channels, out_channels
 
         # conv1
-        self.conv1 = SingleConv(conv1_in_channels, conv1_out_channels, kernel_size, 'cl', num_groups)
+        self.conv1 = SingleConv(conv1_in_channels, conv1_out_channels, kernel_size, order, num_groups)
         # conv2
-        self.conv2 = SingleConv(conv2_in_channels, conv2_out_channels, kernel_size, 'cl', num_groups)
+        self.conv2 = SingleConv(conv2_in_channels, conv2_out_channels, kernel_size, order, num_groups)
 
         # Shortcut
         self.convshortcut = SingleConv(conv1_in_channels, conv2_out_channels, 1, 'c',  num_groups, padding=0)
         #self.activation = ComplexReLu(inplace=True)
         self.activation = CReLu()
+        #self.activation = ZReLU()
 
     def forward(self, x):
         shortcut = self.convshortcut(x)
@@ -333,7 +415,7 @@ class ComplexUNet2D(nn.Module):
         num_groups (int): number of groups for the GroupNorm
     """
 
-    def __init__(self, in_channels, out_channels, f_maps=64, layer_order='cl', num_groups=0,
+    def __init__(self, in_channels, out_channels, f_maps=64, layer_order='cr', num_groups=0,
                  depth=4, layer_growth=2.0, residual=True, **kwargs):
         super(ComplexUNet2D, self).__init__()
 

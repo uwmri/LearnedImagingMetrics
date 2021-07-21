@@ -39,7 +39,7 @@ if DGX:
 from utils.model_helper import *
 from utils.utils_DL import *
 
-train_on_mag = False    # False: L2CNN trained on abs(im-truth), True: train on abs(im)-abs(truth)
+train_on_mag = True
 shuffle_observers = False
 MOBILE = False
 EFF = False
@@ -120,11 +120,6 @@ for i in range(NEXAMPLES):
     if i % 1e2 == 0:
         print(f'loading example pairs {i + 1}')
 
-if train_on_mag:
-    X_1 = torch.abs(X_1)
-    X_2 = torch.abs(X_2)
-    X_T = torch.abs(X_T)
-
 # All labels
 for i in range(0, NRANKS):
 
@@ -169,7 +164,7 @@ logging.basicConfig(filename=os.path.join(log_dir,f'runs/rank/ranking_{Ntrial}.l
 logging.info('With ISOresnet classifier')
 logging.info(f'{Ntrial}')
 
-CV = 1
+CV = 4
 CV_fold = 5
 logging.info(f'{CV_fold} fold cross validation {CV}')
 ntrain = int(0.8 * NRANKS)
@@ -236,7 +231,7 @@ elif EFF:
 elif RESNET:
     ranknet = ISOResNet2(BasicBlock, [2,2,2,2], for_denoise=False)  # Less than ResNet18
 else:
-    ranknet = L2cnn(channels_in=1, channel_base=6)
+    ranknet = L2cnn(channels_in=1, channel_base=2, train_on_mag=train_on_mag)
 
 print(ranknet)
 # torchsummary.summary(ranknet.cuda(), [(X_1.shape[-3], maxMatSize, maxMatSize)
@@ -326,7 +321,7 @@ writer_val = SummaryWriter(os.path.join(log_dir,f'runs/rank/val_{Ntrial}'))
 
 score_mse_file = os.path.join(f'score_mse_file_{Ntrial}.h5')
 
-Nepoch = 200
+Nepoch = 1
 lossT = np.zeros(Nepoch)
 lossV = np.zeros(Nepoch)
 

@@ -41,19 +41,19 @@ parser.add_argument('--data_folder', type=str,
                     default=r'I:\NYUbrain',
                     help='Data path')
 parser.add_argument('--metric_file', type=str,
-                    default=r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\rank_trained_L2cnn\RankClassifier5624.pt',
+                    default=r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\RankClassifier4187.pt',
                     help='Name of learned metric file')
 parser.add_argument('--log_dir', type=str,
                     default=r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020',
-
                     help='Directory to log files')
 parser.add_argument('--pname', type=str, default=f'chenwei_recon_{Ntrial}')
+parser.add_argument('--resume_train', action='store_true', default=True)
 args = parser.parse_args()
 
-# Set folders
 log_dir = args.log_dir
 data_folder = args.data_folder
 metric_file = args.metric_file
+resume_train = args.resume_train
 
 # load RankNet
 try:
@@ -64,12 +64,12 @@ except:
     print('setproctitle not installled,unavailable, or failed')
 
 rank_channel = 1
-rank_trained_on_mag = False
+rank_trained_on_mag = True
 BO = False
 
 logging.basicConfig(filename=os.path.join(log_dir,f'Recon_{Ntrial}.log'), filemode='w', level=logging.INFO)
 
-ranknet = L2cnn(channels_in=rank_channel, channel_base=2)
+ranknet = L2cnn(channels_in=rank_channel, channel_base=2, train_on_mag=rank_trained_on_mag)
 #ranknet = ISOResNet2(BasicBlock, [2,2,2,2], for_denoise=False)
 classifier = Classifier(ranknet)
 
@@ -79,6 +79,8 @@ classifier.eval()
 for param in classifier.parameters():
     param.requires_grad = False
 score = classifier.rank
+for param in score.parameters():
+    param.requires_grad = False
 score.cuda()
 
 file_train = 'ksp_truths_smaps_train_lzf.h5'
@@ -139,8 +141,8 @@ mask_gpu = sp.to_device(mask, spdevice)
 mask_torch = sp.to_pytorch(mask_gpu, requires_grad=False)
 
 # Data generator
-Ntrain = 20
-Nval = 2
+Ntrain = 1
+Nval = 1
 BATCH_SIZE = 1
 prefetch_data = True
 logging.info(f'Load train data from {data_folder}')
@@ -154,20 +156,44 @@ validationset = DataGeneratorRecon(data_folder, file_val, num_cases=Nval, rank_t
 loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=False)
 
 UNROLL = True
-if UNROLL:
-    denoiser = 'cnn_shortcut'
-    logging.info(f'denoiser is {denoiser}')
 
-    INNER_ITER = 1
-    #ReconModel = unrolledK(inner_iter=INNER_ITER, DENOISER=denoiser)
-    ReconModel = MoDL(inner_iter=INNER_ITER, DENOISER=denoiser)
-    logging.info(f'MoDL, inner iter = {INNER_ITER}')
+
+if resume_train:
+    try:
+        #recon_file = '/raid/DGXUserDataRaid/cxt004/NYUbrain/Recon6680_learned.pt'
+        recon_file = r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\Recon6680_learned.pt'
+        ReconModel = MoDL(inner_iter=5, DENOISER='unet')
+
+        state = torch.load(recon_file)
+        ReconModel.load_state_dict(state['state_dict'], strict=True)
+    except:
+        print('no recon model found')
 else:
-    NUM_CASCADES = 12
-    ReconModel = EEVarNet(num_cascades=NUM_CASCADES)
-    logging.info(f'EEVarNet, {NUM_CASCADES} cascades')
+    if UNROLL:
+        denoiser = 'unet'
+        logging.info(f'denoiser is {denoiser}')
+
+        INNER_ITER = 5
+        #ReconModel = unrolledK(inner_iter=INNER_ITER, DENOISER=denoiser)
+        ReconModel = MoDL(inner_iter=INNER_ITER, DENOISER=denoiser)
+        logging.info(f'MoDL, inner iter = {INNER_ITER}')
+    else:
+        NUM_CASCADES = 12
+        ReconModel = EEVarNet(num_cascades=NUM_CASCADES)
+        logging.info(f'EEVarNet, {NUM_CASCADES} cascades')
 ReconModel.cuda();
-#summary(ReconModel.denoiser, input_size=(1,768,396))
+
+LR = 1e-4
+# optimizer = optim.SGD(ReonModel.parameters(), lr=LR, momentum=0.9)
+optimizer = optim.Adam(ReconModel.parameters(), lr=LR)
+#scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=40, gamma=0.1)
+# if epochMSE != 0:
+#     lambda1 = lambda epoch: 1e1 if epoch<epochMSE else 1.0
+#     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda1)
+if resume_train:
+    optimizer.load_state_dict(state['optimizer'])
+
+
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 writer_train = SummaryWriter(os.path.join(log_dir,f'runs/recon/train_{Ntrial}'))
@@ -183,7 +209,8 @@ elif WHICH_LOSS == 'patchGAN':
 elif WHICH_LOSS == 'ssim':
     ssim_module = SSIM()
 
-Nepoch = 200
+
+Nepoch = 101
 epochMSE = 0
 logging.info(f'MSE for first {epochMSE} epochs then switch to learned')
 lossT = np.zeros(Nepoch)
@@ -192,13 +219,6 @@ lossV = np.zeros(Nepoch)
 out_name = os.path.join(log_dir,f'Images_training{Ntrial}_{WHICH_LOSS}.h5')
 print(f'Logging to {out_name}')
 
-LR = 1e-4
-# optimizer = optim.SGD(ReonModel.parameters(), lr=LR, momentum=0.9)
-optimizer = optim.Adam(ReconModel.parameters(), lr=LR)
-#scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=40, gamma=0.1)
-# if epochMSE != 0:
-#     lambda1 = lambda epoch: 1e1 if epoch<epochMSE else 1.0
-#     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda1)
 
 logging.info(f'Adam, lr = {LR}')
 logging.info('case averaged loss')
@@ -292,14 +312,23 @@ for epoch in range(Nepoch):
                 else:
                     imEst2 = ReconModel(kspaceU_sl, mask_torch, A_torch, Ah_torch, smaps_sl, mask_torch)
 
+                # crop to square
+                width = im_sl.shape[2]
+                height = im_sl.shape[1]
+                if width < 320:
+                    im_sl = im_sl[:, 160:480, :]
+                    imEst2 = imEst2[:, 160:480, :]
+                else:
+                    idxL = int((height - width) / 2)
+                    idxR = int(idxL + width)
+                    im_sl = im_sl[:, idxL:idxR, :]
+                    imEst2 = imEst2[:, idxL:idxR, :]
+
+                loss_mse_tensor = mseloss_fcn(imEst2, im_sl).detach()
                 if WHICH_LOSS == 'mse':
                     loss = mseloss_fcn(imEst2, im_sl)
                 elif WHICH_LOSS == 'ssim':
-                    imEst2_ep = torch.unsqueeze(imEst2, 0)
-                    imEst2_ep = imEst2_ep.permute(0,-1,1,2)
-                    im_sl_ep = torch.unsqueeze(im_sl, 0)
-                    im_sl_ep = im_sl_ep.permute(0, -1, 1, 2)
-                    loss = 1 - ssim(imEst2_ep, im_sl_ep)
+                    loss = 1 - ssim_module(torch.unsqueeze(imEst2,0), torch.unsqueeze(im_sl,0))
                 elif WHICH_LOSS == 'perceptual':
                     loss = loss_perceptual(imEst2, im_sl)
                 elif WHICH_LOSS == 'patchGAN':
@@ -307,10 +336,8 @@ for epoch in range(Nepoch):
                 else:
                     if epoch < epochMSE:
                         loss = mseloss_fcn(imEst2, im_sl) * 5e2
-                        loss_mse_tensor = loss.item()
                     else:
-                        loss = 1e-4 * learnedloss_fcn(imEst2, im_sl, score, rank_trained_on_mag=rank_trained_on_mag)
-                        loss_mse_tensor = mseloss_fcn(imEst2, im_sl).detach()
+                        loss = learnedloss_fcn(imEst2, im_sl, score, rank_trained_on_mag=rank_trained_on_mag)
 
                 loss.backward(retain_graph=True)
 
@@ -323,8 +350,7 @@ for epoch in range(Nepoch):
 
                 loss_avg += loss.detach().item()
                 train_avg.update(loss.detach().item())
-                if WHICH_LOSS != 'mse':
-                    train_avg_mse.update(loss_mse_tensor.detach().cpu().item())
+                train_avg_mse.update(loss_mse_tensor.detach().cpu().item())
 
                 del smaps_sl, kspaceU_sl, kspace_sl, im_sl
 
@@ -372,15 +398,14 @@ for epoch in range(Nepoch):
 
             # Get truth
             im_sl = sense_adjoint(smaps_sl, kspace_sl)
-            idxL = int((im_sl.shape[0] - im_sl.shape[1]) / 2)
-            idxR = int(idxL + im_sl.shape[1])
-            im_sl = im_sl[idxL:idxR, :]
+            imEst = torch.zeros_like(im_sl)
+
 
             #A_torch = sp.to_pytorch_function(A)
             #Ah_torch = sp.to_pytorch_function(Ah)
 
             #imEst = 0.0 * sp.to_pytorch(Ah * kspaceU_sl, requires_grad=False)
-            imEst = torch.zeros_like(im_sl)
+
             t = time.time()
             #kspaceU_sl = sp.to_pytorch(kspaceU_sl)
             if UNROLL:
@@ -388,14 +413,23 @@ for epoch in range(Nepoch):
             else:
                 imEst2 = ReconModel(kspaceU_sl, mask_torch, A_torch, Ah_torch)
 
+            # crop to square
+            width = im_sl.shape[2]
+            height = im_sl.shape[1]
+            if width < 320:
+                im_sl = im_sl[:,160:480, :]
+                imEst2 = imEst2[:,160:480, :]
+            else:
+                idxL = int((height - width) / 2)
+                idxR = int(idxL + width)
+                im_sl = im_sl[:,idxL:idxR, :]
+                imEst2 = imEst2[:,idxL:idxR, :]
+
+            loss_mse_tensor = mseloss_fcn(imEst2, im_sl).detach()
             if WHICH_LOSS == 'mse':
                 loss = mseloss_fcn(imEst2, im_sl)
             elif WHICH_LOSS == 'ssim':
-                imEst2_ep = torch.unsqueeze(imEst2, 0)
-                imEst2_ep = imEst2_ep.permute(0, -1, 1, 2)
-                im_sl_ep = torch.unsqueeze(im_sl, 0)
-                im_sl_ep = im_sl_ep.permute(0, -1, 1, 2)
-                loss = 1 - ssim(imEst2_ep, im_sl_ep)
+                loss = 1 - ssim_module(torch.unsqueeze(imEst2,0), torch.unsqueeze(im_sl,0))
             elif WHICH_LOSS == 'perceptual':
                 loss = loss_perceptual(imEst2, im_sl)
             elif WHICH_LOSS == 'patchGAN':
@@ -403,14 +437,11 @@ for epoch in range(Nepoch):
             else:
                 if epoch < epochMSE:
                     loss = mseloss_fcn(imEst2, im_sl) *5e2
-                    loss_mse_tensor = loss
                 else:
-                    loss_mse_tensor = mseloss_fcn(imEst2, im_sl).detach()
-                    loss = 1e-4 * learnedloss_fcn(imEst2, im_sl, score, rank_trained_on_mag=rank_trained_on_mag)
+                    loss = learnedloss_fcn(imEst2, im_sl, score, rank_trained_on_mag=rank_trained_on_mag)
 
             eval_avg.update(loss.detach().item(), n=BATCH_SIZE)
-            if WHICH_LOSS != 'mse':
-                eval_avg_mse.update(loss_mse_tensor.detach().cpu().item())
+            eval_avg_mse.update(loss_mse_tensor.detach().cpu().item())
 
             if WHICH_LOSS == 'learned':
                 with torch.no_grad():
@@ -418,13 +449,10 @@ for epoch in range(Nepoch):
                     loss_mseV.append(loss_mse_tensor.cpu())
 
             if i == 0 and sl == 4:
-                #truthplt = chan2_complex(torch.squeeze(im_sl.detach().cpu()))
                 truthplt = im_sl.detach().cpu()
-                #perturbed = Ah_torch.apply(kspaceU_sl)
                 perturbed = sense_adjoint(smaps_sl, kspaceU_sl)
-                #noisyplt = chan2_complex(perturbed.detach().cpu())
                 noisyplt = perturbed.detach().cpu()
-                noisyplt = noisyplt[idxL:idxR,:]
+                noisyplt = noisyplt[:, idxL:idxR,:]
                 del perturbed
                 imEstplt = imEst2.detach().cpu()
                 imEstfig = plt_recon(torch.squeeze(torch.abs(imEstplt)))
@@ -436,15 +464,17 @@ for epoch in range(Nepoch):
                     smaps_sl_gpu = sp.to_device(sp.from_pytorch(smaps_sl.cpu()), sp.Device(0))
                     imSense = sp.mri.app.SenseRecon(kspaceU_sl_gpu, smaps_sl_gpu, weights=mask_gpu, lamda=.01,
                                                     max_iter=20, device=spdevice).run()
-                    #imSense = imSense[idxL:idxR,:]
+                    imSense = imSense[idxL:idxR,:]
                     # L1-wavelet
                     imL1 = sp.mri.app.L1WaveletRecon(kspaceU_sl_gpu, smaps_sl_gpu, weights=mask_gpu, lamda=.001,
                                                      max_iter=20, device=spdevice).run()
-                    #imL1 = imL1[idxL:idxR,:]
+                    imL1 = imL1[idxL:idxR,:]
 
                 with h5py.File(out_name, 'a') as hf:
                     if epoch == 0:
                         hf.create_dataset(f"{epoch}_truth", data=np.squeeze(np.abs(truthplt.numpy())))
+                        hf.create_dataset(f"{epoch}_truth_re", data=np.squeeze(np.real(truthplt.numpy())))
+                        hf.create_dataset(f"{epoch}_truth_im", data=np.squeeze(np.imag(truthplt.numpy())))
                         hf.create_dataset(f"{epoch}_FT", data=np.squeeze(np.abs(noisyplt.numpy())))
                         hf.create_dataset(f"{epoch}_Sense", data=np.squeeze(np.abs(imSense.get())))
                         hf.create_dataset(f"{epoch}_L1", data=np.squeeze(np.abs(imL1.get())))
@@ -455,6 +485,9 @@ for epoch in range(Nepoch):
 
                     hf.create_dataset(f"p{epoch}_recon", data=np.squeeze(np.angle(imEstplt.numpy())))
                     hf.create_dataset(f"{epoch}_recon", data=np.squeeze(np.abs(imEstplt.numpy())))
+                    if epoch % 20 ==0:
+                        hf.create_dataset(f"{epoch}_recon_re", data=np.squeeze(np.real(imEstplt.numpy())))
+                        hf.create_dataset(f"{epoch}_recon_im", data=np.squeeze(np.imag(imEstplt.numpy())))
                 del truthplt, noisyplt, imEstplt
 
             del smaps_sl, kspaceU_sl, im_sl
@@ -509,3 +542,4 @@ for epoch in range(Nepoch):
     }
     torch.save(state, os.path.join(log_dir, f'Recon{Ntrial}_{WHICH_LOSS}.pt'))
 #
+import  ismrmrd

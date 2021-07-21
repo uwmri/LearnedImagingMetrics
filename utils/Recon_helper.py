@@ -300,7 +300,7 @@ def learnedloss_fcn(output, target, scoreModel, rank_trained_on_mag=False):
                 output_sl = torch.unsqueeze(output[sl], 0).permute(0,1,3,2)
                 target_sl = torch.unsqueeze(target[sl], 0).permute(0,1,3,2)
 
-            bias = scoreModel(target_sl, target_sl)
+            #bias = scoreModel(target_sl, target_sl)
             #delta_sl = torch.abs(scoreModel(output_sl, target_sl) - bias)
             delta_sl = scoreModel(output_sl, target_sl)
             delta += delta_sl
@@ -773,7 +773,7 @@ class MoDL(nn.Module):
         if DENOISER == 'unet':
             #self.denoiser =  MRI_UNet(in_channels=1, out_channels=1, f_maps=64,
             #     layer_order='cr', complex_kernel=False, complex_input=True)
-            self.denoiser = ComplexUNet2D(1, 1, depth=6, final_activation='none', f_maps=32, layer_order='cr')
+            self.denoiser = ComplexUNet2D(1, 1, depth=3, final_activation='none', f_maps=32, layer_order='cr')
         elif DENOISER == 'varnet':
             self.varnets = nn.ModuleList()
             for i in range(self.inner_iter):
@@ -843,7 +843,7 @@ class MoDL(nn.Module):
             # y_pred = y_pred.permute(0, -1, 1, 2).contiguous()
             # image_complex = image_complex.permute(0, -1, 1, 2).contiguous()
 
-            PAD=True
+            PAD=False
 
             if PAD:
                 # Pad to prevent edge effects, circular pad to keep image statistics

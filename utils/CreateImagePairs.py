@@ -101,7 +101,7 @@ def trans_motion(kspace, dir_motion=2, maxshift=10, prob=1, startPE=180,fix_shif
             startdir = np.random.randint(0,1)   # Always start in PE (column)
             if fix_shift:
                 #shift_bulk0 = (2 * np.random.randint(0, 2) - 1) * maxshift
-                shift_bulk0 = 0
+                shift_bulk0 = maxshift
                 shift_bulk1 = maxshift
                 #shift_bulk1 = (2 * np.random.randint(0, 2) - 1) * maxshift*0
             else:
@@ -129,6 +129,7 @@ def trans_motion(kspace, dir_motion=2, maxshift=10, prob=1, startPE=180,fix_shif
                 sigma_start = num_y/2*.075
                 if fix_shift:
                     start = np.random.randint(np.min(np.nonzero(input[0,0,:])), np.max(np.nonzero(input[0,0,:])))
+                    #start =np.max(np.nonzero(input[0,0,:]))-1
                 else:
                     start = np.int(np.floor(np.random.normal(mu_start, sigma_start)))
                 if fix_start:
@@ -139,7 +140,7 @@ def trans_motion(kspace, dir_motion=2, maxshift=10, prob=1, startPE=180,fix_shif
                 if start > central_rangeR:
                     logger.info(f'motion starts from column # {start} to the end')
                     for ii in range(num_x):
-                        for jj in range(start,num_y):
+                        for jj in range(start+1,num_y):
                             input[:, ii, jj] = input[:, ii, jj] * np.exp(
                                 -1j * 2 * np.pi * (shift_bulk0 * (1 / num_y) * (jj - num_y / 2) + shift_bulk1 *
                                                    (1 / num_x) * (ii - num_x / 2)))
@@ -182,14 +183,17 @@ def add_gaussian_noise(input, prob, kedge_len=30, level=1, mode=0,mean=0):
     # median: only use when mode=1. it is median|kedge|. dim = (coil,)
     sigma_real = 0
     sigma_imag = 0
-
+    midR = input.shape[1]//2     #center row
+    midC = input.shape[2] // 2
     # Using edge of ksp as sigma_estimated
-    # 395 is the center row after zero padding. Hard code for now
-    idx_1nz = next((i for i, x in enumerate(input[0, 395, :]) if x), None)  # index of first non-zero value
+    idx_1nz = next((i for i, x in enumerate(input[0, midR, :]) if x), None)  # index of first non-zero value
     idx_enz = input.shape[2] - idx_1nz + 1  # index of last non-zero value
 
-    kedgel = input[:, :, idx_1nz:idx_1nz + kedge_len]
-    kedge = np.concatenate((kedgel, input[:, :, idx_enz - kedge_len:idx_enz]), axis=2)
+    Ridx_1nz = next((i for i, x in enumerate(input[0, :,  midC]) if x), None)
+    Ridx_enz = input.shape[1] - Ridx_1nz + 1
+
+    kedgel = input[:, Ridx_1nz:Ridx_enz, idx_1nz:idx_1nz + kedge_len]
+    kedge = np.concatenate((kedgel, input[:, Ridx_1nz:Ridx_enz, idx_enz - kedge_len:idx_enz]), axis=2)
     kedge_real = np.real(kedge)
     kedge_imag = np.imag(kedge)
 

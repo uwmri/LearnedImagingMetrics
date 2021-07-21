@@ -6,6 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset
 from torchinfo import summary
+from utils.unet_components_complex import ComplexReLu, ZReLU, CReLu, modReLU, SReLU, CReLU_bias
 #from torchvision.models.mobilenet import _make_divisible, ConvBNReLU, InvertedResidual
 
 try:
@@ -210,43 +211,48 @@ class ComplexAvgPool(nn.Module):
 
 
 class L2cnnBlock(nn.Module):
-    def __init__(self, channels_in=64, channels_out=64, pool_rate=2, bias=False, batch_norm=False, activation=True):
+    def __init__(self, channels_in=64, channels_out=64, ndims=2, pool_rate=2, bias=False, norm=False,
+                 activation=True, train_on_mag=False):
         super(L2cnnBlock, self).__init__()
 
         if activation:
-            self.act_func = nn.ReLU(inplace=False)
+            if train_on_mag:
+                self.act_func = nn.ReLU(inplace=False)
+            else:
+                #self.act_func = ComplexReLu()
+                self.act_func = CReLU_bias(channels_in)
+                #self.act_func = modReLU(channels_in, ndims=ndims)
+
         else:
             self.act_func = nn.Identity()
 
-        if batch_norm:
+        if train_on_mag:
             self.conv1 = nn.Conv2d( channels_in, channels_out, kernel_size=3, padding=1, stride=1, bias=bias)
-            self.bn1 =  nn.BatchNorm2d(channels_out)
             self.conv2 = nn.Conv2d(channels_out, channels_out, kernel_size=3, padding=1, stride=1, bias=bias)
-            self.bn2 = nn.BatchNorm2d(channels_out)
             self.shortcut = nn.Conv2d( channels_in, channels_out, kernel_size=1, padding=0, stride=1, bias=bias)
+            self.pool = nn.AvgPool2d(pool_rate)
         else:
             self.conv1 = ComplexConv2d(channels_in, channels_out, kernel_size=3, padding=1, stride=1, bias=bias)
             self.conv2 = ComplexConv2d(channels_out, channels_out, kernel_size=3, padding=1, stride=1, bias=bias)
             self.shortcut = ComplexConv2d(channels_in, channels_out, kernel_size=1, padding=0, stride=1, bias=bias)
-            self.bn1 = VarNorm2d(channels_out)
-            self.bn2 = VarNorm2d(channels_out)
+            self.pool = ComplexAvgPool(pool_rate)
+        self.bn1 = VarNorm2d(channels_out)
+        self.bn2 = VarNorm2d(channels_out)
 
-
-        self.pool = ComplexAvgPool(pool_rate)
-        self.batch_norm = batch_norm
+        self.norm = norm
 
     def forward(self,x):
 
         shortcut = self.shortcut(x)
         x = self.conv1(x)
-        #x = self.bn1(x)
-        # x = self.act_func(x) + self.act_func(x)
-        x = self.act_func(x.real) + 1j* self.act_func(x.imag)
+        if self.norm:
+            x = self.bn1(x)
+        x = self.act_func(x)
         x = self.conv2(x)
-        #x = self.bn2(x)
+        if self.norm:
+            x = self.bn2(x)
         x = x + shortcut
-        # x = self.act_func(x) + self.act_func(x)
-        x = self.act_func(x.real) + 1j* self.act_func(x.imag)
+        x = self.act_func(x)
         x = self.pool(x)
         return x
 
@@ -261,24 +267,26 @@ class saveOutputs():
         self.outputs = []
 
 class L2cnn(nn.Module):
-    def __init__(self, channel_base=32, channels_in=1,  channel_scale=1, group_depth=5, bias=False, init_scale=1.0):
+    def __init__(self, channel_base=32, channels_in=1,  channel_scale=1, group_depth=5, bias=False, init_scale=1.0,
+                 train_on_mag=False):
 
         super(L2cnn, self).__init__()
         pool_rate = 2
         channels_out = channel_base
-
+        self.train_on_mag=train_on_mag
         # Connect to output using a linear combination
-        self.weight_mse = torch.nn.Parameter(torch.tensor([1.0]).view(1,1))
-        self.weight_cnn = torch.nn.Parameter(torch.tensor([1.0]).view(1, 1))
-        self.weight_ssim = torch.nn.Parameter(torch.tensor([1.0]).view(1, 1))
-        self.scale_weight = nn.Parameter(torch.ones([group_depth]), requires_grad=True)
-        self.ssim_op = SSIM( window_size=11, size_average=False, val_range=1)
+        # self.weight_mse = torch.nn.Parameter(torch.tensor([1.0]).view(1,1))
+        # self.weight_cnn = torch.nn.Parameter(torch.tensor([1.0]).view(1, 1))
+        # self.weight_ssim = torch.nn.Parameter(torch.tensor([1.0]).view(1, 1))
+        # self.scale_weight = nn.Parameter(torch.ones([group_depth]), requires_grad=True)
+        # self.ssim_op = SSIM( window_size=11, size_average=False, val_range=1)
         #self.scale = nn.Parameter(torch.FloatTensor(init_scale* torch.ones([2])), requires_grad=True)
 
         self.layers = nn.ModuleList()
         for block in range(group_depth):
 
-            self.layers.append(L2cnnBlock(channels_in, channels_out, pool_rate, bias=bias, activation=True))
+            self.layers.append(L2cnnBlock(channels_in, channels_out, pool_rate, bias=bias, activation=True,
+                                          train_on_mag=self.train_on_mag))
 
             # Update channels
             channels_in = channels_out
@@ -298,7 +306,10 @@ class L2cnn(nn.Module):
         # for i in range(2):
         #     input[:, i, :, :] *= self.scale[i]
 
-        diff_mag = input - truth
+        if self.train_on_mag:
+            diff_mag = torch.abs(input - truth)
+        else:
+            diff_mag = input - truth
 
         # Convolutional pathway with MSE at multiple scales
         for l in self.layers:
@@ -516,8 +527,23 @@ class ResNet2(nn.Module):
 #     def forward(self, x):
 #         return self._forward_impl(x)
 
+def add_phase_im(image, kshift_max=40):
+    """
+    Add linear phase in PE direction by modulating the image. Note that the added phase cannpt be undone precisely
+    when the dataset is zero-padded.
+    :param image: (ch, h, w) array
+    :param kshift_max: in pixel
+    :return: image (ch, h, w)
+    """
+    kshift = np.random.randint(-kshift_max, kshift_max)
+    im_addedPhase = np.zeros_like(image)
+    num_PE = image.shape[-1]
+    for ii in range(num_PE):
+        im_addedPhase[:,:,ii] = image[:,:,ii] * np.exp(1j * 2 * np.pi * kshift * (ii - num_PE//2) / num_PE)
+    return im_addedPhase
 
-def sigpy_image_rotate2( image, theta, verbose=False, device=sp.Device(0)):
+
+def sigpy_image_rotate2(image, theta, verbose=False, device=sp.Device(0)):
     """
     SIgpy based 2D image rotation
     Args:
@@ -711,7 +737,7 @@ def sigpy_image_rotate3( image, theta, verbose=False, device=sp.Device(0), crop=
 
 class DataGenerator_rank(Dataset):
     def __init__(self, X_1, X_2, X_T, Y, ID, augmentation=False,  roll_magL=-15, roll_magH=15,
-                 crop_sizeL=1, crop_sizeH=15, scale_min=0.2, scale_max=2.0, device=sp.Device(0), pad_channels=0):
+                 crop_sizeL=1, crop_sizeH=15, scale_min=0.2, scale_max=2.0, kshift_max=40,device=sp.Device(0), pad_channels=0):
 
         '''
         :param X_1: X_1_cnnT/V
@@ -737,22 +763,28 @@ class DataGenerator_rank(Dataset):
         self.scale_min = scale_min
         self.scale_max = scale_max
         self.device = device
+        self.kshift_max = kshift_max
 
     def __len__(self):
         return len(self.ID)
 
     def __getitem__(self, idx):
+        xp = self.device.xp
 
         if self.augmentation:
             FLIP = np.ndarray.item(np.random.choice([False, True], size=1, p=[0.5, 0.5]))
             scale = np.random.random()*(self.scale_max-self.scale_min) + self.scale_min
             ROT = True
             ROLL = True
+            LPHASE = True
         else:
             FLIP = False
             ROT = False
             ROLL = False
+            LPHASE = False
             scale = 1.0
+
+        y = self.Y[idx]
 
         IDnum = self.ID[idx]
         x1 = scale * self.X_1[IDnum, ...].copy()
@@ -769,7 +801,14 @@ class DataGenerator_rank(Dataset):
             angle = math.pi*(1- 2.0*np.random.rand())
             x1, x2, xt = sigpy_image_rotate2( [x1, x2, xt], angle, device=self.device)
 
-        xp = self.device.xp
+        # Add linear phase to the 'bad' image
+        if LPHASE:
+            if y == 0:
+                x1 = add_phase_im(x1, kshift_max=self.kshift_max)
+            elif y== 2:
+                x2 = add_phase_im(x2, kshift_max=self.kshift_max)
+            else:
+                pass
 
         # flip
         if FLIP:
@@ -793,15 +832,6 @@ class DataGenerator_rank(Dataset):
         x1 = sp.to_pytorch(x1, requires_grad=False)
         x2 = sp.to_pytorch(x2, requires_grad=False)
         xt = sp.to_pytorch(xt, requires_grad=False)
-
-        # # make images 3 channel.
-        # zeros = torch.zeros(((1,) + x1.shape[1:]), dtype=x1.dtype, device=x1.get_device())
-        # for i in range(self.pad_channels):
-        #     x1 = torch.cat((x1, zeros), dim=0)
-        #     x2 = torch.cat((x2, zeros), dim=0)
-        #     xt = torch.cat((xt, zeros), dim=0)
-
-        y = self.Y[idx]
 
         return x1, x2, xt, y
 
@@ -897,17 +927,6 @@ def get_class_weights(labels):
     return weights.cuda()
 
 
-class SReLU(nn.Module):
-    """Shifted ReLU"""
-
-    def __init__(self, nc):
-        super(SReLU, self).__init__()
-        self.srelu_bias = nn.Parameter(torch.Tensor(1, nc, 1, 1))
-        self.srelu_relu = nn.ReLU(inplace=True)
-        nn.init.constant_(self.srelu_bias, -1.0)
-
-    def forward(self, x):
-        return self.srelu_relu(x - self.srelu_bias) + self.srelu_bias
 
 
 
