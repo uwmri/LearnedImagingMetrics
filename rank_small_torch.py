@@ -11,9 +11,15 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 import torch
 import argparse
+import os
 
+os.environ["CUPY_CACHE_SAVE_CUDA_SOURCE"] = "1"
+os.environ["CUPY_DUMP_CUDA_SOURCE_ON_ERROR"] = "1"
+
+from random import randrange
+Ntrial = randrange(10000)
 parser = argparse.ArgumentParser()
-parser.add_argument('--pname', type=str, default=f'learned_ranking')
+parser.add_argument('--pname', type=str, default=f'learned_ranking_{Ntrial}')
 parser.add_argument('--dgx', action='store_true', default=False)
 parser.add_argument('--file_csv', type=str, default=Path(r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\consensus_mode_all.csv'))
 parser.add_argument('--file_images', type=str, default=Path(r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\TRAINING_IMAGES_04032020.h5'))
@@ -39,7 +45,7 @@ if DGX:
 from utils.model_helper import *
 from utils.utils_DL import *
 
-train_on_mag = True
+train_on_mag = False
 shuffle_observers = False
 MOBILE = False
 EFF = False
@@ -157,14 +163,14 @@ if MOBILE:
         if i % 1e2 == 0:
             print(f'Normalizing pairs {i + 1}')
 
-from random import randrange
-Ntrial = randrange(10000)
+
+
 log_dir = os.path.dirname(args.file_images)
 logging.basicConfig(filename=os.path.join(log_dir,f'runs/rank/ranking_{Ntrial}.log'), filemode='w', level=logging.INFO)
 logging.info('With ISOresnet classifier')
 logging.info(f'{Ntrial}')
 
-CV = 4
+CV = 2
 CV_fold = 5
 logging.info(f'{CV_fold} fold cross validation {CV}')
 ntrain = int(0.8 * NRANKS)
@@ -321,7 +327,7 @@ writer_val = SummaryWriter(os.path.join(log_dir,f'runs/rank/val_{Ntrial}'))
 
 score_mse_file = os.path.join(f'score_mse_file_{Ntrial}.h5')
 
-Nepoch = 1
+Nepoch = 1001
 lossT = np.zeros(Nepoch)
 lossV = np.zeros(Nepoch)
 
@@ -391,6 +397,10 @@ for epoch in range(Nepoch):
 
         # get the inputs
         im1, im2, imt, labels = data             # im (sl, ch , 396, 396)
+        # showsl = np.random.randint(BATCH_SIZE)
+        # plt.imshow(np.angle(im1[showsl,0,...].numpy())); plt.show()
+        # plt.imshow(np.angle(im2[showsl, 0, ...].numpy())); plt.show()
+        # plt.imshow(np.angle(imt[showsl, 0, ...].numpy())); plt.show()
         im1, im2, imt = im1.cuda(), im2.cuda(), imt.cuda()
         labels = labels.to(device, dtype=torch.long)
 

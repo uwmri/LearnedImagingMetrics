@@ -29,7 +29,7 @@ class SReLU(nn.Module):
         super(SReLU, self).__init__()
         self.srelu_bias = nn.Parameter(torch.Tensor(1, nc, 1, 1))
         self.srelu_relu = nn.ReLU(inplace=True)
-        nn.init.constant_(self.srelu_bias, -1.0)
+        nn.init.constant_(self.srelu_bias, 0.0)
 
     def forward(self, x):
         return self.srelu_relu(x - self.srelu_bias) + self.srelu_bias
@@ -38,14 +38,16 @@ class SReLU(nn.Module):
 class CReLU_bias(nn.Module):
     def __init__(self, nc):
         super(CReLU_bias, self).__init__()
+        #self.act_func = SReLU(nc)
         self.srelu_bias = nn.Parameter(torch.Tensor(1, nc, 1, 1))
         self.srelu_relu = nn.ReLU(inplace=False)
-        nn.init.constant_(self.srelu_bias, -1.0)
+        nn.init.constant_(self.srelu_bias, 0.0)
 
     def forward(self, x):
+        #return self.act_func(x.real) + 1j*self.act_func(x.imag)
         activated_re = self.srelu_relu(x.real - self.srelu_bias) + self.srelu_bias
         activated_im = self.srelu_relu(x.imag - self.srelu_bias) + self.srelu_bias
-        return activated_re + 1j*activated_im
+        return activated_re + 1j * activated_im
 
 
 class ZReLU(nn.Module):

@@ -1,5 +1,5 @@
 from scipy import ndimage
-
+import cupy as cp
 import torch
 #from torchvision.models.resnet import BasicBlock, Bottleneck, conv1x1
 import torch.nn as nn
@@ -24,6 +24,8 @@ import torch.nn.functional as F
 from math import exp
 import numpy as np
 
+os.environ["CUPY_CACHE_SAVE_CUDA_SOURCE"] = "1"
+os.environ["CUPY_DUMP_CUDA_SOURCE_ON_ERROR"] = "1"
 
 def gaussian(window_size, sigma):
     gauss = torch.Tensor([exp(-(x - window_size // 2) ** 2 / float(2 * sigma ** 2)) for x in range(window_size)])
@@ -220,7 +222,8 @@ class L2cnnBlock(nn.Module):
                 self.act_func = nn.ReLU(inplace=False)
             else:
                 #self.act_func = ComplexReLu()
-                self.act_func = CReLU_bias(channels_in)
+                #self.act_func = CReLU_bias(channels_in)
+                self.act_func = SReLU(channels_in)
                 #self.act_func = modReLU(channels_in, ndims=ndims)
 
         else:
@@ -247,12 +250,12 @@ class L2cnnBlock(nn.Module):
         x = self.conv1(x)
         if self.norm:
             x = self.bn1(x)
-        x = self.act_func(x)
+        x = self.act_func(x.real) + 1j* self.act_func(x.imag)
         x = self.conv2(x)
         if self.norm:
             x = self.bn2(x)
         x = x + shortcut
-        x = self.act_func(x)
+        x = self.act_func(x.real) + 1j* self.act_func(x.imag)
         x = self.pool(x)
         return x
 
@@ -527,19 +530,41 @@ class ResNet2(nn.Module):
 #     def forward(self, x):
 #         return self._forward_impl(x)
 
-def add_phase_im(image, kshift_max=40):
+
+mod_cuda = """
+__device__ inline int mod(int x, int n) {
+    return (x % n + n) % n;
+}
+"""
+
+image_modulation = cp.ElementwiseKernel(
+    'T im, raw T mod_amount','T im_mod', """    
+    const int width = mod_amount.shape()[-1];
+    const int idx = mod(i, width);    
+    im_mod = (T) im * mod_amount[idx];
+    """,
+    'image_modulation',
+    preamble=mod_cuda
+)
+
+def add_phase_im(image, kshift):
     """
-    Add linear phase in PE direction by modulating the image. Note that the added phase cannpt be undone precisely
+    Add linear phase in PE direction by modulating the image.
+    Note that the added phase cannpt be undone precisely
     when the dataset is zero-padded.
-    :param image: (ch, h, w) array
+    :param image: (ch, h, w) cupy array
     :param kshift_max: in pixel
-    :return: image (ch, h, w)
+    :return: image (ch, h, w) cupy array
     """
-    kshift = np.random.randint(-kshift_max, kshift_max)
-    im_addedPhase = np.zeros_like(image)
+    # kshift = np.random.randint(-kshift_max, kshift_max)
     num_PE = image.shape[-1]
-    for ii in range(num_PE):
-        im_addedPhase[:,:,ii] = image[:,:,ii] * np.exp(1j * 2 * np.pi * kshift * (ii - num_PE//2) / num_PE)
+    mod_amount = cp.exp(1j * 2 * np.pi * kshift * (cp.arange(0,num_PE) - num_PE//2) / num_PE)
+    mod_amount = mod_amount.astype(image.dtype)
+    # for ii in range(num_PE):
+    #     im_addedPhase[:,:,ii] = image[:,:,ii] * np.exp(1j * 2 * np.pi * kshift * (ii - num_PE//2) / num_PE)
+    im_flat = image.flatten()
+    im_addedPhase = image_modulation(im_flat, mod_amount)
+    im_addedPhase = im_addedPhase.reshape(image.shape)
     return im_addedPhase
 
 
@@ -737,7 +762,7 @@ def sigpy_image_rotate3( image, theta, verbose=False, device=sp.Device(0), crop=
 
 class DataGenerator_rank(Dataset):
     def __init__(self, X_1, X_2, X_T, Y, ID, augmentation=False,  roll_magL=-15, roll_magH=15,
-                 crop_sizeL=1, crop_sizeH=15, scale_min=0.2, scale_max=2.0, kshift_max=40,device=sp.Device(0), pad_channels=0):
+                 crop_sizeL=1, crop_sizeH=15, scale_min=0.2, scale_max=2.0, kshift_max=10,device=sp.Device(0), pad_channels=0):
 
         '''
         :param X_1: X_1_cnnT/V
@@ -784,8 +809,6 @@ class DataGenerator_rank(Dataset):
             LPHASE = False
             scale = 1.0
 
-        y = self.Y[idx]
-
         IDnum = self.ID[idx]
         x1 = scale * self.X_1[IDnum, ...].copy()
         x2 = scale * self.X_2[IDnum, ...].copy()
@@ -803,12 +826,16 @@ class DataGenerator_rank(Dataset):
 
         # Add linear phase to the 'bad' image
         if LPHASE:
-            if y == 0:
-                x1 = add_phase_im(x1, kshift_max=self.kshift_max)
-            elif y== 2:
-                x2 = add_phase_im(x2, kshift_max=self.kshift_max)
-            else:
-                pass
+            # if y == 0:
+            #     x1 = add_phase_im(x1, kshift_max=self.kshift_max)
+            # elif y== 2:
+            #     x2 = add_phase_im(x2, kshift_max=self.kshift_max)
+            # else:
+            #     pass
+            kshift = np.random.randint(-self.kshift_max, self.kshift_max)
+            x1 = add_phase_im(x1, kshift=kshift)
+            x2 = add_phase_im(x2, kshift=kshift)
+            xt = add_phase_im(xt, kshift=kshift)
 
         # flip
         if FLIP:
@@ -832,6 +859,8 @@ class DataGenerator_rank(Dataset):
         x1 = sp.to_pytorch(x1, requires_grad=False)
         x2 = sp.to_pytorch(x2, requires_grad=False)
         xt = sp.to_pytorch(xt, requires_grad=False)
+
+        y = self.Y[idx]
 
         return x1, x2, xt, y
 

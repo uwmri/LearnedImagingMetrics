@@ -41,7 +41,7 @@ parser.add_argument('--data_folder', type=str,
                     default=r'I:\NYUbrain',
                     help='Data path')
 parser.add_argument('--metric_file', type=str,
-                    default=r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\RankClassifier4187.pt',
+                    default=r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\rank_trained_L2cnn\RankClassifier5144.pt',
                     help='Name of learned metric file')
 parser.add_argument('--log_dir', type=str,
                     default=r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020',
@@ -64,7 +64,7 @@ except:
     print('setproctitle not installled,unavailable, or failed')
 
 rank_channel = 1
-rank_trained_on_mag = True
+rank_trained_on_mag = False
 BO = False
 
 logging.basicConfig(filename=os.path.join(log_dir,f'Recon_{Ntrial}.log'), filemode='w', level=logging.INFO)
@@ -199,7 +199,7 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 writer_train = SummaryWriter(os.path.join(log_dir,f'runs/recon/train_{Ntrial}'))
 writer_val = SummaryWriter(os.path.join(log_dir,f'runs/recon/val_{Ntrial}'))
 
-WHICH_LOSS = 'learned'
+WHICH_LOSS = 'mse'
 if WHICH_LOSS == 'perceptual':
     loss_perceptual = PerceptualLoss_VGG16()
     loss_perceptual.cuda()

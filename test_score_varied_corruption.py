@@ -16,7 +16,7 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 filepath_rankModel = Path(r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\rank_trained_L2cnn')
 filepath_train = Path("I:/NYUbrain")
 filepath_val = Path("I:/NYUbrain")
-file_rankModel = os.path.join(filepath_rankModel, "RankClassifier5144.pt")
+file_rankModel = os.path.join(filepath_rankModel, "RankClassifier303.pt")
 log_dir = filepath_rankModel
 
 rank_channel =1
@@ -38,7 +38,7 @@ test_folder = Path("D:/NYUbrain/brain_multicoil_test/multicoil_test")
 files = find("*.h5", train_folder)
 
 #CORRUPTIONS = ['% PE Motion Corrupted','Total shift (pixels)', 'Gaussian noise level(a.u.)', '% random undersampling', '% PE removed randomly']
-CORRUPTIONS = ['% PE Motion Corrupted']
+CORRUPTIONS = ['Linear phase (pixel)']
 SAME_IMAGE = '(the same image)'
 # out_name = os.path.join(f'corrupted_images_{WHICH_CORRUPTION}.h5')
 # try:
@@ -47,15 +47,16 @@ SAME_IMAGE = '(the same image)'
 #     pass
 
 Ntrials = 500
-Nxmax = 320
-Nymax = 640
-#Nxmax = 396
-#Nymax = 768
+# Nxmax = 320
+# Nymax = 640
+Nxmax = 396
+Nymax = 768
 count = 0
 
 
 #for index_file in range(1):
-file = 'D:\\NYUbrain\\brain_multicoil_train\\multicoil_train\\file_brain_AXT1PRE_205_6000160.h5'
+#file = 'D:\\NYUbrain\\brain_multicoil_train\\multicoil_train\\file_brain_AXT1PRE_205_6000160.h5'
+file = 'D:\\NYUbrain\\brain_multicoil_train\\multicoil_train\\file_brain_AXT2_210_6001532.h5'
 #while count == 0:
 
     # file = files[np.random.randint(len(os.listdir(train_folder)))]
@@ -120,7 +121,11 @@ for WHICH_CORRUPTION in CORRUPTIONS:
     corruption_magList = []
     for i in range(Ntrials):
 
-        # Get corrupted
+        if WHICH_CORRUPTION =='Linear phase (pixel)':
+            kshift_max=40
+            corruption_mag = np.random.randint(-kshift_max, kshift_max)
+            ksp2 = np.roll(ksp_full, corruption_mag, axis=-1)
+
         if WHICH_CORRUPTION == '% PE Motion Corrupted':
             # corruption_mag is from which PE line the motion started/total PEs
             maxshift=20
