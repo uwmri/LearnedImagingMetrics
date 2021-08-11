@@ -223,8 +223,9 @@ class L2cnnBlock(nn.Module):
             else:
                 #self.act_func = ComplexReLu()
                 #self.act_func = CReLU_bias(channels_in)
-                self.act_func = SReLU(channels_in)
                 #self.act_func = modReLU(channels_in, ndims=ndims)
+                self.act_func = SReLU(channels_in)
+                #self.act_func = nn.LeakyReLU(negative_slope=0.01, inplace=False)
 
         else:
             self.act_func = nn.Identity()
@@ -285,6 +286,7 @@ class L2cnn(nn.Module):
         # self.ssim_op = SSIM( window_size=11, size_average=False, val_range=1)
         #self.scale = nn.Parameter(torch.FloatTensor(init_scale* torch.ones([2])), requires_grad=True)
 
+        #self.mse_module = MSEmodule()
         self.layers = nn.ModuleList()
         for block in range(group_depth):
 
@@ -320,8 +322,12 @@ class L2cnn(nn.Module):
         # print(f'diff_mag shape {diff_mag.shape}') # [64, 32, 1, 1]
         cnn_score = self.layer_mse(diff_mag)    #(64, 1)
 
+        # mse = self.mse_module(input, truth)
+        # scale = torch.sum(mse.T * cnn_score) / torch.sum(mse.T * mse)
+        # mse = mse * scale
+
         # Combine scores
-        #score = torch.abs(self.weight_ssim)*ssim + torch.abs(self.weight_mse)*mse + torch.abs(self.weight_cnn)*cnn_score
+        # score = cnn_score + mse
         score = cnn_score
 
         return score
@@ -802,11 +808,13 @@ class DataGenerator_rank(Dataset):
             ROT = True
             ROLL = True
             LPHASE = True
+            CONSTPHASE = False
         else:
             FLIP = False
             ROT = False
             ROLL = False
             LPHASE = False
+            CONSTPHASE = False
             scale = 1.0
 
         IDnum = self.ID[idx]
@@ -836,6 +844,12 @@ class DataGenerator_rank(Dataset):
             x1 = add_phase_im(x1, kshift=kshift)
             x2 = add_phase_im(x2, kshift=kshift)
             xt = add_phase_im(xt, kshift=kshift)
+
+        if CONSTPHASE:
+            phi0 = (2*np.random.random_sample()-1) * np.pi
+            x1 = x1 * phi0
+            x2 = x2 * phi0
+            xt = xt * phi0
 
         # flip
         if FLIP:
@@ -872,7 +886,7 @@ class MSEmodule(nn.Module):
     def forward(self, x, truth):
         y = torch.abs(x - truth)
         y = y.view(y.shape[0], -1)
-        truth = truth.view(truth.shape[0], -1)
+        # truth = truth.view(truth.shape[0], -1)
         return torch.sum(y**2, dim=1, keepdim=True)**0.5
 
 

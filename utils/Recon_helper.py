@@ -253,7 +253,7 @@ def loss_fcn_onenet(noisy, output, target, projector, encoder, discriminator, di
 
 
 # learned metrics loss
-def learnedloss_fcn(output, target, scoreModel, rank_trained_on_mag=False):
+def learnedloss_fcn(output, target, scoreModel, rank_trained_on_mag=False, augmentation=False):
 
     if output.ndim == 2:
         output = output.unsqueeze(0).unsqueeze(0)
@@ -291,7 +291,7 @@ def learnedloss_fcn(output, target, scoreModel, rank_trained_on_mag=False):
     delta = 0
     for sl in range(Nslice):
 
-        for do_trans in [True, False]:
+        for do_trans in [False]:
 
             if do_trans:
                 output_sl = torch.unsqueeze(output[sl], 0)
@@ -305,30 +305,47 @@ def learnedloss_fcn(output, target, scoreModel, rank_trained_on_mag=False):
             delta_sl = scoreModel(output_sl, target_sl)
             delta += delta_sl
 
-            # Flip Up/Dn
-            output_sl2 = torch.flip(output_sl, dims=(-1,))
-            target_sl2 = torch.flip(target_sl, dims=(-1,))
-            #delta_sl = torch.abs(scoreModel(output_sl2, target_sl2) - bias)
-            delta_sl = scoreModel(output_sl2, target_sl2)
-            delta += delta_sl
+            if augmentation:
+                # Flip Up/Dn
+                output_sl2 = torch.flip(output_sl, dims=(-1,))
+                target_sl2 = torch.flip(target_sl, dims=(-1,))
+                #delta_sl = torch.abs(scoreModel(output_sl2, target_sl2) - bias)
+                delta_sl = scoreModel(output_sl2, target_sl2)
+                delta += delta_sl
 
-            # Flip L/R
-            output_sl2 = torch.flip(output_sl, dims=(-2,))
-            target_sl2 = torch.flip(target_sl, dims=(-2,))
-            #delta_sl = torch.abs(scoreModel(output_sl2, target_sl2) - bias)
-            delta_sl = scoreModel(output_sl2, target_sl2)
-            delta += delta_sl
+                # Flip L/R
+                output_sl2 = torch.flip(output_sl, dims=(-2,))
+                target_sl2 = torch.flip(target_sl, dims=(-2,))
+                #delta_sl = torch.abs(scoreModel(output_sl2, target_sl2) - bias)
+                delta_sl = scoreModel(output_sl2, target_sl2)
+                delta += delta_sl
 
-            # Flip Both
-            output_sl2 = torch.flip(output_sl, dims=(-2,-1))
-            target_sl2 = torch.flip(target_sl, dims=(-2,-1))
-            #delta_sl = torch.abs(scoreModel(output_sl2, target_sl2) - bias)
-            delta_sl = scoreModel(output_sl2, target_sl2)
-            delta += delta_sl
+                # Flip Both
+                output_sl2 = torch.flip(output_sl, dims=(-2,-1))
+                target_sl2 = torch.flip(target_sl, dims=(-2,-1))
+                #delta_sl = torch.abs(scoreModel(output_sl2, target_sl2) - bias)
+                delta_sl = scoreModel(output_sl2, target_sl2)
+                delta += delta_sl
+
+                # Shift
+                nshift = 1
+                if np.random.randint(2)==0:
+                    sign = 2*np.random.randint(2)-1
+                    output_sl2 = torch.roll(output_sl, nshift*sign, dims=-1)
+                    target_sl2 = torch.roll(target_sl, nshift*sign, dims=-1)
+                    delta_sl = scoreModel(output_sl2, target_sl2)
+                    delta += delta_sl
+                else:
+                    sign = 2 * np.random.randint(2) - 1
+                    output_sl2 = torch.roll(output_sl, nshift * sign, dims=-2)
+                    target_sl2 = torch.roll(target_sl, nshift * sign, dims=-2)
+                    delta_sl = scoreModel(output_sl2, target_sl2)
+                    delta += delta_sl
 
 
         #torch.cuda.empty_cache()
-    delta /= Nslice * 8
+    delta /= Nslice
+    # delta /= Nslice * 8
     return delta
 
 
@@ -773,7 +790,7 @@ class MoDL(nn.Module):
         if DENOISER == 'unet':
             #self.denoiser =  MRI_UNet(in_channels=1, out_channels=1, f_maps=64,
             #     layer_order='cr', complex_kernel=False, complex_input=True)
-            self.denoiser = ComplexUNet2D(1, 1, depth=3, final_activation='none', f_maps=32, layer_order='cr')
+            self.denoiser = ComplexUNet2D(1, 1, depth=3, final_activation='none', f_maps=64, layer_order='cr')
         elif DENOISER == 'varnet':
             self.varnets = nn.ModuleList()
             for i in range(self.inner_iter):

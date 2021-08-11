@@ -41,13 +41,13 @@ parser.add_argument('--data_folder', type=str,
                     default=r'I:\NYUbrain',
                     help='Data path')
 parser.add_argument('--metric_file', type=str,
-                    default=r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\rank_trained_L2cnn\RankClassifier5144.pt',
+                    default=r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\rank_trained_L2cnn\RankClassifier9631.pt',
                     help='Name of learned metric file')
 parser.add_argument('--log_dir', type=str,
                     default=r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020',
                     help='Directory to log files')
 parser.add_argument('--pname', type=str, default=f'chenwei_recon_{Ntrial}')
-parser.add_argument('--resume_train', action='store_true', default=True)
+parser.add_argument('--resume_train', action='store_true', default=False)
 args = parser.parse_args()
 
 log_dir = args.log_dir
@@ -69,7 +69,7 @@ BO = False
 
 logging.basicConfig(filename=os.path.join(log_dir,f'Recon_{Ntrial}.log'), filemode='w', level=logging.INFO)
 
-ranknet = L2cnn(channels_in=rank_channel, channel_base=2, train_on_mag=rank_trained_on_mag)
+ranknet = L2cnn(channels_in=rank_channel, channel_base=8, train_on_mag=rank_trained_on_mag)
 #ranknet = ISOResNet2(BasicBlock, [2,2,2,2], for_denoise=False)
 classifier = Classifier(ranknet)
 
@@ -141,7 +141,7 @@ mask_gpu = sp.to_device(mask, spdevice)
 mask_torch = sp.to_pytorch(mask_gpu, requires_grad=False)
 
 # Data generator
-Ntrain = 1
+Ntrain = 9
 Nval = 1
 BATCH_SIZE = 1
 prefetch_data = True
@@ -183,7 +183,7 @@ else:
         logging.info(f'EEVarNet, {NUM_CASCADES} cascades')
 ReconModel.cuda();
 
-LR = 1e-4
+LR = 1e-6
 # optimizer = optim.SGD(ReonModel.parameters(), lr=LR, momentum=0.9)
 optimizer = optim.Adam(ReconModel.parameters(), lr=LR)
 #scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=40, gamma=0.1)
@@ -199,7 +199,7 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 writer_train = SummaryWriter(os.path.join(log_dir,f'runs/recon/train_{Ntrial}'))
 writer_val = SummaryWriter(os.path.join(log_dir,f'runs/recon/val_{Ntrial}'))
 
-WHICH_LOSS = 'mse'
+WHICH_LOSS = 'learned'
 if WHICH_LOSS == 'perceptual':
     loss_perceptual = PerceptualLoss_VGG16()
     loss_perceptual.cuda()
@@ -210,7 +210,7 @@ elif WHICH_LOSS == 'ssim':
     ssim_module = SSIM()
 
 
-Nepoch = 101
+Nepoch = 1201
 epochMSE = 0
 logging.info(f'MSE for first {epochMSE} epochs then switch to learned')
 lossT = np.zeros(Nepoch)

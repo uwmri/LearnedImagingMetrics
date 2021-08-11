@@ -105,9 +105,8 @@ class ComplexLeakyReLu(nn.Module):
         self.inplace = inplace
 
     def forward(self, input):
-        mag = torch.abs(input)
-        return torch.nn.functional.leaky_relu(mag, negative_slope=0.1, inplace=self.inplace).type(torch.complex64)/(mag+1e-6)*input
-
+        return torch.nn.functional.leaky_relu(input.real, negative_slope=0.01, inplace=self.inplace) + \
+               1j*torch.nn.functional.leaky_relu(input.imag, negative_slope=0.01, inplace=self.inplace)
 
 class ComplexELU(nn.Module):
     def __init__(self,  inplace=False):
@@ -158,6 +157,15 @@ class ComplexConvTranspose2d(nn.Module):
         else:
             return self.conv_r(input.real) + 1j * self.conv_r(input.imag)
 
+
+class ComplexUpsamplingBilinear2d(nn.Module):
+    def __init__(self, scale_factor):
+        super(ComplexUpsamplingBilinear2d, self).__init__()
+
+        self.bilinear = nn.UpsamplingBilinear2d(scale_factor=scale_factor)
+
+    def forward(self, input):
+        return self.bilinear(input.real) + 1j*self.bilinear(input.imag)
 
 class ComplexDepthwise_separable_conv(nn.Module):
     def __init__(self, nin, nout, bias=USE_BIAS):
@@ -363,7 +371,7 @@ class Decoder(nn.Module):
                                                output_padding=0,
                                                bias=USE_BIAS, groups=in_channels)
         else:
-            self.upsample = nn.UpsamplingBilinear2d(scale_factor=scale_factor)
+            self.upsample = ComplexUpsamplingBilinear2d(scale_factor)
 
         self.basic_module = basic_module(in_channels + add_features, out_channels,
                                          encoder=False,

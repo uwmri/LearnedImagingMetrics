@@ -237,7 +237,7 @@ elif EFF:
 elif RESNET:
     ranknet = ISOResNet2(BasicBlock, [2,2,2,2], for_denoise=False)  # Less than ResNet18
 else:
-    ranknet = L2cnn(channels_in=1, channel_base=2, train_on_mag=train_on_mag)
+    ranknet = L2cnn(channels_in=1, channel_base=8, train_on_mag=train_on_mag)
 
 print(ranknet)
 # torchsummary.summary(ranknet.cuda(), [(X_1.shape[-3], maxMatSize, maxMatSize)
@@ -389,124 +389,124 @@ for epoch in range(Nepoch):
 
     # training
     classifier.train()
+    with torch.autograd.set_detect_anomaly(True):
+        for i, data in enumerate(loader_T, 0):
 
-    for i, data in enumerate(loader_T, 0):
+            # zero the parameter gradients, backward and update
+            optimizer.zero_grad()
 
-        # zero the parameter gradients, backward and update
-        optimizer.zero_grad()
+            # get the inputs
+            im1, im2, imt, labels = data             # im (sl, ch , 396, 396)
+            # showsl = np.random.randint(BATCH_SIZE)
+            # plt.imshow(np.angle(im1[showsl,0,...].numpy())); plt.show()
+            # plt.imshow(np.angle(im2[showsl, 0, ...].numpy())); plt.show()
+            # plt.imshow(np.angle(imt[showsl, 0, ...].numpy())); plt.show()
+            im1, im2, imt = im1.cuda(), im2.cuda(), imt.cuda()
+            labels = labels.to(device, dtype=torch.long)
 
-        # get the inputs
-        im1, im2, imt, labels = data             # im (sl, ch , 396, 396)
-        # showsl = np.random.randint(BATCH_SIZE)
-        # plt.imshow(np.angle(im1[showsl,0,...].numpy())); plt.show()
-        # plt.imshow(np.angle(im2[showsl, 0, ...].numpy())); plt.show()
-        # plt.imshow(np.angle(imt[showsl, 0, ...].numpy())); plt.show()
-        im1, im2, imt = im1.cuda(), im2.cuda(), imt.cuda()
-        labels = labels.to(device, dtype=torch.long)
+            if mixed_training:
+                with torch.cuda.amp.autocast():
+                    # classifier and scores for each image
+                    delta, score1, score2 = classifier(im1, im2, imt)
 
-        if mixed_training:
-            with torch.cuda.amp.autocast():
+                    # Cross entropy
+                    loss = loss_func(delta, labels)
+                    # Add L2 norm for kernels
+                    l2_lambda = 1e-5
+                    l2_reg = torch.tensor(0.).cuda()
+                    for param in classifier.rank.parameters():
+                        l2_reg += torch.norm(param)
+                    loss += l2_lambda * l2_reg
+            else:
                 # classifier and scores for each image
                 delta, score1, score2 = classifier(im1, im2, imt)
 
-                # Cross entropy
-                loss = loss_func(delta, labels)
+                if RESNET:
+                    loss = loss_ortho(classifier, delta, labels)
+                else:
+                    # Cross entropy
+                    loss = loss_func(delta, labels)
                 # Add L2 norm for kernels
                 l2_lambda = 1e-5
                 l2_reg = torch.tensor(0.).cuda()
                 for param in classifier.rank.parameters():
                     l2_reg += torch.norm(param)
                 loss += l2_lambda * l2_reg
-        else:
-            # classifier and scores for each image
-            delta, score1, score2 = classifier(im1, im2, imt)
 
-            if RESNET:
-                loss = loss_ortho(classifier, delta, labels)
+            # Track loss
+            train_avg.update(loss.item(), n=BATCH_SIZE)  # here is total loss of all batches
+
+            # Track accuracy
+            acc = acc_calc(delta, labels, BatchSize=BATCH_SIZE)
+            #print(f'Training: acc of minibatch {i} is {acc}')
+            train_acc.update(acc, n=1)
+
+            # # every 30 minibatch, show image pairs and predictions
+            # if i % 30 == 0:
+            #     writer.add_figure()
+            #if i % 30 == 0:
+            #    print(train_acc.avg())
+
+            if mixed_training:
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
             else:
-                # Cross entropy
-                loss = loss_func(delta, labels)
-            # Add L2 norm for kernels
-            l2_lambda = 1e-5
-            l2_reg = torch.tensor(0.).cuda()
-            for param in classifier.rank.parameters():
-                l2_reg += torch.norm(param)
-            loss += l2_lambda * l2_reg
+                loss.backward()
+                if CLIP:
+                    clipping_value = 1e-2  # arbitrary value of your choosing
+                    torch.nn.utils.clip_grad_norm_(classifier.parameters(), clipping_value)
+                optimizer.step()
 
-        # Track loss
-        train_avg.update(loss.item(), n=BATCH_SIZE)  # here is total loss of all batches
+            # train on MSE
+            if trainScoreandMSE:
+                optimizerMSE.zero_grad()
 
-        # Track accuracy
-        acc = acc_calc(delta, labels, BatchSize=BATCH_SIZE)
-        #print(f'Training: acc of minibatch {i} is {acc}')
-        train_acc.update(acc, n=1)
+                deltaMSE, mse1, mse2  = classifierMSE(im1, im2, imt)
+                lossMSE = loss_func(deltaMSE, labels)
+                train_avgMSE.update(lossMSE.item(), n=BATCH_SIZE)  # here is total loss of all batches
 
-        # # every 30 minibatch, show image pairs and predictions
-        # if i % 30 == 0:
-        #     writer.add_figure()
-        #if i % 30 == 0:
-        #    print(train_acc.avg())
+                # acc
+                accMSE = acc_calc(deltaMSE, labels, BatchSize=BATCH_SIZE)
+                train_accMSE.update(accMSE, n=1)
 
-        if mixed_training:
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
-        else:
-            loss.backward()
-            if CLIP:
-                clipping_value = 1e-2  # arbitrary value of your choosing
-                torch.nn.utils.clip_grad_norm_(classifier.parameters(), clipping_value)
-            optimizer.step()
+                # zero the parameter gradients, backward and update
+                lossMSE.backward()
+                if CLIP:
+                    clipping_value = 1e-2  # arbitrary value of your choosing
+                    torch.nn.utils.clip_grad_norm_(classifierMSE.parameters(), clipping_value)
 
-        # train on MSE
-        if trainScoreandMSE:
-            optimizerMSE.zero_grad()
+                optimizerMSE.step()
 
-            deltaMSE, mse1, mse2  = classifierMSE(im1, im2, imt)
-            lossMSE = loss_func(deltaMSE, labels)
-            train_avgMSE.update(lossMSE.item(), n=BATCH_SIZE)  # here is total loss of all batches
+            # train on SSIM
+            if trainScoreandSSIM:
+                optimizerSSIM.zero_grad()
 
-            # acc
-            accMSE = acc_calc(deltaMSE, labels, BatchSize=BATCH_SIZE)
-            train_accMSE.update(accMSE, n=1)
+                deltaSSIM, ssim1, ssim2  = classifierSSIM(im1, im2, imt)
+                lossSSIM = loss_func(deltaSSIM, labels)
+                train_avgSSIM.update(lossSSIM.item(), n=BATCH_SIZE)  # here is total loss of all batches
 
-            # zero the parameter gradients, backward and update
-            lossMSE.backward()
-            if CLIP:
-                clipping_value = 1e-2  # arbitrary value of your choosing
-                torch.nn.utils.clip_grad_norm_(classifierMSE.parameters(), clipping_value)
+                # acc
+                accSSIM = acc_calc(deltaSSIM, labels, BatchSize=BATCH_SIZE)
+                train_accSSIM.update(accSSIM, n=1)
 
-            optimizerMSE.step()
+                lossSSIM.backward()
+                if CLIP:
+                    clipping_value = 1e-2  # arbitrary value of your choosing
+                    torch.nn.utils.clip_grad_norm_(classifierSSIM.parameters(), clipping_value)
+                optimizerSSIM.step()
 
-        # train on SSIM
-        if trainScoreandSSIM:
-            optimizerSSIM.zero_grad()
+            # get the score for a plot
+            scorelistT.append(score1.detach().cpu().numpy())
+            scorelistT.append(score2.detach().cpu().numpy())
 
-            deltaSSIM, ssim1, ssim2  = classifierSSIM(im1, im2, imt)
-            lossSSIM = loss_func(deltaSSIM, labels)
-            train_avgSSIM.update(lossSSIM.item(), n=BATCH_SIZE)  # here is total loss of all batches
+            if trainScoreandMSE:
+                mselistT.append(mse1.detach().cpu().numpy())
+                mselistT.append(mse2.detach().cpu().numpy())
 
-            # acc
-            accSSIM = acc_calc(deltaSSIM, labels, BatchSize=BATCH_SIZE)
-            train_accSSIM.update(accSSIM, n=1)
-
-            lossSSIM.backward()
-            if CLIP:
-                clipping_value = 1e-2  # arbitrary value of your choosing
-                torch.nn.utils.clip_grad_norm_(classifierSSIM.parameters(), clipping_value)
-            optimizerSSIM.step()
-
-        # get the score for a plot
-        scorelistT.append(score1.detach().cpu().numpy())
-        scorelistT.append(score2.detach().cpu().numpy())
-
-        if trainScoreandMSE:
-            mselistT.append(mse1.detach().cpu().numpy())
-            mselistT.append(mse2.detach().cpu().numpy())
-
-        if trainScoreandSSIM:
-            ssimlistT.append(ssim1.detach().cpu().numpy())
-            ssimlistT.append(ssim2.detach().cpu().numpy())
+            if trainScoreandSSIM:
+                ssimlistT.append(ssim1.detach().cpu().numpy())
+                ssimlistT.append(ssim2.detach().cpu().numpy())
 
     scorelistT = np.concatenate(scorelistT).ravel()
 

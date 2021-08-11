@@ -16,12 +16,12 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 filepath_rankModel = Path(r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\rank_trained_L2cnn')
 filepath_train = Path("I:/NYUbrain")
 filepath_val = Path("I:/NYUbrain")
-file_rankModel = os.path.join(filepath_rankModel, "RankClassifier303.pt")
+file_rankModel = os.path.join(filepath_rankModel, "RankClassifier5888.pt")
 log_dir = filepath_rankModel
 
 rank_channel =1
 #ranknet = ISOResNet2(BasicBlock, [2,2,2,2], for_denoise=False)
-ranknet = L2cnn(channels_in=rank_channel, channel_base=2)
+ranknet = L2cnn(channels_in=rank_channel, channel_base=8)
 classifier = Classifier(ranknet)
 
 state = torch.load(file_rankModel)
@@ -37,8 +37,8 @@ val_folder = Path("D:/NYUbrain/brain_multicoil_val/multicoil_val")
 test_folder = Path("D:/NYUbrain/brain_multicoil_test/multicoil_test")
 files = find("*.h5", train_folder)
 
-#CORRUPTIONS = ['% PE Motion Corrupted','Total shift (pixels)', 'Gaussian noise level(a.u.)', '% random undersampling', '% PE removed randomly']
-CORRUPTIONS = ['Linear phase (pixel)']
+CORRUPTIONS = ['% PE Motion Corrupted','Total shift (pixels)', '% random undersampling', '% PE removed randomly', 'Linear phase (pixel)', 'Gaussian noise level(a.u.)']
+#CORRUPTIONS = ['Gaussian noise level(a.u.)']
 SAME_IMAGE = '(the same image)'
 # out_name = os.path.join(f'corrupted_images_{WHICH_CORRUPTION}.h5')
 # try:
@@ -47,16 +47,16 @@ SAME_IMAGE = '(the same image)'
 #     pass
 
 Ntrials = 500
-# Nxmax = 320
-# Nymax = 640
-Nxmax = 396
-Nymax = 768
+Nxmax = 320
+Nymax = 640
+# Nxmax = 396
+# Nymax = 768
 count = 0
 
 
 #for index_file in range(1):
 #file = 'D:\\NYUbrain\\brain_multicoil_train\\multicoil_train\\file_brain_AXT1PRE_205_6000160.h5'
-file = 'D:\\NYUbrain\\brain_multicoil_train\\multicoil_train\\file_brain_AXT2_210_6001532.h5'
+file = 'D:\\NYUbrain\\brain_multicoil_train\\multicoil_train\\file_brain_AXT2_202_2020159.h5'
 #while count == 0:
 
     # file = files[np.random.randint(len(os.listdir(train_folder)))]
@@ -95,7 +95,8 @@ tot_coils = np.size(ksp, 1)
 
 #for s in slice_nums:
     #s = int(s)
-s = np.random.randint(tot_slices)
+#s = np.random.randint(tot_slices)
+s = 0
 print(f'{file}, slice{s}')
 ksp_full = ksp[s]
 ksp_full_gpu = sp.to_device(ksp_full, device=spdevice)
@@ -122,7 +123,7 @@ for WHICH_CORRUPTION in CORRUPTIONS:
     for i in range(Ntrials):
 
         if WHICH_CORRUPTION =='Linear phase (pixel)':
-            kshift_max=40
+            kshift_max=10
             corruption_mag = np.random.randint(-kshift_max, kshift_max)
             ksp2 = np.roll(ksp_full, corruption_mag, axis=-1)
 
@@ -137,7 +138,7 @@ for WHICH_CORRUPTION in CORRUPTIONS:
             ksp2, corruption_mag = trans_motion(ksp_full, dir_motion=2, maxshift=50, prob=1,
                                                 startPE=startPE,fix_shift=False, fix_start=True)
 
-        elif WHICH_CORRUPTION == 'Gaussian noise level':
+        elif WHICH_CORRUPTION == 'Gaussian noise level(a.u.)':
             gaussian_ulim = 12
             gaussian_level = np.random.randint(0, gaussian_ulim)
             ksp2, sigma_real, sigma_imag = add_gaussian_noise(ksp_full, 1, kedge_len=30,level=gaussian_level, mode=1, mean=0)
