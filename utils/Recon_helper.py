@@ -232,11 +232,15 @@ def sneakpeek(dataset, Ncoils=20, rank_trained_on_mag=True):
 
 # MSE loss
 def mseloss_fcn(output, target):
-    # output = crop_im(output)
-    # target = crop_im(target)
-    loss = torch.mean(torch.abs(output - target) ** 2)** 0.5
-    return loss
+    mse = torch.abs(output - target)
+    mse = mse.view(mse.shape[0], -1)
+    mse = torch.sum(mse ** 2, dim=1, keepdim=True) ** 0.5
 
+    return mse
+
+def mseloss_fcn0(output, target):
+    loss = torch.mean(torch.abs(output - target) ** 2) ** 0.5
+    return loss
 
 # TODO: how do i save encoder during training
 def loss_fcn_onenet(noisy, output, target, projector, encoder, discriminator, discriminator_l, lam1=1, lam2=1, lam3=1,
@@ -294,12 +298,11 @@ def learnedloss_fcn(output, target, scoreModel, rank_trained_on_mag=False, augme
         for do_trans in [False]:
 
             if do_trans:
-                output_sl = torch.unsqueeze(output[sl], 0)
-                target_sl = torch.unsqueeze(target[sl], 0)
-            else:
                 output_sl = torch.unsqueeze(output[sl], 0).permute(0,1,3,2)
                 target_sl = torch.unsqueeze(target[sl], 0).permute(0,1,3,2)
-
+            else:
+                output_sl = torch.unsqueeze(output[sl], 0)
+                target_sl = torch.unsqueeze(target[sl], 0)
             #bias = scoreModel(target_sl, target_sl)
             #delta_sl = torch.abs(scoreModel(output_sl, target_sl) - bias)
             delta_sl = scoreModel(output_sl, target_sl)
@@ -345,7 +348,7 @@ def learnedloss_fcn(output, target, scoreModel, rank_trained_on_mag=False, augme
 
         #torch.cuda.empty_cache()
     delta /= Nslice
-    # delta /= Nslice * 8
+    #delta /= Nslice * 8
     return delta
 
 

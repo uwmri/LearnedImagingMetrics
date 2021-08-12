@@ -41,20 +41,21 @@ parser.add_argument('--data_folder', type=str,
                     default=r'I:\NYUbrain',
                     help='Data path')
 parser.add_argument('--metric_file', type=str,
-                    default=r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\rank_trained_L2cnn\RankClassifier9631.pt',
+                    default=r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\rank_trained_L2cnn\RankClassifier5888.pt',
                     help='Name of learned metric file')
 parser.add_argument('--log_dir', type=str,
                     default=r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020',
                     help='Directory to log files')
 parser.add_argument('--pname', type=str, default=f'chenwei_recon_{Ntrial}')
 parser.add_argument('--resume_train', action='store_true', default=False)
+parser.add_argument('--save_all_slices', action='store_true', default=False)
 args = parser.parse_args()
 
 log_dir = args.log_dir
 data_folder = args.data_folder
 metric_file = args.metric_file
 resume_train = args.resume_train
-
+saveAllSl = args.save_all_slices
 # load RankNet
 try:
     import setproctitle
@@ -183,7 +184,7 @@ else:
         logging.info(f'EEVarNet, {NUM_CASCADES} cascades')
 ReconModel.cuda();
 
-LR = 1e-6
+LR = 1e-5
 # optimizer = optim.SGD(ReonModel.parameters(), lr=LR, momentum=0.9)
 optimizer = optim.Adam(ReconModel.parameters(), lr=LR)
 #scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=40, gamma=0.1)
@@ -210,7 +211,7 @@ elif WHICH_LOSS == 'ssim':
     ssim_module = SSIM()
 
 
-Nepoch = 1201
+Nepoch = 1
 epochMSE = 0
 logging.info(f'MSE for first {epochMSE} epochs then switch to learned')
 lossT = np.zeros(Nepoch)
@@ -251,9 +252,14 @@ for epoch in range(Nepoch):
     eval_avg = RunningAverage()
     eval_avg_mse = RunningAverage()
 
+    train_avg_mse0 = RunningAverage()
+    eval_avg_mse0 = RunningAverage()
+
     loss_mseT = []
+    loss_mseT0 = []
     loss_learnedT = []
     loss_mseV = []
+    loss_mseV0 = []
     loss_learnedV = []
 
     ReconModel.train()
@@ -325,6 +331,8 @@ for epoch in range(Nepoch):
                     imEst2 = imEst2[:, idxL:idxR, :]
 
                 loss_mse_tensor = mseloss_fcn(imEst2, im_sl).detach()
+                loss_mse_tensor0 = mseloss_fcn0(imEst2, im_sl).detach()
+
                 if WHICH_LOSS == 'mse':
                     loss = mseloss_fcn(imEst2, im_sl)
                 elif WHICH_LOSS == 'ssim':
@@ -340,6 +348,12 @@ for epoch in range(Nepoch):
                         loss = learnedloss_fcn(imEst2, im_sl, score, rank_trained_on_mag=rank_trained_on_mag)
 
                 loss.backward(retain_graph=True)
+                if saveAllSl:
+                    imEstpltT = imEst2.detach().cpu()
+                    truthpltT = im_sl.detach().cpu()
+                    with h5py.File(f'ReconTraining_{Ntrial}.h5', 'a') as hf:
+                        hf.create_dataset(f"Tcase_{i}_{sl}", data=np.squeeze(imEstpltT.numpy()))
+                        hf.create_dataset(f"truth_Tcase_{i}_{sl}", data=np.squeeze(truthpltT.numpy()))
 
                 # train_avg.update(loss.detach().item(), BATCH_SIZE)
                 del imEst2
@@ -347,10 +361,12 @@ for epoch in range(Nepoch):
                     with torch.no_grad():
                         loss_learnedT.append(loss.detach().item())
                         loss_mseT.append(loss_mse_tensor.detach().cpu().item())
+                        loss_mseT0.append(loss_mse_tensor0.detach().cpu().item())
 
                 loss_avg += loss.detach().item()
                 train_avg.update(loss.detach().item())
                 train_avg_mse.update(loss_mse_tensor.detach().cpu().item())
+                train_avg_mse0.update(loss_mse_tensor0.detach().cpu().item())
 
                 del smaps_sl, kspaceU_sl, kspace_sl, im_sl
 
@@ -426,6 +442,7 @@ for epoch in range(Nepoch):
                 imEst2 = imEst2[:,idxL:idxR, :]
 
             loss_mse_tensor = mseloss_fcn(imEst2, im_sl).detach()
+            loss_mse_tensor0 = mseloss_fcn0(imEst2, im_sl).detach()
             if WHICH_LOSS == 'mse':
                 loss = mseloss_fcn(imEst2, im_sl)
             elif WHICH_LOSS == 'ssim':
@@ -442,11 +459,20 @@ for epoch in range(Nepoch):
 
             eval_avg.update(loss.detach().item(), n=BATCH_SIZE)
             eval_avg_mse.update(loss_mse_tensor.detach().cpu().item())
+            eval_avg_mse0.update(loss_mse_tensor.detach().cpu().item())
 
             if WHICH_LOSS == 'learned':
                 with torch.no_grad():
                     loss_learnedV.append(loss.detach().item())
                     loss_mseV.append(loss_mse_tensor.cpu())
+                    loss_mseV0.append(loss_mse_tensor0.cpu())
+
+            if saveAllSl:
+                imEstpltV = imEst2.detach().cpu()
+                truthpltV = im_sl.detach().cpu()
+                with h5py.File(f'ReconTraining_{Ntrial}.h5', 'a') as hf:
+                    hf.create_dataset(f"Vcase_{i}_{sl}", data=np.squeeze(imEstpltV.numpy()))
+                    hf.create_dataset(f"truthVcase_{i}_{sl}", data=np.squeeze(truthpltV.numpy()))
 
             if i == 0 and sl == 4:
                 truthplt = im_sl.detach().cpu()
@@ -515,6 +541,8 @@ for epoch in range(Nepoch):
     writer_train.add_scalar('Loss', train_avg.avg(), epoch)
     writer_val.add_scalar('MSE Loss', eval_avg_mse.avg(), epoch)
     writer_train.add_scalar('MSE Loss', train_avg_mse.avg(), epoch)
+    writer_val.add_scalar('MSE Loss0', eval_avg_mse0.avg(), epoch)
+    writer_train.add_scalar('MSE Loss0', train_avg_mse0.avg(), epoch)
 
     # logging.info('Epoch = %d : Loss Eval = %f , Loss Train = %f' % (epoch, eval_avg.avg(), train_avg.avg()))
     lossT[epoch] = train_avg.avg()
@@ -531,6 +559,14 @@ for epoch in range(Nepoch):
         loss_mseV = np.array(loss_mseV)
         lossplotV = plt_scoreVsMse(loss_learnedV, loss_mseV)
         writer_val.add_figure('Loss_learned_vs_mse', lossplotV, epoch)
+
+        loss_mseT0 = np.array(loss_mseT0)
+        lossplotT0 = plt_scoreVsMse(loss_learnedT, loss_mseT0)
+        writer_train.add_figure('Loss_learned_vs_mse0', lossplotT0, epoch)
+
+        loss_mseV0 = np.array(loss_mseV0)
+        lossplotV0= plt_scoreVsMse(loss_learnedV, loss_mseV0)
+        writer_val.add_figure('Loss_learned_vs_mse0', lossplotV0, epoch)
 
     # save models
     state = {
