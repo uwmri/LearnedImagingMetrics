@@ -35,7 +35,6 @@ except:
 if DGX:
     try:
         import setproctitle
-        import argparse
 
         setproctitle.setproctitle(args.pname)
         print(f'Setting program name to {args.pname}')
@@ -170,8 +169,8 @@ logging.basicConfig(filename=os.path.join(log_dir,f'runs/rank/ranking_{Ntrial}.l
 logging.info('With ISOresnet classifier')
 logging.info(f'{Ntrial}')
 
-CV = 2
-CV_fold = 5
+CV = 1
+CV_fold = 10
 logging.info(f'{CV_fold} fold cross validation {CV}')
 ntrain = int(0.8 * NRANKS)
 id = ranks[:,2] - 1
@@ -327,7 +326,8 @@ writer_val = SummaryWriter(os.path.join(log_dir,f'runs/rank/val_{Ntrial}'))
 
 score_mse_file = os.path.join(f'score_mse_file_{Ntrial}.h5')
 
-Nepoch = 5000
+
+Nepoch = 1001
 lossT = np.zeros(Nepoch)
 lossV = np.zeros(Nepoch)
 
