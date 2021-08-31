@@ -41,7 +41,7 @@ parser.add_argument('--data_folder', type=str,
                     default=r'I:\NYUbrain',
                     help='Data path')
 parser.add_argument('--metric_file', type=str,
-                    default=r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\rank_trained_L2cnn\RankClassifier5888.pt',
+                    default=r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\rank_trained_L2cnn\RankClassifier6158.pt',
                     help='Name of learned metric file')
 parser.add_argument('--log_dir', type=str,
                     default=r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020',
@@ -77,11 +77,11 @@ classifier = Classifier(ranknet)
 state = torch.load(metric_file)
 classifier.load_state_dict(state['state_dict'], strict=True)
 classifier.eval()
-for param in classifier.parameters():
-    param.requires_grad = False
+# for param in classifier.parameters():
+#     param.requires_grad = False
 score = classifier.rank
-for param in score.parameters():
-    param.requires_grad = False
+# for param in score.parameters():
+#     param.requires_grad = False
 score.cuda()
 
 file_train = 'ksp_truths_smaps_train_lzf.h5'
@@ -184,7 +184,7 @@ else:
         logging.info(f'EEVarNet, {NUM_CASCADES} cascades')
 ReconModel.cuda();
 
-LR = 1e-5
+LR = 1e-4
 # optimizer = optim.SGD(ReonModel.parameters(), lr=LR, momentum=0.9)
 optimizer = optim.Adam(ReconModel.parameters(), lr=LR)
 #scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=40, gamma=0.1)
@@ -211,7 +211,7 @@ elif WHICH_LOSS == 'ssim':
     ssim_module = SSIM()
 
 
-Nepoch = 1
+Nepoch = 1001
 epochMSE = 0
 logging.info(f'MSE for first {epochMSE} epochs then switch to learned')
 lossT = np.zeros(Nepoch)
@@ -330,6 +330,18 @@ for epoch in range(Nepoch):
                     im_sl = im_sl[:, idxL:idxR, :]
                     imEst2 = imEst2[:, idxL:idxR, :]
 
+                # im_slmin = torch.min(torch.abs(im_sl))
+                # im_slmax = torch.max(torch.abs(im_sl))
+                # im_sl = (im_sl - im_slmin) / (im_slmax - im_slmin)
+                #
+                # imEst2min = torch.min(torch.abs(imEst2))
+                # imEst2max = torch.max(torch.abs(imEst2))
+                # imEst2 = (imEst2-imEst2min)/(imEst2max-imEst2min)
+
+                # scale = torch.sum(torch.conj(imEst2.squeeze()).T * im_sl.squeeze()) / torch.sum(
+                #     torch.conj(im_sl.squeeze()).T * imEst2.squeeze())
+                # imEst2 *= scale
+
                 loss_mse_tensor = mseloss_fcn(imEst2, im_sl).detach()
                 loss_mse_tensor0 = mseloss_fcn0(imEst2, im_sl).detach()
 
@@ -440,6 +452,17 @@ for epoch in range(Nepoch):
                 idxR = int(idxL + width)
                 im_sl = im_sl[:,idxL:idxR, :]
                 imEst2 = imEst2[:,idxL:idxR, :]
+
+            # im_slmin = torch.min(torch.abs(im_sl))
+            # im_slmax = torch.max(torch.abs(im_sl))
+            # im_sl = (im_sl - im_slmin) / (im_slmax - im_slmin)
+            #
+            # imEst2min = torch.min(torch.abs(imEst2))
+            # imEst2max = torch.max(torch.abs(imEst2))
+            # imEst2 = (imEst2 - imEst2min) / (imEst2max - imEst2min)
+            # scale = torch.sum(torch.conj(imEst2.squeeze()).T * im_sl.squeeze()) / torch.sum(
+            #     torch.conj(im_sl.squeeze()).T * imEst2.squeeze())
+            # imEst2 *= scale
 
             loss_mse_tensor = mseloss_fcn(imEst2, im_sl).detach()
             loss_mse_tensor0 = mseloss_fcn0(imEst2, im_sl).detach()

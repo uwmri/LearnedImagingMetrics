@@ -76,9 +76,9 @@ for i in range(NEXAMPLES):
     name1 = 'EXAMPLE_%07d_IMAGE_%04d' % (i+1, 0)
     name2 = 'EXAMPLE_%07d_IMAGE_%04d' % (i+1, 1)
 
-    im1 = zero_pad2D(np.array(hf[name1]), maxMatSize, maxMatSize)
-    im2 = zero_pad2D(np.array(hf[name2]), maxMatSize, maxMatSize)
-    truth = zero_pad2D(np.array(hf[nameT]), maxMatSize, maxMatSize)
+    im1 = np.flipud(zero_pad2D(np.array(hf[name1]), maxMatSize, maxMatSize))
+    im2 = np.flipud(zero_pad2D(np.array(hf[name2]), maxMatSize, maxMatSize))
+    truth = np.flipud(zero_pad2D(np.array(hf[nameT]), maxMatSize, maxMatSize))
 
     # Convert to torch
     X_1[i, 0] = im1[..., 0] + 1j * im1[..., 1]
@@ -106,12 +106,12 @@ for i in range(0, NRANKS):
 
 BATCH_SIZE = 48
 id = ranks[:,2] - 1
-dataset = DataGenerator_rank(X_1, X_2, X_T, Labels, id, augmentation=True, pad_channels=0)
+dataset = DataGenerator_rank(X_1, X_2, X_T, Labels, id, augmentation=False, pad_channels=0)
 loader = DataLoader(dataset=dataset, batch_size=BATCH_SIZE, shuffle=True, drop_last=True)
 
 
 
-CHECK_BIAS = False
+CHECK_BIAS = True
 if not CHECK_BIAS:
     scorelist = []
     mselist = []
@@ -140,7 +140,7 @@ for i, data in enumerate(loader, 0):
         ssimlist.append(ssim2.detach().cpu().numpy())
 
     else:
-        delta, score1, score2 = classifier(imt, imt, imt)
+        delta, score1, score2 = classifier(imt*3e-2, imt*3e-2, imt*3e-2)
         scorelist_truth.append(score1.detach().cpu().numpy())
 
 if not CHECK_BIAS:

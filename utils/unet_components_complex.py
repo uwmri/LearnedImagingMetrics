@@ -325,7 +325,7 @@ class ResBottle(nn.Module):
 
 class Encoder(nn.Module):
 
-    def __init__(self, in_channels, out_channels, conv_kernel_size=3, basic_module=ResBottle, downsample=True, conv_layer_order='crb',
+    def __init__(self, in_channels, out_channels, conv_kernel_size=3, basic_module=ResBottle, downsample=True, conv_layer_order='cr',
                  num_groups=8, scale_factor=(2,2), conv_downsample=True):
         super(Encoder, self).__init__()
 
@@ -359,7 +359,7 @@ class Encoder(nn.Module):
 class Decoder(nn.Module):
 
     def __init__(self, in_channels, out_channels, add_features, kernel_size=3,
-                 scale_factor=(2, 2), basic_module=ResBottle, conv_layer_order='cl', num_groups=8, conv_upsample=True):
+                 scale_factor=(2, 2), basic_module=ResBottle, conv_layer_order='cr', num_groups=8, conv_upsample=True):
         super(Decoder, self).__init__()
 
         if conv_upsample:

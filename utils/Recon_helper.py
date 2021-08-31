@@ -257,7 +257,7 @@ def loss_fcn_onenet(noisy, output, target, projector, encoder, discriminator, di
 
 
 # learned metrics loss
-def learnedloss_fcn(output, target, scoreModel, rank_trained_on_mag=False, augmentation=False):
+def learnedloss_fcn(output, target, scoreModel, rank_trained_on_mag=False, augmentation=True):
 
     if output.ndim == 2:
         output = output.unsqueeze(0).unsqueeze(0)
@@ -295,7 +295,7 @@ def learnedloss_fcn(output, target, scoreModel, rank_trained_on_mag=False, augme
     delta = 0
     for sl in range(Nslice):
 
-        for do_trans in [False]:
+        for do_trans in [True, False]:
 
             if do_trans:
                 output_sl = torch.unsqueeze(output[sl], 0).permute(0,1,3,2)
@@ -330,24 +330,24 @@ def learnedloss_fcn(output, target, scoreModel, rank_trained_on_mag=False, augme
                 delta_sl = scoreModel(output_sl2, target_sl2)
                 delta += delta_sl
 
-                # Shift
-                nshift = 1
-                if np.random.randint(2)==0:
-                    sign = 2*np.random.randint(2)-1
-                    output_sl2 = torch.roll(output_sl, nshift*sign, dims=-1)
-                    target_sl2 = torch.roll(target_sl, nshift*sign, dims=-1)
-                    delta_sl = scoreModel(output_sl2, target_sl2)
-                    delta += delta_sl
-                else:
-                    sign = 2 * np.random.randint(2) - 1
-                    output_sl2 = torch.roll(output_sl, nshift * sign, dims=-2)
-                    target_sl2 = torch.roll(target_sl, nshift * sign, dims=-2)
-                    delta_sl = scoreModel(output_sl2, target_sl2)
-                    delta += delta_sl
+                # # Shift
+                # nshift = 1
+                # if np.random.randint(2)==0:
+                #     sign = 2*np.random.randint(2)-1
+                #     output_sl2 = torch.roll(output_sl, nshift*sign, dims=-1)
+                #     target_sl2 = torch.roll(target_sl, nshift*sign, dims=-1)
+                #     delta_sl = scoreModel(output_sl2, target_sl2)
+                #     delta += delta_sl
+                # else:
+                #     sign = 2 * np.random.randint(2) - 1
+                #     output_sl2 = torch.roll(output_sl, nshift * sign, dims=-2)
+                #     target_sl2 = torch.roll(target_sl, nshift * sign, dims=-2)
+                #     delta_sl = scoreModel(output_sl2, target_sl2)
+                #     delta += delta_sl
 
 
         #torch.cuda.empty_cache()
-    delta /= Nslice
+    delta /= Nslice * 8
     #delta /= Nslice * 8
     return delta
 
