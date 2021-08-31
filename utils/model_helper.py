@@ -270,6 +270,27 @@ class saveOutputs():
     def clear(self):
         self.outputs = []
 
+class ComplexDropout2D(torch.nn.Dropout2d):
+    def forward(self, input):
+
+        in_shape = input.shape
+        #print(f'In shape = {in_shape}')
+
+        # Put the real and imaginary at the last dimension
+        tensor = torch.stack([input.real, input.imag], dim=-1)
+
+        # Apply dropout on the tensor Nc x Ny x (Nx*2)
+        output = super().forward(tensor.reshape(in_shape[:-1] + (in_shape[-1]*2,) ))
+
+        # Reshape back to starting shape x 2
+        #print(f'Out shape = {output.shape}')
+        output = output.reshape(in_shape + (2,))
+        #print(f'Out shape = {output.shape}')
+
+        return output[...,0] + 1j*output[...,1]
+
+
+
 class L2cnn(nn.Module):
     def __init__(self, channel_base=32, channels_in=1,  channel_scale=1, group_depth=5, bias=False, init_scale=1.0,
                  train_on_mag=False):
@@ -288,9 +309,10 @@ class L2cnn(nn.Module):
 
         #self.mse_module = MSEmodule()
         self.layers = nn.ModuleList()
+        self.dropout = ComplexDropout2D(p=0.1)
         for block in range(group_depth):
 
-            self.layers.append(L2cnnBlock(channels_in, channels_out, pool_rate, bias=bias, activation=True,
+            self.layers.append(L2cnnBlock(channels_in, channels_out, pool_rate, bias=bias, activation=False,
                                           train_on_mag=self.train_on_mag))
 
             # Update channels
@@ -299,7 +321,7 @@ class L2cnn(nn.Module):
 
     def layer_mse(self, x):
         y = x.view(x.shape[0], -1)
-        return 1e3*torch.sum(torch.abs(y)**2, dim=1, keepdim=True)**0.5
+        return 1e3*torch.sum((torch.abs(y) + 1e-6)**2, dim=1, keepdim=True)**0.5
 
     def forward(self, input, truth):
         x = input.clone()
@@ -319,6 +341,8 @@ class L2cnn(nn.Module):
         # Convolutional pathway with MSE at multiple scales
         for l in self.layers:
             diff_mag = l(diff_mag)
+            diff_mag = self.dropout(diff_mag)
+
         # print(f'diff_mag shape {diff_mag.shape}') # [64, 32, 1, 1]
         cnn_score = self.layer_mse(diff_mag)    #(64, 1)
 

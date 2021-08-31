@@ -326,6 +326,7 @@ writer_val = SummaryWriter(os.path.join(log_dir,f'runs/rank/val_{Ntrial}'))
 
 score_mse_file = os.path.join(f'score_mse_file_{Ntrial}.h5')
 
+
 Nepoch = 1001
 lossT = np.zeros(Nepoch)
 lossV = np.zeros(Nepoch)
