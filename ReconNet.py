@@ -146,15 +146,15 @@ Ntrain = 9
 Nval = 1
 BATCH_SIZE = 1
 prefetch_data = True
-logging.info(f'Load train data from {data_folder}')
-trainingset = DataGeneratorRecon(data_folder, file_train, num_cases=Ntrain, rank_trained_on_mag=rank_trained_on_mag,
+indicesT = np.random.randint(1173, size=Ntrain)
+trainingset = DataGeneratorRecon(data_folder, file_train, indices=indicesT, rank_trained_on_mag=rank_trained_on_mag,
                                  data_type=smap_type)
-loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=True)
+loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=True, pin_memory=True)
 
-logging.info(f'Load eval data from {data_folder}')
-validationset = DataGeneratorRecon(data_folder, file_val, num_cases=Nval, rank_trained_on_mag=rank_trained_on_mag,
+indicesV = np.random.randint(347, size=Nval)
+validationset = DataGeneratorRecon(data_folder, file_val, indices=indicesV, rank_trained_on_mag=rank_trained_on_mag,
                                    data_type=smap_type)
-loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=False)
+loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=False, pin_memory=True)
 
 UNROLL = True
 
@@ -217,8 +217,8 @@ logging.info(f'MSE for first {epochMSE} epochs then switch to learned')
 lossT = np.zeros(Nepoch)
 lossV = np.zeros(Nepoch)
 
-out_name = os.path.join(log_dir,f'Images_training{Ntrial}_{WHICH_LOSS}.h5')
-print(f'Logging to {out_name}')
+out_name = os.path.join(log_dir,f'Images_training{Ntrial}_{WHICH_LOSS}_eval.h5')
+out_name_train = os.path.join(log_dir,f'Images_training{Ntrial}_{WHICH_LOSS}_train.h5')
 
 
 logging.info(f'Adam, lr = {LR}')
@@ -301,9 +301,6 @@ for epoch in range(Nepoch):
                 # Get truth on the fly
                 #im_sl = sp.to_pytorch(Atruth.H * (kspace_sl * mask_truth), requires_grad=False)
                 im_sl = sense_adjoint(smaps_sl, kspace_sl)
-                idxL = int((im_sl.shape[0] - im_sl.shape[1]) / 2)
-                idxR = int(idxL + im_sl.shape[1])
-                im_sl = im_sl[idxL:idxR, :]
 
                 # Get PyTorch functions
                 #A_torch = sp.to_pytorch_function(A)
@@ -329,6 +326,10 @@ for epoch in range(Nepoch):
                     idxR = int(idxL + width)
                     im_sl = im_sl[:, idxL:idxR, :]
                     imEst2 = imEst2[:, idxL:idxR, :]
+
+                # flipud
+                im_sl = torch.flip(im_sl, dims=(0, 1))
+                imEst2 = torch.flip(imEst2, dims=(0, 1))
 
                 # im_slmin = torch.min(torch.abs(im_sl))
                 # im_slmax = torch.max(torch.abs(im_sl))
@@ -366,6 +367,47 @@ for epoch in range(Nepoch):
                     with h5py.File(f'ReconTraining_{Ntrial}.h5', 'a') as hf:
                         hf.create_dataset(f"Tcase_{i}_{sl}", data=np.squeeze(imEstpltT.numpy()))
                         hf.create_dataset(f"truth_Tcase_{i}_{sl}", data=np.squeeze(truthpltT.numpy()))
+
+                if saveTrainIm and i == 0 and sl == 4:
+                    truthplt = im_sl.detach().cpu()
+                    perturbed = sense_adjoint(smaps_sl, kspaceU_sl)
+                    noisyplt = perturbed.detach().cpu()
+                    noisyplt = noisyplt[:, idxL:idxR, :]
+                    del perturbed
+                    imEstplt = imEst2.detach().cpu()
+
+                    if epoch == 0:
+                        kspaceU_sl_gpu = sp.to_device(sp.from_pytorch(kspaceU_sl.cpu()), sp.Device(0))
+                        smaps_sl_gpu = sp.to_device(sp.from_pytorch(smaps_sl.cpu()), sp.Device(0))
+                        imSense = sp.mri.app.SenseRecon(kspaceU_sl_gpu, smaps_sl_gpu, weights=mask_gpu, lamda=.01,
+                                                        max_iter=20, device=spdevice).run()
+                        imSense = imSense[idxL:idxR, :]
+                        # L1-wavelet
+                        imL1 = sp.mri.app.L1WaveletRecon(kspaceU_sl_gpu, smaps_sl_gpu, weights=mask_gpu, lamda=.001,
+                                                         max_iter=20, device=spdevice).run()
+                        imL1 = imL1[idxL:idxR, :]
+
+                    with h5py.File(out_name_train, 'a') as hf:
+                        if epoch == 0:
+                            hf.create_dataset(f"{epoch}_truth", data=np.squeeze(np.abs(truthplt.numpy())))
+                            hf.create_dataset(f"{epoch}_truth_re", data=np.squeeze(np.real(truthplt.numpy())))
+                            hf.create_dataset(f"{epoch}_truth_im", data=np.squeeze(np.imag(truthplt.numpy())))
+                            hf.create_dataset(f"{epoch}_FT", data=np.squeeze(np.abs(noisyplt.numpy())))
+                            hf.create_dataset(f"{epoch}_Sense", data=np.squeeze(np.abs(imSense.get())))
+                            hf.create_dataset(f"{epoch}_L1", data=np.squeeze(np.abs(imL1.get())))
+                            hf.create_dataset(f"p{epoch}_truth", data=np.squeeze(np.angle(truthplt.numpy())))
+                            hf.create_dataset(f"p{epoch}_FT", data=np.squeeze(np.angle(noisyplt.numpy())))
+                            hf.create_dataset(f"p{epoch}_Sense", data=np.squeeze(np.angle(imSense.get())))
+                            hf.create_dataset(f"p{epoch}_L1", data=np.squeeze(np.angle(imL1.get())))
+
+                        hf.create_dataset(f"p{epoch}_recon", data=np.squeeze(np.angle(imEstplt.numpy())))
+                        hf.create_dataset(f"{epoch}_recon", data=np.squeeze(np.abs(imEstplt.numpy())))
+                        if epoch % 20 == 0:
+                            hf.create_dataset(f"{epoch}_recon_re", data=np.squeeze(np.real(imEstplt.numpy())))
+                            hf.create_dataset(f"{epoch}_recon_im", data=np.squeeze(np.imag(imEstplt.numpy())))
+                    del truthplt, noisyplt, imEstplt
+
+
 
                 # train_avg.update(loss.detach().item(), BATCH_SIZE)
                 del imEst2
@@ -452,6 +494,10 @@ for epoch in range(Nepoch):
                 idxR = int(idxL + width)
                 im_sl = im_sl[:,idxL:idxR, :]
                 imEst2 = imEst2[:,idxL:idxR, :]
+
+            # flipud
+            im_sl = torch.flip(im_sl, dims=(0,1))
+            imEst2 = torch.flip(imEst2, dims=(0,1))
 
             # im_slmin = torch.min(torch.abs(im_sl))
             # im_slmax = torch.max(torch.abs(im_sl))

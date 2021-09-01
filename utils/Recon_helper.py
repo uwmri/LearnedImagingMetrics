@@ -39,7 +39,8 @@ class SubtractArray(sp.linop.Linop):
 
 class DataGeneratorRecon(Dataset):
 
-    def __init__(self,path_root, h5file, num_cases=None, rank_trained_on_mag=False, data_type=None):
+    def __init__(self,path_root, h5file, indices, rank_trained_on_mag=False, data_type=None, case_name=False,
+                 DiffCaseEveryEpoch=False):
 
         '''
         input: mask (768, 396) complex64
@@ -53,30 +54,34 @@ class DataGeneratorRecon(Dataset):
 
         self.hf = h5py.File(name=os.path.join(path_root, h5file), mode='r')
         self.scans = [f for f in self.hf.keys()]
-
-        # iterate over scans
-        # self.len = len(self.hf)
-        self.len = num_cases
+        self.num_allcases = len((self.scans))
+        self.indices = indices
+        self.len = len(indices)
 
         self.data_type = data_type
 
         self.rank_trained_on_mag = rank_trained_on_mag
 
+        self.case_name = case_name
+        self.DiffCaseEveryEpoch = DiffCaseEveryEpoch
+
     def __len__(self):
         return self.len
 
     def __getitem__(self, idx):
-        #import time
-
+        if self.DiffCaseEveryEpoch:
+            actual_idx = np.random.randint(self.num_allcases)
+        else:
+            actual_idx = self.indices[idx]
         #print(f'Load {self.scans[idx]}')
         #t = time.time()
         if self.data_type == 'smap16':
-            smaps = np.array(self.hf[self.scans[idx]]['smaps'])
+            smaps = np.array(self.hf[self.scans[actual_idx]]['smaps'])
             smaps = smaps.view(np.int16).astype(np.float32).view(np.complex64)
             smaps /= 32760
             #print(smaps.shape)
         else:
-            smaps = np.array(self.hf[self.scans[idx]]['smaps'])
+            smaps = np.array(self.hf[self.scans[actual_idx]]['smaps'])
 
         #smaps = complex_2chan(smaps)
         #print(f'Get smap ={time.time()-t}, {smaps.dtype} {smaps.shape}')
@@ -99,7 +104,7 @@ class DataGeneratorRecon(Dataset):
         # #print(f'Get truth {time.time() - t} {truth.dtype} {truth.shape}')
 
         #t = time.time()
-        kspace = np.array(self.hf[self.scans[idx]]['kspace'])
+        kspace = np.array(self.hf[self.scans[actual_idx]]['kspace'])
         kspace = zero_pad4D(kspace)  # array (sl, coil, 768, 396)
         kspace /= np.max(np.abs(kspace))/np.prod(kspace.shape[-2:])
 
@@ -111,8 +116,10 @@ class DataGeneratorRecon(Dataset):
         #kspace = complex_2chan(kspace)  # (slice, coil, h, w, 2)
         #kspace /= max_truth
 
-        return smaps, kspace
-
+        if not self.case_name:
+            return smaps, kspace
+        else:
+            return smaps, kspace, self.scans[actual_idx]
 
 class DataGeneratorDenoise(Dataset):
     def __init__(self, path_root, scan_list, h5file):
