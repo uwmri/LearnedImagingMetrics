@@ -24,6 +24,8 @@ parser.add_argument('--dgx', action='store_true', default=False)
 parser.add_argument('--file_csv', type=str, default=Path(r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\consensus_mode_all.csv'))
 parser.add_argument('--file_images', type=str, default=Path(r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\TRAINING_IMAGES_04032020.h5'))
 parser.add_argument('--device', type=int, default=0, help='CUDA device for SigPy and PyTorch')
+parser.add_argument('--fold', type=int, default=0, help='Fold number of 5')
+parser.add_argument('--bfold', type=int, default=5, help='Number of folds')
 args = parser.parse_args()
 
 DGX = args.dgx
@@ -173,8 +175,8 @@ logging.basicConfig(filename=os.path.join(log_dir,f'runs/rank/ranking_{Ntrial}.l
 logging.info('With ISOresnet classifier')
 logging.info(f'{Ntrial}')
 
-CV = 2
-CV_fold = 5
+CV = args.fold
+CV_fold = ars.nfold
 logging.info(f'{CV_fold} fold cross validation {CV}')
 ntrain = int(0.8 * NRANKS)
 id = ranks[:,2] - 1
