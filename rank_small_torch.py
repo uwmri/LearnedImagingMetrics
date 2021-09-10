@@ -23,9 +23,13 @@ parser.add_argument('--pname', type=str, default=f'learned_ranking_{Ntrial}')
 parser.add_argument('--dgx', action='store_true', default=False)
 parser.add_argument('--file_csv', type=str, default=Path(r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\consensus_mode_all.csv'))
 parser.add_argument('--file_images', type=str, default=Path(r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\TRAINING_IMAGES_04032020.h5'))
+parser.add_argument('--resume_train', action='store_true', default=False)
 args = parser.parse_args()
 
 DGX = args.dgx
+resume_train = args.resume_train
+if resume_train:
+    Ntrial_prev=4437
 
 try:
     from ax.service.managed_loop import optimize
@@ -169,8 +173,8 @@ logging.basicConfig(filename=os.path.join(log_dir,f'runs/rank/ranking_{Ntrial}.l
 logging.info('With ISOresnet classifier')
 logging.info(f'{Ntrial}')
 
-CV = 1
-CV_fold = 10
+CV = 2
+CV_fold = 5
 logging.info(f'{CV_fold} fold cross validation {CV}')
 ntrain = int(0.8 * NRANKS)
 id = ranks[:,2] - 1
@@ -229,40 +233,64 @@ else:
 # Ranknet
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-if MOBILE:
-    ranknet = mobilenet_v2(pretrained=False, num_classes=1) # Less than ResNet18
-elif EFF:
-    ranknet = EfficientNet.from_name('efficientnet-b0', override_params={'num_classes': 1})
-elif RESNET:
-    ranknet = ISOResNet2(BasicBlock, [2,2,2,2], for_denoise=False)  # Less than ResNet18
-else:
-    ranknet = L2cnn(channels_in=1, channel_base=8, train_on_mag=train_on_mag)
+if resume_train:
+    try:
+        #recon_file = '/raid/DGXUserDataRaid/cxt004/NYUbrain/Recon6680_learned.pt'
+        rank_file = rf'/raid/DGXUserDataRaid/cxt004/NYUbrain/RankClassifier{Ntrial_prev}.pt'
+        rank_fileMSE = rf'/raid/DGXUserDataRaid/cxt004/NYUbrain/RankClassifier{Ntrial_prev}_MSE.pt'
+        rank_fileSSIM = rf'/raid/DGXUserDataRaid/cxt004/NYUbrain/RankClassifier{Ntrial_prev}_SSIM.pt'
+        ranknet = L2cnn(channels_in=1, channel_base=8, train_on_mag=train_on_mag)
+        classifier = Classifier(ranknet)
+        mse_module = MSEmodule()
+        classifierMSE = Classifier(mse_module)
+        ssim_module = SSIM()
+        classifierSSIM = Classifier(ssim_module)
 
-print(ranknet)
+        state = torch.load(rank_file)
+        classifier.load_state_dict(state['state_dict'], strict=True)
+        stateMSE = torch.load(rank_fileMSE)
+        classifierMSE.load_state_dict(stateMSE['state_dict'], strict=True)
+        stateSSIM = torch.load(rank_fileSSIM)
+        classifierSSIM.load_state_dict(stateSSIM['state_dict'], strict=True)
+    except:
+        print('no recon model found')
+else:
+    if MOBILE:
+        ranknet = mobilenet_v2(pretrained=False, num_classes=1) # Less than ResNet18
+    elif EFF:
+        ranknet = EfficientNet.from_name('efficientnet-b0', override_params={'num_classes': 1})
+    elif RESNET:
+        ranknet = ISOResNet2(BasicBlock, [2,2,2,2], for_denoise=False)  # Less than ResNet18
+    else:
+        ranknet = L2cnn(channels_in=1, channel_base=8, train_on_mag=train_on_mag)
+    print(ranknet)
+
+    classifier = Classifier(ranknet)
+    if trainScoreandMSE:
+        mse_module = MSEmodule()
+        classifierMSE = Classifier(mse_module)
+
+    if trainScoreandSSIM:
+        ssim_module = SSIM()
+        classifierSSIM = Classifier(ssim_module)
+
+
 # torchsummary.summary(ranknet.cuda(), [(X_1.shape[-3], maxMatSize, maxMatSize)
 #                              ,(X_1.shape[-3], maxMatSize, maxMatSize)])
 
-# Bayesian
-# optimize classification accuracy on the validation set as a function of the learning rate and momentum
-def train_evaluate(parameterization):
+# # Bayesian
+# # optimize classification accuracy on the validation set as a function of the learning rate and momentum
+# def train_evaluate(parameterization):
+#
+#     net = Classifier(ranknet)
+#     net = train_mod(net=net, train_loader=loader_T, parameters=parameterization, dtype=torch.float, device=device)
+#     return evaluate_mod(
+#         net=net,
+#         data_loader=loader_V,
+#         dtype=torch.float,
+#         device=device
+#     )
 
-    net = Classifier(ranknet)
-    net = train_mod(net=net, train_loader=loader_T, parameters=parameterization, dtype=torch.float, device=device)
-    return evaluate_mod(
-        net=net,
-        data_loader=loader_V,
-        dtype=torch.float,
-        device=device
-    )
-
-classifier = Classifier(ranknet)
-if trainScoreandMSE:
-    mse_module = MSEmodule()
-    classifierMSE = Classifier(mse_module)
-
-if trainScoreandSSIM:
-    ssim_module = SSIM()
-    classifierSSIM = Classifier(ssim_module)
 
 
 learning_rate_classifier = 1e-5
@@ -291,6 +319,12 @@ if trainScoreandSSIM:
         {'params': classifierSSIM.rank.parameters(), 'lr': learning_rate_SSIM}
     ], lr=learning_rate_classifier)
 
+if resume_train:
+    optimizer.load_state_dict(state['optimizer'])
+    if trainScoreandMSE:
+        optimizerMSE.load_state_dict(stateMSE['optimizer'])
+    if trainScoreandSSIM:
+        optimizerSSIM.load_state_dict(stateSSIM['optimizer'])
 
 #classifier.rank.register_backward_hook(printgradnorm)
 def loss_ortho(model, outputs, targets, lam=1e-4):

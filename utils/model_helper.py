@@ -309,10 +309,10 @@ class L2cnn(nn.Module):
 
         #self.mse_module = MSEmodule()
         self.layers = nn.ModuleList()
-        #self.dropout = ComplexDropout2D(p=0.1)
+        self.dropout = ComplexDropout2D(p=0.1)
         for block in range(group_depth):
 
-            self.layers.append(L2cnnBlock(channels_in, channels_out, pool_rate, bias=bias, activation=True,
+            self.layers.append(L2cnnBlock(channels_in, channels_out, pool_rate, bias=bias, activation=False,
                                           train_on_mag=self.train_on_mag))
 
             # Update channels
@@ -321,8 +321,8 @@ class L2cnn(nn.Module):
 
     def layer_mse(self, x):
         y = x.view(x.shape[0], -1)
-        #return 1e3*torch.sum((torch.abs(y) + 1e-6)**2, dim=1, keepdim=True)**0.5
-        return 1e3*torch.sum(torch.abs(y)**2, dim=1, keepdim=True)**0.5
+        return 1e3*torch.sum((torch.abs(y) + 1e-6)**2, dim=1, keepdim=True)**0.5
+        #return 1e3*torch.sum(torch.abs(y)**2, dim=1, keepdim=True)**0.5
 
     def forward(self, input, truth):
         x = input.clone()
@@ -342,7 +342,7 @@ class L2cnn(nn.Module):
         # Convolutional pathway with MSE at multiple scales
         for l in self.layers:
             diff_mag = l(diff_mag)
-            #diff_mag = self.dropout(diff_mag)
+            diff_mag = self.dropout(diff_mag)
 
         # print(f'diff_mag shape {diff_mag.shape}') # [64, 32, 1, 1]
         cnn_score = self.layer_mse(diff_mag)    #(64, 1)

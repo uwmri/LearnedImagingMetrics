@@ -13,10 +13,11 @@ from utils.utils_DL import *
 spdevice = sp.Device(0)
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
+RankID = 8811
 filepath_rankModel = Path(r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\rank_trained_L2cnn')
 filepath_train = Path("I:/NYUbrain")
 filepath_val = Path("I:/NYUbrain")
-file_rankModel = os.path.join(filepath_rankModel, "RankClassifier5888.pt")
+file_rankModel = os.path.join(filepath_rankModel, f"RankClassifier{RankID}.pt")
 log_dir = filepath_rankModel
 
 rank_channel =1
@@ -37,8 +38,9 @@ val_folder = Path("D:/NYUbrain/brain_multicoil_val/multicoil_val")
 test_folder = Path("D:/NYUbrain/brain_multicoil_test/multicoil_test")
 files = find("*.h5", train_folder)
 
-CORRUPTIONS = ['% PE Motion Corrupted','Total shift (pixels)', '% random undersampling', '% PE removed randomly', 'Linear phase (pixel)', 'Gaussian noise level(a.u.)']
-#CORRUPTIONS = ['Gaussian noise level(a.u.)']
+CORRUPTIONS = ['PE Motion Corrupted (%)', 'Total shift (pixels)', 'Random undersampling (%)', 'PE removed randomly (%)',
+               'Blurring (a.u.)', 'Gaussian noise level(a.u.)']
+# CORRUPTIONS = ['Blurring (a.u.)']
 SAME_IMAGE = '(the same image)'
 # out_name = os.path.join(f'corrupted_images_{WHICH_CORRUPTION}.h5')
 # try:
@@ -123,37 +125,37 @@ for WHICH_CORRUPTION in CORRUPTIONS:
     for i in range(Ntrials):
 
         if WHICH_CORRUPTION =='Linear phase (pixel)':
-            kshift_max=10
+            kshift_max=1
             corruption_mag = np.random.randint(-kshift_max, kshift_max)
             ksp2 = np.roll(ksp_full, corruption_mag, axis=-1)
 
-        if WHICH_CORRUPTION == '% PE Motion Corrupted':
+        if WHICH_CORRUPTION == 'PE Motion Corrupted (%)':
             # corruption_mag is from which PE line the motion started/total PEs
-            maxshift=20
+            maxshift=40
             ksp2, corruption_mag = trans_motion(ksp_full, dir_motion=2, maxshift=maxshift, prob=1, startPE=180,
-                                                fix_shift=True, fix_start=False)
+                                                fix_shift=True, fix_start=False, low=0.0, high=1)
         if WHICH_CORRUPTION == 'Total shift (pixels)':
             # corruption_mag is magnitude of the motion
-            startPE=169
-            ksp2, corruption_mag = trans_motion(ksp_full, dir_motion=2, maxshift=50, prob=1,
+            startPE=195
+            ksp2, corruption_mag = trans_motion(ksp_full, dir_motion=2, maxshift=5, prob=1,
                                                 startPE=startPE,fix_shift=False, fix_start=True)
 
         elif WHICH_CORRUPTION == 'Gaussian noise level(a.u.)':
-            gaussian_ulim = 12
+            gaussian_ulim = 13
             gaussian_level = np.random.randint(0, gaussian_ulim)
             ksp2, sigma_real, sigma_imag = add_gaussian_noise(ksp_full, 1, kedge_len=30,level=gaussian_level, mode=1, mean=0)
             #corruption_mag = (sigma_real**2 + sigma_imag**2)**0.5
             corruption_mag = gaussian_level
-        elif WHICH_CORRUPTION == 'blurring':
-            ksp2, corruption_mag = blurring(ksp_full, 20)
-        elif WHICH_CORRUPTION == '% random undersampling':
+        elif WHICH_CORRUPTION == 'Blurring (a.u.)':
+            ksp2, corruption_mag = blurring(ksp_full, 4)
+        elif WHICH_CORRUPTION == 'Random undersampling (%)':
             ksp2,_,_, corruption_mag= add_incoherent_noise(ksp_full, prob=1,
                                                        central=np.random.uniform(0.2, 0.4), mode=0,
-                                                       num_corrupted=0, dump=0.5)
-        elif WHICH_CORRUPTION == '% PE removed randomly':
+                                                       num_corrupted=0, dump=0)
+        elif WHICH_CORRUPTION == 'PE removed randomly (%)':
             ksp2,_,_, corruption_mag = add_incoherent_noise(ksp_full, prob=1,
-                                                       central=np.random.uniform(0.2, 0.4), mode=1,
-                                                       num_corrupted=0, dump=0.7)
+                                                       central=.05, mode=1,
+                                                       num_corrupted=0, dump=0)
 
         elif WHICH_CORRUPTION =='none':
             ksp2 = ksp_full
@@ -236,7 +238,7 @@ for WHICH_CORRUPTION in CORRUPTIONS:
     ax2.tick_params(axis='y', labelcolor=color)
     ax2.tick_params(axis='both', labelsize=14)
     fig_ssim.tight_layout()  # otherwise the right y-label is slightly clipped
-    fig_ssim.savefig(f'{WHICH_CORRUPTION}_ssim-score-corruption.png')
+    fig_ssim.savefig(f'{RankID}_{WHICH_CORRUPTION}_ssim-score-corruption.png')
 
     fig_mse, ax1 = plt.subplots(figsize=(7,5))
     color = 'tab:red'
@@ -253,7 +255,7 @@ for WHICH_CORRUPTION in CORRUPTIONS:
     ax2.tick_params(axis='y', labelcolor=color)
     ax2.tick_params(axis='both', labelsize=14)
     fig_mse.tight_layout()  # otherwise the right y-label is slightly clipped
-    fig_mse.savefig(f'{WHICH_CORRUPTION}_mse-score-corruption.png')
+    fig_mse.savefig(f'{RankID}_{WHICH_CORRUPTION}_mse-score-corruption.png')
 
     fig_mseVscore, ax3 = plt.subplots(figsize=(7,5))
     ax3.scatter(mseList, scoreList, alpha=0.5)
@@ -262,7 +264,7 @@ for WHICH_CORRUPTION in CORRUPTIONS:
     ax3.set_ylabel('score', fontsize=18)
     ax3.tick_params(axis='both', labelsize=14)
     fig_mseVscore.tight_layout()
-    fig_mseVscore.savefig(f'{WHICH_CORRUPTION}_mse-score.png')
+    fig_mseVscore.savefig(f'{RankID}_{WHICH_CORRUPTION}_mse-score.png')
 
     fig_ssimVscore, ax4 = plt.subplots(figsize=(7,5))
     ax4.scatter(ssimList, scoreList, alpha=0.5)
@@ -271,5 +273,5 @@ for WHICH_CORRUPTION in CORRUPTIONS:
     ax4.set_ylabel('score', fontsize=18)
     ax4.tick_params(axis='both', labelsize=14)
     fig_ssimVscore.tight_layout()
-    fig_ssimVscore.savefig(f'{WHICH_CORRUPTION}_ssim-score.png')
+    fig_ssimVscore.savefig(f'{RankID}_{WHICH_CORRUPTION}_ssim-score.png')
 

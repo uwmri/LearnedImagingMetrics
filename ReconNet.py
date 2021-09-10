@@ -41,7 +41,7 @@ parser.add_argument('--data_folder', type=str,
                     default=r'I:\NYUbrain',
                     help='Data path')
 parser.add_argument('--metric_file', type=str,
-                    default=r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\rank_trained_L2cnn\RankClassifier6158.pt',
+                    default=r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\rank_trained_L2cnn\RankClassifier6390.pt',
                     help='Name of learned metric file')
 parser.add_argument('--log_dir', type=str,
                     default=r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020',
@@ -49,6 +49,7 @@ parser.add_argument('--log_dir', type=str,
 parser.add_argument('--pname', type=str, default=f'chenwei_recon_{Ntrial}')
 parser.add_argument('--resume_train', action='store_true', default=False)
 parser.add_argument('--save_all_slices', action='store_true', default=False)
+parser.add_argument('--save_train_images', action='store_true', default=False)
 args = parser.parse_args()
 
 log_dir = args.log_dir
@@ -56,6 +57,7 @@ data_folder = args.data_folder
 metric_file = args.metric_file
 resume_train = args.resume_train
 saveAllSl = args.save_all_slices
+saveTrainIm = args.save_train_images
 # load RankNet
 try:
     import setproctitle
@@ -70,7 +72,7 @@ BO = False
 
 logging.basicConfig(filename=os.path.join(log_dir,f'Recon_{Ntrial}.log'), filemode='w', level=logging.INFO)
 
-ranknet = L2cnn(channels_in=rank_channel, channel_base=8, train_on_mag=rank_trained_on_mag)
+ranknet = L2cnn(channels_in=rank_channel, channel_base=16, train_on_mag=rank_trained_on_mag)
 #ranknet = ISOResNet2(BasicBlock, [2,2,2,2], for_denoise=False)
 classifier = Classifier(ranknet)
 
@@ -142,18 +144,35 @@ mask_gpu = sp.to_device(mask, spdevice)
 mask_torch = sp.to_pytorch(mask_gpu, requires_grad=False)
 
 # Data generator
-Ntrain = 9
-Nval = 1
+Ntrain = 45
+Nval = 5
 BATCH_SIZE = 1
 prefetch_data = True
-indicesT = np.random.randint(1173, size=Ntrain)
-trainingset = DataGeneratorRecon(data_folder, file_train, indices=indicesT, rank_trained_on_mag=rank_trained_on_mag,
-                                 data_type=smap_type)
-loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=True, pin_memory=True)
 
+# indicesT = np.array([581, 711, 1167, 322, 467, 456, 354, 942, 686, 547, 258, 205, 767, 460, 1109, 452, 731, 824, 1068,
+#                      2, 864, 631, 804, 166, 352, 371, 866, 925, 297, 252, 186, 304, 185, 838, 1065, 493, 598, 773, 452,
+#                      491, 789, 37, 522, 621, 1036])
+
+SaveCaseName = True
+DiffCaseEveryEpochT=False
+logging.info(f'DiffCaseEveryEpochT {DiffCaseEveryEpochT}')
+indicesT = np.random.randint(1173, size=Ntrain)
+if not DiffCaseEveryEpochT:
+    logging.info(f'training cases {indicesT}')
+trainingset = DataGeneratorRecon(data_folder, file_train, indices=indicesT, rank_trained_on_mag=rank_trained_on_mag,
+                                 data_type=smap_type, case_name=SaveCaseName, DiffCaseEveryEpoch=DiffCaseEveryEpochT)
+loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=False, pin_memory=True)
+
+
+#indicesV = np.random.randint(347, size=Nval)
+indicesV = np.array([42, 148, 19, 91, 313])
+DiffCaseEveryEpochV=False
+logging.info(f'DiffCaseEveryEpochV {DiffCaseEveryEpochV}')
+if not DiffCaseEveryEpochV:
+    logging.info(f'training cases {indicesV}')
 indicesV = np.random.randint(347, size=Nval)
 validationset = DataGeneratorRecon(data_folder, file_val, indices=indicesV, rank_trained_on_mag=rank_trained_on_mag,
-                                   data_type=smap_type)
+                                   data_type=smap_type, case_name=SaveCaseName, DiffCaseEveryEpoch=DiffCaseEveryEpochV)
 loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=False, pin_memory=True)
 
 UNROLL = True
@@ -200,7 +219,7 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 writer_train = SummaryWriter(os.path.join(log_dir,f'runs/recon/train_{Ntrial}'))
 writer_val = SummaryWriter(os.path.join(log_dir,f'runs/recon/val_{Ntrial}'))
 
-WHICH_LOSS = 'learned'
+WHICH_LOSS = 'mse'
 if WHICH_LOSS == 'perceptual':
     loss_perceptual = PerceptualLoss_VGG16()
     loss_perceptual.cuda()
@@ -217,7 +236,7 @@ logging.info(f'MSE for first {epochMSE} epochs then switch to learned')
 lossT = np.zeros(Nepoch)
 lossV = np.zeros(Nepoch)
 
-out_name = os.path.join(log_dir,f'Images_training{Ntrial}_{WHICH_LOSS}_eval.h5')
+
 out_name_train = os.path.join(log_dir,f'Images_training{Ntrial}_{WHICH_LOSS}_train.h5')
 
 
@@ -269,8 +288,11 @@ for epoch in range(Nepoch):
             # print(f'-------------------------------beginning of training, epoch {epoch}-------------------------------')
             # print_mem()
             tstart_batch = time.time()
-
-            smaps, kspace = data
+            if SaveCaseName:
+                smaps, kspace, name = data
+                logging.info(f'training case {name}')
+            else:
+                smaps, kspace = data
             smaps = smaps[0]
             kspace = kspace[0]
 
@@ -288,7 +310,7 @@ for epoch in range(Nepoch):
             t_case = time.time()
             optimizer.zero_grad()
             loss_avg = 0.0
-            for sl in range(smaps.shape[0]):
+            for sl in range(smaps.shape[0]-3):
                 t_sl = time.time()
 
                 # Clone to torch
@@ -449,13 +471,17 @@ for epoch in range(Nepoch):
 
     ReconModel.eval()
     for i, data in enumerate(loader_V, 0):
-        smaps, kspace = data
+        if SaveCaseName:
+            smaps, kspace, name = data
+            logging.info(f'val case {i} is {name}')
+        else:
+            smaps, kspace = data
         smaps = smaps[0]
         kspace = kspace[0]
 
         Nslices = smaps.shape[0]
 
-        for sl in range(smaps.shape[0]):
+        for sl in range(smaps.shape[0]-3):
             smaps_sl = torch.clone(smaps[sl]).cuda()
             kspace_sl = torch.clone(kspace[sl]).cuda()
 
@@ -543,7 +569,8 @@ for epoch in range(Nepoch):
                     hf.create_dataset(f"Vcase_{i}_{sl}", data=np.squeeze(imEstpltV.numpy()))
                     hf.create_dataset(f"truthVcase_{i}_{sl}", data=np.squeeze(truthpltV.numpy()))
 
-            if i == 0 and sl == 4:
+            if sl == 4:
+                out_name = os.path.join(log_dir, f'Images_training{Ntrial}_{WHICH_LOSS}_eval_case{indicesV[i]}.h5')
                 truthplt = im_sl.detach().cpu()
                 perturbed = sense_adjoint(smaps_sl, kspaceU_sl)
                 noisyplt = perturbed.detach().cpu()

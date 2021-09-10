@@ -60,7 +60,7 @@ def wave_thresh(input, thresh):
     return output
 
 
-def trans_motion(kspace, dir_motion=2, maxshift=10, prob=1, startPE=180,fix_shift=False, fix_start=False):
+def trans_motion(kspace, dir_motion=2, maxshift=10, prob=1, startPE=180,fix_shift=False, fix_start=False, low=0, high=0.6):
     # input: kspace (coil, h, w).
     # dir_motion: direction of phase encode. 0 for width, 1 for height-dir
     # maxshift: np.random.uniform(0,maxshift) is the size of displacement in pixel
@@ -127,24 +127,30 @@ def trans_motion(kspace, dir_motion=2, maxshift=10, prob=1, startPE=180,fix_shif
             else:   # col is PE
                 mu_start = num_y/2
                 sigma_start = num_y/2*.075
+                central_rangeL = num_y / 2 - num_y / 2 * .05
+                central_rangeR = num_y / 2 + num_y / 2 * .05
+                edgeR = np.max(np.nonzero(input[0, 0, :]))
                 if fix_shift:
-                    start = np.random.randint(np.min(np.nonzero(input[0,0,:])), np.max(np.nonzero(input[0,0,:])))
+
+                    corruptableRegion = edgeR - central_rangeR
+                    percentage = np.random.uniform(low, high)
+                    start = int(edgeR - corruptableRegion * percentage)
                     #start =np.max(np.nonzero(input[0,0,:]))-1
                 else:
                     start = np.int(np.floor(np.random.normal(mu_start, sigma_start)))
                 if fix_start:
                     start = startPE
-                central_rangeL = num_y/2 - num_y/2*.05
-                central_rangeR = num_y/2 + num_y/2*.05
+
 
                 if start > central_rangeR:
                     logger.info(f'motion starts from column # {start} to the end')
+
                     for ii in range(num_x):
                         for jj in range(start+1,num_y):
                             input[:, ii, jj] = input[:, ii, jj] * np.exp(
                                 -1j * 2 * np.pi * (shift_bulk0 * (1 / num_y) * (jj - num_y / 2) + shift_bulk1 *
                                                    (1 / num_x) * (ii - num_x / 2)))
-                    percent_corruptedPE = (np.max(np.nonzero(input[0,0,:])) -start)/num_y_nnz
+                    percent_corruptedPE = (edgeR -start)/num_y_nnz
                 elif start < central_rangeL:
                     percent_corruptedPE = 0
                     # logger.info(f'motion starts from column #0 to {start}')
@@ -270,9 +276,10 @@ def add_incoherent_noise(ksp, prob=None, central=0.4, mode=1, num_corrupted=0, d
     logger = logging.getLogger('add_incoherent_noise')
 
     kspace_width = kspace.shape[2]
-    centralL = np.int(np.floor(kspace_width * central))
-    centralR = np.int(np.floor(kspace_width * (1-central)))
-
+    central_width = kspace_width * central
+    centralL = int(np.floor(kspace_width/2)-central_width)
+    centralR = int(np.floor(kspace_width/2)+central_width)
+    #print(f'central ({centralL}, {centralR})')
     nnzL = np.min(np.nonzero(kspace[0,0,:]))
     nnzR = np.max(np.nonzero(kspace[0,0,:]))
 
