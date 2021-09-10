@@ -23,9 +23,12 @@ parser.add_argument('--pname', type=str, default=f'learned_ranking_{Ntrial}')
 parser.add_argument('--dgx', action='store_true', default=False)
 parser.add_argument('--file_csv', type=str, default=Path(r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\consensus_mode_all.csv'))
 parser.add_argument('--file_images', type=str, default=Path(r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\TRAINING_IMAGES_04032020.h5'))
+parser.add_argument('--device', type=int, default=0, help='CUDA device for SigPy and PyTorch')
 args = parser.parse_args()
 
 DGX = args.dgx
+device_num = args.device
+device = torch.device(f'cuda:{device_num}' if torch.cuda.is_available() else "cpu")
 
 try:
     from ax.service.managed_loop import optimize
@@ -194,22 +197,22 @@ if SAMPLER:
     # deal with imbalanced class
     samplerT = get_sampler(Labels_cnnT)
     samplerV = get_sampler(Labels_cnnV)
-    trainingset = DataGenerator_rank(X_1, X_2, X_T, Labels_cnnT, idT, augmentation=True, pad_channels=0)
+    trainingset = DataGenerator_rank(X_1, X_2, X_T, Labels_cnnT, idT, augmentation=True, pad_channels=0, device=sp.Device(device_num))
     loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=False, sampler=samplerT, drop_last=True)
 
-    validationset = DataGenerator_rank(X_1, X_2, X_T, Labels_cnnV, idV, augmentation=False, pad_channels=0)
+    validationset = DataGenerator_rank(X_1, X_2, X_T, Labels_cnnV, idV, augmentation=False, pad_channels=0, device=sp.Device(device_num))
     loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE_EVAL, shuffle=False, sampler=samplerV, drop_last=True)
 else:
-    trainingset = DataGenerator_rank(X_1, X_2, X_T, Labels_cnnT, idT, augmentation=True, pad_channels=0)
+    trainingset = DataGenerator_rank(X_1, X_2, X_T, Labels_cnnT, idT, augmentation=True, pad_channels=0, device=sp.Device(device_num))
     loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=False, drop_last=True)
 
-    validationset = DataGenerator_rank(X_1, X_2, X_T, Labels_cnnV, idV, augmentation=False, pad_channels=0)
+    validationset = DataGenerator_rank(X_1, X_2, X_T, Labels_cnnV, idV, augmentation=False, pad_channels=0, device=sp.Device(device_num))
     loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE_EVAL, shuffle=False, drop_last=True)
 
 if WeightedLoss:
     weight = get_class_weights(Labels)
 else:
-    weight = torch.ones(3).cuda()
+    weight = torch.ones(3).to(device)
 
 # # check loader, show a batch
 # check = iter(loader_T)
@@ -228,8 +231,6 @@ else:
 # print(f'Label is {checkcrop[randnum]}')
 
 # Ranknet
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
 if MOBILE:
     ranknet = mobilenet_v2(pretrained=False, num_classes=1) # Less than ResNet18
 elif EFF:
@@ -237,10 +238,10 @@ elif EFF:
 elif RESNET:
     ranknet = ISOResNet2(BasicBlock, [2,2,2,2], for_denoise=False)  # Less than ResNet18
 else:
-    ranknet = L2cnn(channels_in=1, channel_base=8, train_on_mag=train_on_mag)
+    ranknet = L2cnn(channels_in=1, channel_base=16, train_on_mag=train_on_mag)
 
 print(ranknet)
-# torchsummary.summary(ranknet.cuda(), [(X_1.shape[-3], maxMatSize, maxMatSize)
+# torchsummary.summary(ranknet.to(device), [(X_1.shape[-3], maxMatSize, maxMatSize)
 #                              ,(X_1.shape[-3], maxMatSize, maxMatSize)])
 
 # Bayesian
@@ -305,13 +306,13 @@ def loss_ortho(model, outputs, targets, lam=1e-4):
 loss_func = nn.CrossEntropyLoss(weight=weight)
 
 #loss_func = nn.MultiMarginLoss()
-classifier.cuda()
+classifier.to(device)
 
 if trainScoreandMSE:
-    classifierMSE.cuda()
+    classifierMSE.to(device)
 
 if trainScoreandSSIM:
-    classifierSSIM.cuda()
+    classifierSSIM.to(device)
 
 logging.info(f'learning rate classifier = {learning_rate_classifier}')
 logging.info(f'leaning rate rank = {learning_rate_rank}')
@@ -401,7 +402,7 @@ for epoch in range(Nepoch):
             # plt.imshow(np.angle(im1[showsl,0,...].numpy())); plt.show()
             # plt.imshow(np.angle(im2[showsl, 0, ...].numpy())); plt.show()
             # plt.imshow(np.angle(imt[showsl, 0, ...].numpy())); plt.show()
-            im1, im2, imt = im1.cuda(), im2.cuda(), imt.cuda()
+            im1, im2, imt = im1.to(device), im2.to(device), imt.to(device)
             labels = labels.to(device, dtype=torch.long)
 
             if mixed_training:
@@ -413,7 +414,7 @@ for epoch in range(Nepoch):
                     loss = loss_func(delta, labels)
                     # Add L2 norm for kernels
                     l2_lambda = 1e-5
-                    l2_reg = torch.tensor(0.).cuda()
+                    l2_reg = torch.tensor(0.).to(device)
                     for param in classifier.rank.parameters():
                         l2_reg += torch.norm(param)
                     loss += l2_lambda * l2_reg
@@ -428,7 +429,7 @@ for epoch in range(Nepoch):
                     loss = loss_func(delta, labels)
                 # Add L2 norm for kernels
                 l2_lambda = 1e-5
-                l2_reg = torch.tensor(0.).cuda()
+                l2_reg = torch.tensor(0.).to(device)
                 for param in classifier.rank.parameters():
                     l2_reg += torch.norm(param)
                 loss += l2_lambda * l2_reg
@@ -537,7 +538,7 @@ for epoch in range(Nepoch):
 
         # get the inputs
         im1, im2, imt, labels = data  # im (sl, 3 , 396, 396)
-        im1, im2, imt = im1.cuda(), im2.cuda(), imt.cuda()
+        im1, im2, imt = im1.to(device), im2.to(device), imt.to(device)
 
         labels = labels.to(device, dtype=torch.long)
 
