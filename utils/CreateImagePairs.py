@@ -276,9 +276,15 @@ def add_incoherent_noise(ksp, prob=None, central=0.4, mode=1, num_corrupted=0, d
     logger = logging.getLogger('add_incoherent_noise')
 
     kspace_width = kspace.shape[2]
+    kspace_length = kspace.shape[1]
     central_width = kspace_width * central
     centralL = int(np.floor(kspace_width/2)-central_width)
     centralR = int(np.floor(kspace_width/2)+central_width)
+
+    central_length = kspace_length * central
+    centralU = int(np.floor(kspace_length/2)-central_width)
+    centralD = int(np.floor(kspace_length/2)+central_width)
+
     #print(f'central ({centralL}, {centralR})')
     nnzL = np.min(np.nonzero(kspace[0,0,:]))
     nnzR = np.max(np.nonzero(kspace[0,0,:]))
@@ -300,7 +306,7 @@ def add_incoherent_noise(ksp, prob=None, central=0.4, mode=1, num_corrupted=0, d
             randuni_edge = np.random.choice([0, 1], size=(centralL+(kspace.shape[-1]-centralR),), p=[1 - percent, percent])
             randuni_col = np.concatenate((randuni_edge[:centralL],np.ones(centralR-centralL), randuni_edge[centralL:]))
             randuni_colm = np.tile(randuni_col, (len(kspace[0, :, 0]),1))
-            percent_actualRemoved = (1- (1-2*central+np.count_nonzero(randuni_edge[nnzL:nnzR])/kspace_width)) * 100
+            percent_actualRemoved = (1-(central+np.count_nonzero(randuni_edge[nnzL:nnzR])/kspace_width)) * 100
             #percent_actualRemoved = (1- (1-2*central+np.count_nonzero(randuni_edge)/kspace_width)) * 100
 
             for c in range(len(kspace[:,0,0])):
@@ -310,7 +316,7 @@ def add_incoherent_noise(ksp, prob=None, central=0.4, mode=1, num_corrupted=0, d
             if num_corrupted == 0:
                 # poisson
                 # percent = np.random.uniform(0.15,0.3)
-                dump0 = dump + 0.2
+                dump0 = dump
                 percent = np.random.uniform(dump0,1)     #default is (0.7, 1), more moderate when discarding points
             else:
                 # for the second corrupted image, do the same the percent as the first one. input dump=percent1.
@@ -318,8 +324,9 @@ def add_incoherent_noise(ksp, prob=None, central=0.4, mode=1, num_corrupted=0, d
                 # print(f'percent for mode 0 is {percent}')
             logger.info(f'mode={mode}, discard {(1 - percent)*100}% points')
 
-            # totally random
+            # totally random, center fully sampled
             randuni_m = np.random.choice([0, 1], size=kspace[0, :, :].shape, p=[1-percent, percent])
+            randuni_m[centralU:centralD, centralL:centralR] = 1
 
             # poisson
             # randuni_m = mri.poisson(kspace[0, :, :].shape, accel=1/percent, crop_corner=True, dtype='float32')

@@ -13,7 +13,7 @@ from utils.utils_DL import *
 spdevice = sp.Device(0)
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-RankID = 8811
+RankID = 6390
 filepath_rankModel = Path(r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\rank_trained_L2cnn')
 filepath_train = Path("I:/NYUbrain")
 filepath_val = Path("I:/NYUbrain")
@@ -22,7 +22,7 @@ log_dir = filepath_rankModel
 
 rank_channel =1
 #ranknet = ISOResNet2(BasicBlock, [2,2,2,2], for_denoise=False)
-ranknet = L2cnn(channels_in=rank_channel, channel_base=8)
+ranknet = L2cnn(channels_in=rank_channel, channel_base=16)
 classifier = Classifier(ranknet)
 
 state = torch.load(file_rankModel)
@@ -38,9 +38,9 @@ val_folder = Path("D:/NYUbrain/brain_multicoil_val/multicoil_val")
 test_folder = Path("D:/NYUbrain/brain_multicoil_test/multicoil_test")
 files = find("*.h5", train_folder)
 
-CORRUPTIONS = ['PE Motion Corrupted (%)', 'Total shift (pixels)', 'Random undersampling (%)', 'PE removed randomly (%)',
-               'Blurring (a.u.)', 'Gaussian noise level(a.u.)']
-# CORRUPTIONS = ['Blurring (a.u.)']
+#CORRUPTIONS = ['PE Motion Corrupted (%)', 'Total shift (pixels)', 'Random undersampling (%)', 'PE removed randomly (%)',
+#              'Blurring (a.u.)', 'Gaussian noise level(a.u.)']
+CORRUPTIONS = ['Random undersampling (%)']
 SAME_IMAGE = '(the same image)'
 # out_name = os.path.join(f'corrupted_images_{WHICH_CORRUPTION}.h5')
 # try:
@@ -136,12 +136,12 @@ for WHICH_CORRUPTION in CORRUPTIONS:
                                                 fix_shift=True, fix_start=False, low=0.0, high=1)
         if WHICH_CORRUPTION == 'Total shift (pixels)':
             # corruption_mag is magnitude of the motion
-            startPE=195
+            startPE=203
             ksp2, corruption_mag = trans_motion(ksp_full, dir_motion=2, maxshift=5, prob=1,
                                                 startPE=startPE,fix_shift=False, fix_start=True)
 
         elif WHICH_CORRUPTION == 'Gaussian noise level(a.u.)':
-            gaussian_ulim = 13
+            gaussian_ulim = 11
             gaussian_level = np.random.randint(0, gaussian_ulim)
             ksp2, sigma_real, sigma_imag = add_gaussian_noise(ksp_full, 1, kedge_len=30,level=gaussian_level, mode=1, mean=0)
             #corruption_mag = (sigma_real**2 + sigma_imag**2)**0.5
@@ -150,11 +150,11 @@ for WHICH_CORRUPTION in CORRUPTIONS:
             ksp2, corruption_mag = blurring(ksp_full, 4)
         elif WHICH_CORRUPTION == 'Random undersampling (%)':
             ksp2,_,_, corruption_mag= add_incoherent_noise(ksp_full, prob=1,
-                                                       central=np.random.uniform(0.2, 0.4), mode=0,
-                                                       num_corrupted=0, dump=0)
+                                                       central=0.1, mode=0,
+                                                       num_corrupted=0, dump=0.05)
         elif WHICH_CORRUPTION == 'PE removed randomly (%)':
             ksp2,_,_, corruption_mag = add_incoherent_noise(ksp_full, prob=1,
-                                                       central=.05, mode=1,
+                                                       central=.01, mode=1,
                                                        num_corrupted=0, dump=0)
 
         elif WHICH_CORRUPTION =='none':
