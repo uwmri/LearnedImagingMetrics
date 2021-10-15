@@ -47,7 +47,7 @@ parser.add_argument('--log_dir', type=str,
                     default=r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020',
                     help='Directory to log files')
 parser.add_argument('--pname', type=str, default=f'chenwei_recon_{Ntrial}')
-parser.add_argument('--resume_train', action='store_true', default=False)
+parser.add_argument('--resume_train', action='store_true', default=True)
 parser.add_argument('--save_all_slices', action='store_true', default=False)
 parser.add_argument('--save_train_images', action='store_true', default=False)
 args = parser.parse_args()
@@ -181,7 +181,7 @@ UNROLL = True
 if resume_train:
     try:
         #recon_file = '/raid/DGXUserDataRaid/cxt004/NYUbrain/Recon6680_learned.pt'
-        recon_file = r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\Recon6680_learned.pt'
+        recon_file = r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\Recon8314_learned.pt'
         ReconModel = MoDL(inner_iter=5, DENOISER='unet')
 
         state = torch.load(recon_file)
@@ -219,7 +219,7 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 writer_train = SummaryWriter(os.path.join(log_dir,f'runs/recon/train_{Ntrial}'))
 writer_val = SummaryWriter(os.path.join(log_dir,f'runs/recon/val_{Ntrial}'))
 
-WHICH_LOSS = 'mse'
+WHICH_LOSS = 'learned'
 if WHICH_LOSS == 'perceptual':
     loss_perceptual = PerceptualLoss_VGG16()
     loss_perceptual.cuda()

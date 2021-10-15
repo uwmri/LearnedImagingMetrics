@@ -38,9 +38,9 @@ val_folder = Path("D:/NYUbrain/brain_multicoil_val/multicoil_val")
 test_folder = Path("D:/NYUbrain/brain_multicoil_test/multicoil_test")
 files = find("*.h5", train_folder)
 
-#CORRUPTIONS = ['PE Motion Corrupted (%)', 'Total shift (pixels)', 'Random undersampling (%)', 'PE removed randomly (%)',
+#CORRUPTIONS = ['PE Motion Corrupted (%)', 'Random undersampling (%)', 'PE removed randomly (%)',
 #              'Blurring (a.u.)', 'Gaussian noise level(a.u.)']
-CORRUPTIONS = ['Random undersampling (%)']
+CORRUPTIONS = ['Blurring (a.u.)']
 SAME_IMAGE = '(the same image)'
 # out_name = os.path.join(f'corrupted_images_{WHICH_CORRUPTION}.h5')
 # try:
@@ -58,7 +58,7 @@ count = 0
 
 #for index_file in range(1):
 #file = 'D:\\NYUbrain\\brain_multicoil_train\\multicoil_train\\file_brain_AXT1PRE_205_6000160.h5'
-file = 'D:\\NYUbrain\\brain_multicoil_train\\multicoil_train\\file_brain_AXT2_202_2020159.h5'
+file = 'D:\\NYUbrain\\brain_multicoil_train\\multicoil_train\\file_brain_AXT1PRE_206_6000196.h5'
 #while count == 0:
 
     # file = files[np.random.randint(len(os.listdir(train_folder)))]
@@ -98,7 +98,7 @@ tot_coils = np.size(ksp, 1)
 #for s in slice_nums:
     #s = int(s)
 #s = np.random.randint(tot_slices)
-s = 0
+s = 2
 print(f'{file}, slice{s}')
 ksp_full = ksp[s]
 ksp_full_gpu = sp.to_device(ksp_full, device=spdevice)
@@ -141,21 +141,21 @@ for WHICH_CORRUPTION in CORRUPTIONS:
                                                 startPE=startPE,fix_shift=False, fix_start=True)
 
         elif WHICH_CORRUPTION == 'Gaussian noise level(a.u.)':
-            gaussian_ulim = 11
+            gaussian_ulim = 10
             gaussian_level = np.random.randint(0, gaussian_ulim)
             ksp2, sigma_real, sigma_imag = add_gaussian_noise(ksp_full, 1, kedge_len=30,level=gaussian_level, mode=1, mean=0)
             #corruption_mag = (sigma_real**2 + sigma_imag**2)**0.5
             corruption_mag = gaussian_level
         elif WHICH_CORRUPTION == 'Blurring (a.u.)':
-            ksp2, corruption_mag = blurring(ksp_full, 4)
+            ksp2, corruption_mag = blurring(ksp_full, 2.7)
         elif WHICH_CORRUPTION == 'Random undersampling (%)':
             ksp2,_,_, corruption_mag= add_incoherent_noise(ksp_full, prob=1,
                                                        central=0.1, mode=0,
-                                                       num_corrupted=0, dump=0.05)
+                                                       num_corrupted=0, dump=0.1)
         elif WHICH_CORRUPTION == 'PE removed randomly (%)':
             ksp2,_,_, corruption_mag = add_incoherent_noise(ksp_full, prob=1,
-                                                       central=.01, mode=1,
-                                                       num_corrupted=0, dump=0)
+                                                       central=.02, mode=1,
+                                                       num_corrupted=0, dump=0.2)
 
         elif WHICH_CORRUPTION =='none':
             ksp2 = ksp_full
@@ -228,6 +228,7 @@ for WHICH_CORRUPTION in CORRUPTIONS:
     ax1.set_xlabel(f'{WHICH_CORRUPTION}', fontsize=18)
     ax1.set_ylabel('1-ssim', color=color, fontsize=18)
     ax1.scatter(corruption_magList, ssimList, color=color, alpha=0.2)
+    ax1.set_ylim([0,1])
     ax1.tick_params(axis='y', labelcolor=color)
     ax1.tick_params(axis='both', labelsize=14)
 
@@ -245,6 +246,7 @@ for WHICH_CORRUPTION in CORRUPTIONS:
     ax1.set_xlabel(f'{WHICH_CORRUPTION}', fontsize=18)
     ax1.set_ylabel('mse', color=color, fontsize=18)
     ax1.scatter(corruption_magList, mseList, color=color, alpha=0.2)
+    ax1.set_ylim([0,27])
     ax1.tick_params(axis='y', labelcolor=color)
     ax1.tick_params(axis='both', labelsize=14)
 
@@ -274,4 +276,4 @@ for WHICH_CORRUPTION in CORRUPTIONS:
     ax4.tick_params(axis='both', labelsize=14)
     fig_ssimVscore.tight_layout()
     fig_ssimVscore.savefig(f'{RankID}_{WHICH_CORRUPTION}_ssim-score.png')
-
+    #
