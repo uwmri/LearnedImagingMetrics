@@ -173,7 +173,7 @@ logging.basicConfig(filename=os.path.join(log_dir,f'runs/rank/ranking_{Ntrial}.l
 logging.info('With ISOresnet classifier')
 logging.info(f'{Ntrial}')
 
-CV = 2
+CV = 0
 CV_fold = 5
 logging.info(f'{CV_fold} fold cross validation {CV}')
 ntrain = int(0.8 * NRANKS)
@@ -239,7 +239,9 @@ if resume_train:
         rank_file = rf'/raid/DGXUserDataRaid/cxt004/NYUbrain/RankClassifier{Ntrial_prev}.pt'
         rank_fileMSE = rf'/raid/DGXUserDataRaid/cxt004/NYUbrain/RankClassifier{Ntrial_prev}_MSE.pt'
         rank_fileSSIM = rf'/raid/DGXUserDataRaid/cxt004/NYUbrain/RankClassifier{Ntrial_prev}_SSIM.pt'
-        ranknet = L2cnn(channels_in=1, channel_base=8, train_on_mag=train_on_mag)
+        #ranknet = L2cnn(channels_in=1, channel_base=8, train_on_mag=train_on_mag)
+        ranknet = L2cnn(channels_in=1, channel_base=8, group_depth=1, train_on_mag=train_on_mag)
+
         classifier = Classifier(ranknet)
         mse_module = MSEmodule()
         classifierMSE = Classifier(mse_module)
@@ -262,7 +264,10 @@ else:
     elif RESNET:
         ranknet = ISOResNet2(BasicBlock, [2,2,2,2], for_denoise=False)  # Less than ResNet18
     else:
-        ranknet = L2cnn(channels_in=1, channel_base=8, train_on_mag=train_on_mag)
+        #ranknet = L2cnn(channels_in=1, channel_base=8, train_on_mag=train_on_mag)
+        #ranknet = L2cnn(channels_in=1, channel_base=8, train_on_mag=train_on_mag)
+        ranknet = L2cnn(channels_in=1, channel_base=8, group_depth=1, train_on_mag=train_on_mag)
+
     print(ranknet)
 
     classifier = Classifier(ranknet)
@@ -293,8 +298,8 @@ else:
 
 
 
-learning_rate_classifier = 1e-5
-learning_rate_rank = 1e-5
+learning_rate_classifier = 1e-3
+learning_rate_rank = 1e-3
 learning_rate_MSE = 1e-3
 learning_rate_SSIM = 1e-3
 
@@ -325,6 +330,12 @@ if resume_train:
         optimizerMSE.load_state_dict(stateMSE['optimizer'])
     if trainScoreandSSIM:
         optimizerSSIM.load_state_dict(stateSSIM['optimizer'])
+
+lmbda = lambda epoch: 0.99
+scheduler = torch.optim.lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lmbda)
+schedulerMSE = torch.optim.lr_scheduler.MultiplicativeLR(optimizerMSE, lr_lambda=lmbda)
+schedulerSSIM = torch.optim.lr_scheduler.MultiplicativeLR(optimizerSSIM, lr_lambda=lmbda)
+
 
 #classifier.rank.register_backward_hook(printgradnorm)
 def loss_ortho(model, outputs, targets, lam=1e-4):
@@ -559,6 +570,10 @@ for epoch in range(Nepoch):
         writer_train.add_figure('Score_vs_ssim', score_ssim_figureT, epoch)
         writer_train.add_scalar('PearsonCorr_SSIM', corrT, epoch)
         writer_train.add_scalar('p-value_SSIM', pT, epoch)
+
+    scheduler.step()
+    schedulerMSE.step()
+    schedulerSSIM.step()
 
     # validation
     classifier.eval()

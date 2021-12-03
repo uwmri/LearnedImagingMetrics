@@ -1,6 +1,9 @@
 import pickle
 from typing import Dict
 
+import matplotlib
+
+import h5py
 import numpy as np
 import sigpy as sp
 import torch
@@ -15,7 +18,7 @@ from utils.CreateImagePairs import get_smaps, add_gaussian_noise
 from utils.unet_componets import *
 from utils.unet_components_complex import *
 from utils.varnet_components_complex import *
-from mri_unet.unet import MRI_UNet
+from mri_unet.unet import UNet
 
 spdevice = sp.Device(0)
 
@@ -36,10 +39,63 @@ class SubtractArray(sp.linop.Linop):
     def _adjoint_linop(self):
         return self
 
+import random
+class DataGeneratorReconSlices(Dataset):
+
+    def __init__(self,path_root, rank_trained_on_mag=False, data_type=None, case_name=False):
+
+        '''
+        input: mask (768, 396) complex64
+        output: all complex numpy array
+                fully sampled kspace (rectangular), truth image (square), smaps (rectangular)
+        '''
+
+
+        self.scans = [f for f in os.listdir(path_root) if os.path.isfile(os.path.join(path_root, f))]
+        random.shuffle(self.scans)
+
+        print(f'Found {len(self.scans)} from {path_root}')
+
+        self.len = len(self.scans)
+        self.data_folder = path_root
+        self.data_type = data_type
+        self.rank_trained_on_mag = rank_trained_on_mag
+        self.case_name = case_name
+
+
+    def __len__(self):
+        return self.len
+
+    def __getitem__(self, idx):
+
+        fname = self.scans[idx]
+
+        with h5py.File(os.path.join(self.data_folder,fname),'r') as hf:
+            if self.data_type == 'smap16':
+                smaps = np.array(hf['smaps'])
+                smaps = smaps.view(np.int16).astype(np.float32).view(np.complex64)
+                smaps /= 32760
+                #print(smaps.shape)
+            else:
+                smaps = np.array(hf['smaps'])
+
+            #t = time.time()
+            kspace = np.array(hf['kspace'])
+            kspace = zero_pad3D(kspace)  # array (sl, coil, 768, 396)
+            kspace /= np.max(np.abs(kspace))/np.prod(kspace.shape[-2:])
+
+        # Copy to torch
+        kspace = torch.from_numpy(kspace)
+        smaps = torch.from_numpy(smaps)
+
+        if not self.case_name:
+            return smaps, kspace
+        else:
+            return smaps, kspace, fname
 
 class DataGeneratorRecon(Dataset):
 
-    def __init__(self,path_root, h5file, indices, rank_trained_on_mag=False, data_type=None, case_name=False,
+    def __init__(self,path_root, h5file, indices=None, rank_trained_on_mag=False, data_type=None, case_name=False,
                  DiffCaseEveryEpoch=False):
 
         '''
@@ -55,8 +111,12 @@ class DataGeneratorRecon(Dataset):
         self.hf = h5py.File(name=os.path.join(path_root, h5file), mode='r')
         self.scans = [f for f in self.hf.keys()]
         self.num_allcases = len((self.scans))
-        self.indices = indices
-        self.len = len(indices)
+        if indices is not None:
+            self.indices = indices
+        else:
+            self.indices = np.arange(self.num_allcases)
+
+        self.len = len(self.indices)
 
         self.data_type = data_type
 
@@ -69,11 +129,10 @@ class DataGeneratorRecon(Dataset):
         return self.len
 
     def __getitem__(self, idx):
-        if self.DiffCaseEveryEpoch:
-            actual_idx = np.random.randint(self.num_allcases)
-        else:
-            actual_idx = self.indices[idx]
-        #print(f'Load {self.scans[idx]}')
+
+        actual_idx = self.indices[idx]
+
+        #print(f'Load {self.scans[actual_idx]}')
         #t = time.time()
         if self.data_type == 'smap16':
             smaps = np.array(self.hf[self.scans[actual_idx]]['smaps'])
@@ -264,7 +323,7 @@ def loss_fcn_onenet(noisy, output, target, projector, encoder, discriminator, di
 
 
 # learned metrics loss
-def learnedloss_fcn(output, target, scoreModel, rank_trained_on_mag=False, augmentation=True):
+def learnedloss_fcn(output, target, scoreModel, rank_trained_on_mag=False, augmentation=False):
 
     if output.ndim == 2:
         output = output.unsqueeze(0).unsqueeze(0)
@@ -297,65 +356,47 @@ def learnedloss_fcn(output, target, scoreModel, rank_trained_on_mag=False, augme
     #
     #     target = torch.cat((target, zeros), dim=1)      # (batch=1, 3, 396, 396)
 
-
-
     delta = 0
+    count = 1.0
     for sl in range(Nslice):
 
-        for do_trans in [True, False]:
+        output_sl = torch.unsqueeze(output[sl], 0)
+        target_sl = torch.unsqueeze(target[sl], 0)
 
-            if do_trans:
-                output_sl = torch.unsqueeze(output[sl], 0).permute(0,1,3,2)
-                target_sl = torch.unsqueeze(target[sl], 0).permute(0,1,3,2)
-            else:
-                output_sl = torch.unsqueeze(output[sl], 0)
-                target_sl = torch.unsqueeze(target[sl], 0)
-            #bias = scoreModel(target_sl, target_sl)
-            #delta_sl = torch.abs(scoreModel(output_sl, target_sl) - bias)
+        if augmentation:
+
+            shiftx = np.random.choice([-1, 0, 1])
+            shifty = np.random.choice([-1, 0, 1])
+
+            output_sl = torch.roll(output_sl, (shiftx, shifty), dims=(-2,-1))
+            target_sl = torch.roll(target_sl, (shiftx, shifty), dims=(-2,-1))
+
             delta_sl = scoreModel(output_sl, target_sl)
             delta += delta_sl
+            count += 1.0
 
-            if augmentation:
-                # Flip Up/Dn
-                output_sl2 = torch.flip(output_sl, dims=(-1,))
-                target_sl2 = torch.flip(target_sl, dims=(-1,))
-                #delta_sl = torch.abs(scoreModel(output_sl2, target_sl2) - bias)
-                delta_sl = scoreModel(output_sl2, target_sl2)
-                delta += delta_sl
+            # Flip Up/Dn
+            output_sl2 = torch.flip(output_sl, dims=(-1,))
+            target_sl2 = torch.flip(target_sl, dims=(-1,))
+            # delta_sl = torch.abs(scoreModel(output_sl2, target_sl2) - bias)
+            delta_sl = scoreModel(output_sl2, target_sl2)
+            delta += delta_sl
+            count += 1.0
 
-                # Flip L/R
-                output_sl2 = torch.flip(output_sl, dims=(-2,))
-                target_sl2 = torch.flip(target_sl, dims=(-2,))
-                #delta_sl = torch.abs(scoreModel(output_sl2, target_sl2) - bias)
-                delta_sl = scoreModel(output_sl2, target_sl2)
-                delta += delta_sl
+            # Flip L/R
+            output_sl2 = torch.flip(output_sl, dims=(-2,))
+            target_sl2 = torch.flip(target_sl, dims=(-2,))
+            # delta_sl = torch.abs(scoreModel(output_sl2, target_sl2) - bias)
+            delta_sl = scoreModel(output_sl2, target_sl2)
+            delta += delta_sl
+            count += 1.0
+        else:
+            delta_sl = scoreModel(output_sl, target_sl)
+            delta += delta_sl
+            count += 1.0
 
-                # Flip Both
-                output_sl2 = torch.flip(output_sl, dims=(-2,-1))
-                target_sl2 = torch.flip(target_sl, dims=(-2,-1))
-                #delta_sl = torch.abs(scoreModel(output_sl2, target_sl2) - bias)
-                delta_sl = scoreModel(output_sl2, target_sl2)
-                delta += delta_sl
+    delta /= count
 
-                # # Shift
-                # nshift = 1
-                # if np.random.randint(2)==0:
-                #     sign = 2*np.random.randint(2)-1
-                #     output_sl2 = torch.roll(output_sl, nshift*sign, dims=-1)
-                #     target_sl2 = torch.roll(target_sl, nshift*sign, dims=-1)
-                #     delta_sl = scoreModel(output_sl2, target_sl2)
-                #     delta += delta_sl
-                # else:
-                #     sign = 2 * np.random.randint(2) - 1
-                #     output_sl2 = torch.roll(output_sl, nshift * sign, dims=-2)
-                #     target_sl2 = torch.roll(target_sl, nshift * sign, dims=-2)
-                #     delta_sl = scoreModel(output_sl2, target_sl2)
-                #     delta += delta_sl
-
-
-        #torch.cuda.empty_cache()
-    delta /= Nslice * 8
-    #delta /= Nslice * 8
     return delta
 
 
@@ -790,9 +831,10 @@ class MoDL(nn.Module):
     '''output: image (sl, 768, 396, 2) '''
 
     # def __init__(self, inner_iter=10):
-    def __init__(self, scale_init=1.0, inner_iter=1, DENOISER='unet'):
+    def __init__(self, scale_init=1.0, inner_iter=1, DENOISER='unet', checkpoint_image=False):
         super(MoDL, self).__init__()
 
+        self.checkpoint_image = checkpoint_image
         self.inner_iter = inner_iter
         self.scale_layers = nn.Parameter(scale_init*torch.ones([inner_iter]), requires_grad=True)
 
@@ -800,7 +842,11 @@ class MoDL(nn.Module):
         if DENOISER == 'unet':
             #self.denoiser =  MRI_UNet(in_channels=1, out_channels=1, f_maps=64,
             #     layer_order='cr', complex_kernel=False, complex_input=True)
-            self.denoiser = ComplexUNet2D(1, 1, depth=3, final_activation='none', f_maps=64, layer_order='cr')
+
+            self.denoiser = UNet(in_channels=1, out_channels=1, f_maps=64, depth=3,
+                                 layer_order=['convolution', 'relu'],
+                                 complex_kernel=False, complex_input=True)
+            #self.denoiser = ComplexUNet2D(1, 1, depth=2, final_activation='none', f_maps=32, layer_order='cr')
         elif DENOISER == 'varnet':
             self.varnets = nn.ModuleList()
             for i in range(self.inner_iter):
@@ -897,12 +943,18 @@ class MoDL(nn.Module):
                 image_complex = torch.view_as_complex(image_complex)
                 image_complex = image_complex[None, ...]
                 # print(f'image_complex reguires grad {image_complex.requires_grad}')
-
-                temp = checkpoint.checkpoint(self.checkpoint_fn(self.varnets[i]),image_complex)
+                if self.checkpoint_image:
+                    temp = checkpoint.checkpoint(self.checkpoint_fn(self.varnets[i]),image_complex)
+                else:
+                    temp =self.varnets[i](image_complex)
                 image += temp
             else:
                 image = image.unsqueeze(0)  #complex64, (1,1,h,w)
-                image = checkpoint.checkpoint(self.checkpoint_fn(self.denoiser), image)
+                if self.checkpoint_image:
+                    image = checkpoint.checkpoint(self.checkpoint_fn(self.denoiser), image)
+                else:
+                    image = self.denoiser(image)
+
                 # image = self.denoiser(image)
                 image = image.squeeze(0)
 

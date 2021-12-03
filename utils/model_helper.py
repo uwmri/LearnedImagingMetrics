@@ -9,6 +9,8 @@ from torchinfo import summary
 from utils.unet_components_complex import ComplexReLu, ZReLU, CReLu, modReLU, SReLU, CReLU_bias
 #from torchvision.models.mobilenet import _make_divisible, ConvBNReLU, InvertedResidual
 
+import matplotlib
+
 try:
     from efficientnet_pytorch import EfficientNet
 except:
@@ -236,9 +238,14 @@ class L2cnnBlock(nn.Module):
             self.shortcut = nn.Conv2d( channels_in, channels_out, kernel_size=1, padding=0, stride=1, bias=bias)
             self.pool = nn.AvgPool2d(pool_rate)
         else:
-            self.conv1 = ComplexConv2d(channels_in, channels_out, kernel_size=3, padding=1, stride=1, bias=bias)
-            self.conv2 = ComplexConv2d(channels_out, channels_out, kernel_size=3, padding=1, stride=1, bias=bias)
+            self.conv1 = ComplexConv2d(channels_in, channels_out, kernel_size=7, padding=3, stride=1, bias=bias)
+            self.conv2 = ComplexConv2d(channels_out, channels_out, kernel_size=7, padding=3, stride=1, bias=bias)
             self.shortcut = ComplexConv2d(channels_in, channels_out, kernel_size=1, padding=0, stride=1, bias=bias)
+
+            #self.conv1 = ComplexConv2d(channels_in, channels_out, kernel_size=3, padding=1, stride=1, bias=bias)
+            #self.conv2 = ComplexConv2d(channels_out, channels_out, kernel_size=3, padding=1, stride=1, bias=bias)
+            #self.shortcut = ComplexConv2d(channels_in, channels_out, kernel_size=1, padding=0, stride=1, bias=bias)
+
             self.pool = ComplexAvgPool(pool_rate)
         self.bn1 = VarNorm2d(channels_out)
         self.bn2 = VarNorm2d(channels_out)
@@ -309,7 +316,7 @@ class L2cnn(nn.Module):
 
         #self.mse_module = MSEmodule()
         self.layers = nn.ModuleList()
-        self.dropout = ComplexDropout2D(p=0.1)
+        self.dropout = ComplexDropout2D(p=0.5)
         for block in range(group_depth):
 
             self.layers.append(L2cnnBlock(channels_in, channels_out, pool_rate, bias=bias, activation=False,
