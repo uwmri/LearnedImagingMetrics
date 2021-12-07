@@ -907,13 +907,13 @@ class DataGenerator_rank(Dataset):
         x2 = sp.to_pytorch(x2, requires_grad=False)
         xt = sp.to_pytorch(xt, requires_grad=False)
 
-        xtmin_im = torch.min(torch.imag(xt))
-        xtmax_im = torch.max(torch.imag(xt))
-        xtmin_re = torch.min(torch.real(xt))
-        xtmax_re = torch.max(torch.real(xt))
-        xt_re = (torch.real(xt) - xtmin_re) / (xtmax_re - xtmin_re)
-        xt_im = (torch.imag(xt) - xtmin_im) / (xtmax_im - xtmin_im)
-        xt = xt_re + 1j*xt_im
+        # xtmin_im = torch.min(torch.imag(xt))
+        # xtmax_im = torch.max(torch.imag(xt))
+        # xtmin_re = torch.min(torch.real(xt))
+        # xtmax_re = torch.max(torch.real(xt))
+        # xt_re = (torch.real(xt) - xtmin_re) / (xtmax_re - xtmin_re)
+        # xt_im = (torch.imag(xt) - xtmin_im) / (xtmax_im - xtmin_im)
+        # xt = xt_re + 1j*xt_im
 
         y = self.Y[idx]
 

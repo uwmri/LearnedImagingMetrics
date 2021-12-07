@@ -55,7 +55,6 @@ EFF = False
 BO = False
 RESNET = False
 CLIP = False
-SAMPLER = False
 WeightedLoss = False
 
 trainScoreandMSE = True    # train score based classifier and mse(im1)-mse(im2) based classifier at the same time
@@ -173,7 +172,7 @@ logging.basicConfig(filename=os.path.join(log_dir,f'runs/rank/ranking_{Ntrial}.l
 logging.info('With ISOresnet classifier')
 logging.info(f'{Ntrial}')
 
-CV = 0
+CV = 1
 CV_fold = 5
 logging.info(f'{CV_fold} fold cross validation {CV}')
 ntrain = int(0.8 * NRANKS)
@@ -192,22 +191,11 @@ BATCH_SIZE_EVAL = 1
 logging.info(f'batchsize={BATCH_SIZE}')
 logging.info(f'batchsize_eval={BATCH_SIZE_EVAL}')
 
+trainingset = DataGenerator_rank(X_1, X_2, X_T, Labels_cnnT, idT, augmentation=True, pad_channels=0)
+loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=True, drop_last=True)
 
-if SAMPLER:
-    # deal with imbalanced class
-    samplerT = get_sampler(Labels_cnnT)
-    samplerV = get_sampler(Labels_cnnV)
-    trainingset = DataGenerator_rank(X_1, X_2, X_T, Labels_cnnT, idT, augmentation=True, pad_channels=0)
-    loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=False, sampler=samplerT, drop_last=True)
-
-    validationset = DataGenerator_rank(X_1, X_2, X_T, Labels_cnnV, idV, augmentation=False, pad_channels=0)
-    loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE_EVAL, shuffle=False, sampler=samplerV, drop_last=True)
-else:
-    trainingset = DataGenerator_rank(X_1, X_2, X_T, Labels_cnnT, idT, augmentation=True, pad_channels=0)
-    loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=False, drop_last=True)
-
-    validationset = DataGenerator_rank(X_1, X_2, X_T, Labels_cnnV, idV, augmentation=False, pad_channels=0)
-    loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE_EVAL, shuffle=False, drop_last=True)
+validationset = DataGenerator_rank(X_1, X_2, X_T, Labels_cnnV, idV, augmentation=False, pad_channels=0)
+loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE_EVAL, shuffle=False, drop_last=True)
 
 if WeightedLoss:
     weight = get_class_weights(Labels)
@@ -283,23 +271,8 @@ else:
 # torchsummary.summary(ranknet.cuda(), [(X_1.shape[-3], maxMatSize, maxMatSize)
 #                              ,(X_1.shape[-3], maxMatSize, maxMatSize)])
 
-# # Bayesian
-# # optimize classification accuracy on the validation set as a function of the learning rate and momentum
-# def train_evaluate(parameterization):
-#
-#     net = Classifier(ranknet)
-#     net = train_mod(net=net, train_loader=loader_T, parameters=parameterization, dtype=torch.float, device=device)
-#     return evaluate_mod(
-#         net=net,
-#         data_loader=loader_V,
-#         dtype=torch.float,
-#         device=device
-#     )
-
-
-
-learning_rate_classifier = 1e-3
-learning_rate_rank = 1e-3
+learning_rate_classifier = 1e-4
+learning_rate_rank = 1e-4
 learning_rate_MSE = 1e-3
 learning_rate_SSIM = 1e-3
 
@@ -311,18 +284,10 @@ optimizer = optim.Adam([
 
 logging.info(f'Adam, lr={learning_rate_rank}')
 if trainScoreandMSE:
-    optimizerMSE = optim.Adam([
-        {'params': classifierMSE.f.parameters()},
-        {'params': classifierMSE.g.parameters()},
-        {'params': classifierMSE.rank.parameters(), 'lr': learning_rate_MSE}
-    ], lr=learning_rate_classifier)
+    optimizerMSE = optim.Adam(classifierMSE.parameters(), lr=learning_rate_MSE)
 
 if trainScoreandSSIM:
-    optimizerSSIM = optim.Adam([
-        {'params': classifierSSIM.f.parameters()},
-        {'params': classifierSSIM.g.parameters()},
-        {'params': classifierSSIM.rank.parameters(), 'lr': learning_rate_SSIM}
-    ], lr=learning_rate_classifier)
+    optimizerSSIM= optim.Adam(classifierSSIM.parameters(), lr=learning_rate_SSIM)
 
 if resume_train:
     optimizer.load_state_dict(state['optimizer'])
@@ -336,21 +301,9 @@ scheduler = torch.optim.lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lmbda
 schedulerMSE = torch.optim.lr_scheduler.MultiplicativeLR(optimizerMSE, lr_lambda=lmbda)
 schedulerSSIM = torch.optim.lr_scheduler.MultiplicativeLR(optimizerSSIM, lr_lambda=lmbda)
 
-
-#classifier.rank.register_backward_hook(printgradnorm)
-def loss_ortho(model, outputs, targets, lam=1e-4):
-    loss_func = nn.CrossEntropyLoss(weight=weight)
-    loss = loss_func(outputs, targets)
-    o_loss = model.rank.loss_ortho()
-
-    loss += o_loss * lam
-
-    return loss
 loss_func = nn.CrossEntropyLoss(weight=weight)
 
-#loss_func = nn.MultiMarginLoss()
 classifier.cuda()
-
 if trainScoreandMSE:
     classifierMSE.cuda()
 
@@ -466,11 +419,9 @@ for epoch in range(Nepoch):
                 # classifier and scores for each image
                 delta, score1, score2 = classifier(im1, im2, imt)
 
-                if RESNET:
-                    loss = loss_ortho(classifier, delta, labels)
-                else:
-                    # Cross entropy
-                    loss = loss_func(delta, labels)
+                # Cross entropy
+                loss = loss_func(delta, labels)
+
                 # Add L2 norm for kernels
                 l2_lambda = 1e-5
                 l2_reg = torch.tensor(0.).cuda()
@@ -594,10 +545,8 @@ for epoch in range(Nepoch):
         delta, score1, score2 = classifier(im1, im2, imt)
 
         # loss
-        if RESNET:
-            loss = loss_ortho(classifier, delta, labels)
-        else:
-            loss = loss_func(delta, labels)
+        loss = loss_func(delta, labels)
+
         eval_avg.update(loss.item(), n=BATCH_SIZE_EVAL)
 
         # acc
