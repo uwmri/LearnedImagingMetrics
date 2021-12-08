@@ -147,9 +147,6 @@ class conv_bn(nn.Module):
 
 import torch.nn.utils.weight_norm as wn
 
-class VarNorm2d(nn.Module):
-    def __init__(self):
-        super(VarNorm2d,self).__init__()
 
 class VarNorm2d(nn.BatchNorm2d):
     def __init__(self, num_features, eps=1e-5, momentum=0.05, affine=True, track_running_stats=True):
@@ -209,7 +206,7 @@ class ComplexAvgPool(nn.Module):
 
     def forward(self, input):
         return self.pool(input.real) + 1j * self.pool(input.imag)
-        #return self.pool(input) +  self.pool(input)
+        # return self.pool(input) +  self.pool(input)
 
 
 class L2cnnBlock(nn.Module):
@@ -252,11 +249,13 @@ class L2cnnBlock(nn.Module):
         if self.norm:
             x = self.bn1(x)
         x = self.act_func(x.real) + 1j* self.act_func(x.imag)
+        # x = self.act_func(x)
         x = self.conv2(x)
         if self.norm:
             x = self.bn2(x)
         x = x + shortcut
         x = self.act_func(x.real) + 1j* self.act_func(x.imag)
+        # x = self.act_func(x)
         x = self.pool(x)
         return x
 
@@ -278,6 +277,7 @@ class ComplexDropout2D(torch.nn.Dropout2d):
 
         # Put the real and imaginary at the last dimension
         tensor = torch.stack([input.real, input.imag], dim=-1)
+        # tensor = torch.stack([input, input], dim=-1)
 
         # Apply dropout on the tensor Nc x Ny x (Nx*2)
         output = super().forward(tensor.reshape(in_shape[:-1] + (in_shape[-1]*2,) ))
@@ -288,6 +288,8 @@ class ComplexDropout2D(torch.nn.Dropout2d):
         #print(f'Out shape = {output.shape}')
 
         return output[...,0] + 1j*output[...,1]
+
+        # return output[..., 0] + output[..., 1]
 
 
 

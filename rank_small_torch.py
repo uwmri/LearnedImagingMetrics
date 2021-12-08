@@ -22,7 +22,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--pname', type=str, default=f'learned_ranking_{Ntrial}')
 parser.add_argument('--dgx', action='store_true', default=False)
 parser.add_argument('--file_csv', type=str, default=Path(r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\consensus_mode_all.csv'))
-parser.add_argument('--file_images', type=str, default=Path(r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\TRAINING_IMAGES_04032020.h5'))
+parser.add_argument('--file_images', type=str, default=Path(r'D:\git\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\TRAINING_IMAGES_04032020.h5'))
 parser.add_argument('--resume_train', action='store_true', default=False)
 args = parser.parse_args()
 
@@ -262,7 +262,7 @@ else:
     elif RESNET:
         ranknet = ISOResNet2(BasicBlock, [2,2,2,2], for_denoise=False)  # Less than ResNet18
     else:
-        ranknet = L2cnn(channels_in=1, channel_base=8, train_on_mag=train_on_mag)
+        ranknet = L2cnn(channels_in=1, channel_base=16, train_on_mag=train_on_mag)
     print(ranknet)
 
     classifier = Classifier(ranknet)
@@ -277,6 +277,8 @@ else:
 
 # torchsummary.summary(ranknet.cuda(), [(X_1.shape[-3], maxMatSize, maxMatSize)
 #                              ,(X_1.shape[-3], maxMatSize, maxMatSize)])
+# torchsummary.summary(classifier.cuda(), [(X_1.shape[-3], maxMatSize, maxMatSize)
+#                              ,(X_1.shape[-3], maxMatSize, maxMatSize),(X_1.shape[-3], maxMatSize, maxMatSize)])
 
 # # Bayesian
 # # optimize classification accuracy on the validation set as a function of the learning rate and momentum

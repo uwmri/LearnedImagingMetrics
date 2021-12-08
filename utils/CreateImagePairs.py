@@ -333,7 +333,7 @@ def add_incoherent_noise(ksp, prob=None, central=0.4, mode=1, num_corrupted=0, d
 
             for c in range(len(kspace[:,0,0])):
                 kspace[c, :, :] = kspace[c, :, :] * randuni_m
-            percent_actualRemoved=((nnzR-nnzL+1)/kspace_width-percent) * 100
+            percent_actualRemoved=(1-np.count_nonzero(kspace)/(kspace.shape[0]*kspace.shape[1]*kspace.shape[2]))
     else:
         mode = 0
         percent = 0.99

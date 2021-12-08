@@ -13,34 +13,16 @@ from utils.utils_DL import *
 spdevice = sp.Device(0)
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-RankID = 6390
-filepath_rankModel = Path(r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\rank_trained_L2cnn')
-filepath_train = Path("I:/NYUbrain")
-filepath_val = Path("I:/NYUbrain")
-file_rankModel = os.path.join(filepath_rankModel, f"RankClassifier{RankID}.pt")
-log_dir = filepath_rankModel
 
-rank_channel =1
-#ranknet = ISOResNet2(BasicBlock, [2,2,2,2], for_denoise=False)
-ranknet = L2cnn(channels_in=rank_channel, channel_base=16)
-classifier = Classifier(ranknet)
-
-state = torch.load(file_rankModel)
-classifier.load_state_dict(state['state_dict'], strict=True)
-classifier.eval()
-for param in classifier.parameters():
-    param.requires_grad = False
-scoreNet = classifier.rank
-scoreNet.cuda()
 
 train_folder = Path("D:/NYUbrain/brain_multicoil_train/multicoil_train")
 val_folder = Path("D:/NYUbrain/brain_multicoil_val/multicoil_val")
 test_folder = Path("D:/NYUbrain/brain_multicoil_test/multicoil_test")
 files = find("*.h5", train_folder)
 
-#CORRUPTIONS = ['PE Motion Corrupted (%)', 'Random undersampling (%)', 'PE removed randomly (%)',
-#              'Blurring (a.u.)', 'Gaussian noise level(a.u.)']
-CORRUPTIONS = ['Blurring (a.u.)']
+CORRUPTIONS = ['PE Motion Corrupted (%)', 'Random undersampling (%)', 'PE removed randomly (%)',
+             'Blurring (a.u.)', 'Gaussian noise level(a.u.)']
+# CORRUPTIONS = ['Random undersampling (%)']
 SAME_IMAGE = '(the same image)'
 # out_name = os.path.join(f'corrupted_images_{WHICH_CORRUPTION}.h5')
 # try:
@@ -53,7 +35,7 @@ Nxmax = 320
 Nymax = 640
 # Nxmax = 396
 # Nymax = 768
-count = 0
+
 
 
 #for index_file in range(1):
@@ -63,7 +45,7 @@ file = 'D:\\NYUbrain\\brain_multicoil_train\\multicoil_train\\file_brain_AXT1PRE
 
     # file = files[np.random.randint(len(os.listdir(train_folder)))]
 
-count += 1
+
 hf = h5py.File(file, mode='r')
 
 ksp = hf['kspace'][()]
@@ -116,6 +98,12 @@ image_truthSQ = crop_flipud(image_truth)
 # with h5py.File(out_name, 'a') as hf:
 #     name = 'EXAMPLE_%07d_TRUTH' % count
 #     hf.create_dataset(name, data=image_truth)
+
+
+RankID = [2614, 3121, 3914, 4022, 9265]
+filepath_rankModel = Path(r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\rank_trained_L2cnn\CV-5')
+filepath_train = Path("I:/NYUbrain")
+filepath_val = Path("I:/NYUbrain")
 
 for WHICH_CORRUPTION in CORRUPTIONS:
     scoreList = []
@@ -178,34 +166,66 @@ for WHICH_CORRUPTION in CORRUPTIONS:
         image_truth_tensor = torch.unsqueeze(torch.from_numpy(image_truthSQ.copy()),0)
         image_truth_tensor = image_truth_tensor.unsqueeze(0)
         image_truth_tensor, image_tensor = image_truth_tensor.cuda(), image_tensor.cuda()
-        score = scoreNet(image_tensor, image_truth_tensor)
+        scores = []
+        for i_cv in range(5):
 
-        if i%150 ==0:
-            fig = plt.figure()
-            fig.suptitle(f'{mse}, {ssim}, {score.cpu().numpy().item()}')
-            plt.subplot(121)
-            plt.title('corrupted')
-            plt.imshow(np.abs(imageSQ), cmap='gray')
-            plt.axis('off')
-            plt.subplot(122)
-            plt.title('truth')
-            plt.imshow(np.abs(image_truthSQ), cmap='gray')
-            plt.axis('off')
-            plt.show()
+            file_rankModel = os.path.join(filepath_rankModel, f"RankClassifier{RankID[i_cv]}.pt")
+            log_dir = filepath_rankModel
 
-        scoreList.append(score.detach().cpu().numpy())
+            rank_channel = 1
+            # ranknet = ISOResNet2(BasicBlock, [2,2,2,2], for_denoise=False)
+            ranknet = L2cnn(channels_in=rank_channel, channel_base=16)
+            classifier = Classifier(ranknet)
+
+            state = torch.load(file_rankModel)
+            classifier.load_state_dict(state['state_dict'], strict=True)
+            classifier.eval()
+            for param in classifier.parameters():
+                param.requires_grad = False
+            scoreNet = classifier.rank
+            scoreNet.cuda()
+            score = scoreNet(image_tensor, image_truth_tensor)
+            scores.append(score.squeeze().cpu().numpy())
+        scores = np.array(scores)
+        scoreMean = np.mean(scores)
+
+
+        # if i%150 ==0:
+        #     fig = plt.figure()
+        #     fig.suptitle(f'{mse}, {ssim}, {score.cpu().numpy().item()}')
+        #     plt.subplot(121)
+        #     plt.title('corrupted')
+        #     plt.imshow(np.abs(imageSQ), cmap='gray')
+        #     plt.axis('off')
+        #     plt.subplot(122)
+        #     plt.title('truth')
+        #     plt.imshow(np.abs(image_truthSQ), cmap='gray')
+        #     plt.axis('off')
+        #     plt.show()
+
+        scoreList.append(scoreMean)
         mseList.append(mse)
         ssimList.append(ssim)
 
-# if index_file == 25:
-#     break
-
-
+    # if index_file == 25:
+    #     break
 
     scoreList = np.asarray(scoreList).squeeze()
     mseList = np.asarray(mseList).squeeze()
     ssimList = 1 - np.asarray(ssimList).squeeze()
     corruption_magList = np.asarray(corruption_magList)
+
+# scoreAll = np.reshape(scoreListAll,(len(RankID),len(CORRUPTIONS),Ntrials))
+# mseAll = np.reshape(mseListAll,(len(RankID),len(CORRUPTIONS),Ntrials))
+# ssimAll = 1 - np.asarray(np.reshape(ssimListAll,(len(RankID),len(CORRUPTIONS),Ntrials))).squeeze()
+# corruption_magAll = np.reshape(corruption_magListAll,(len(RankID),len(CORRUPTIONS),Ntrials))
+#
+# scoreMean = np.mean(scoreAll, axis=0)
+# mseMean = np.mean(mseAll, axis=0)
+# ssimMean = np.mean(ssimAll, axis=0)
+# corruption_magMean = np.mean(corruption_magAll, axis=0)
+
+
 
     # plt.figure()
     # plt.scatter(corruption_magList, scoreList, alpha=0.5)
@@ -222,7 +242,7 @@ for WHICH_CORRUPTION in CORRUPTIONS:
     # plt.xlabel(f'{WHICH_CORRUPTION} ')
     # plt.ylabel('ssim')
     # plt.show()
-
+    corruption_magList *= 100
     fig_ssim, ax1 = plt.subplots(figsize=(7,5))
     color = 'tab:red'
     ax1.set_xlabel(f'{WHICH_CORRUPTION}', fontsize=18)
@@ -239,7 +259,7 @@ for WHICH_CORRUPTION in CORRUPTIONS:
     ax2.tick_params(axis='y', labelcolor=color)
     ax2.tick_params(axis='both', labelsize=14)
     fig_ssim.tight_layout()  # otherwise the right y-label is slightly clipped
-    fig_ssim.savefig(f'{RankID}_{WHICH_CORRUPTION}_ssim-score-corruption.png')
+    fig_ssim.savefig(f'cv5Mean_{WHICH_CORRUPTION}_ssim-score-corruption.png')
 
     fig_mse, ax1 = plt.subplots(figsize=(7,5))
     color = 'tab:red'
@@ -257,7 +277,7 @@ for WHICH_CORRUPTION in CORRUPTIONS:
     ax2.tick_params(axis='y', labelcolor=color)
     ax2.tick_params(axis='both', labelsize=14)
     fig_mse.tight_layout()  # otherwise the right y-label is slightly clipped
-    fig_mse.savefig(f'{RankID}_{WHICH_CORRUPTION}_mse-score-corruption.png')
+    fig_mse.savefig(f'cv5Mean_{WHICH_CORRUPTION}_mse-score-corruption.png')
 
     fig_mseVscore, ax3 = plt.subplots(figsize=(7,5))
     ax3.scatter(mseList, scoreList, alpha=0.5)
@@ -266,7 +286,7 @@ for WHICH_CORRUPTION in CORRUPTIONS:
     ax3.set_ylabel('score', fontsize=18)
     ax3.tick_params(axis='both', labelsize=14)
     fig_mseVscore.tight_layout()
-    fig_mseVscore.savefig(f'{RankID}_{WHICH_CORRUPTION}_mse-score.png')
+    fig_mseVscore.savefig(f'cv5Mean_{WHICH_CORRUPTION}_mse-score.png')
 
     fig_ssimVscore, ax4 = plt.subplots(figsize=(7,5))
     ax4.scatter(ssimList, scoreList, alpha=0.5)
@@ -275,5 +295,5 @@ for WHICH_CORRUPTION in CORRUPTIONS:
     ax4.set_ylabel('score', fontsize=18)
     ax4.tick_params(axis='both', labelsize=14)
     fig_ssimVscore.tight_layout()
-    fig_ssimVscore.savefig(f'{RankID}_{WHICH_CORRUPTION}_ssim-score.png')
+    fig_ssimVscore.savefig(f'cv5Mean_{WHICH_CORRUPTION}_ssim-score.png')
     #

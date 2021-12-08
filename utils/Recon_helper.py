@@ -15,7 +15,7 @@ from utils.CreateImagePairs import get_smaps, add_gaussian_noise
 from utils.unet_componets import *
 from utils.unet_components_complex import *
 from utils.varnet_components_complex import *
-from mri_unet.unet import MRI_UNet
+# from mri_unet.unet import MRI_UNet
 
 spdevice = sp.Device(0)
 
@@ -39,8 +39,7 @@ class SubtractArray(sp.linop.Linop):
 
 class DataGeneratorRecon(Dataset):
 
-    def __init__(self,path_root, h5file, indices, rank_trained_on_mag=False, data_type=None, case_name=False,
-                 DiffCaseEveryEpoch=False):
+    def __init__(self,path_root, num_cases, rank_trained_on_mag=False, data_type=None, case_name=False, index=None):
 
         '''
         input: mask (768, 396) complex64
@@ -48,64 +47,36 @@ class DataGeneratorRecon(Dataset):
                 fully sampled kspace (rectangular), truth image (square), smaps (rectangular)
         '''
 
-        # scan path+file name
-        #with open(os.path.join(path_root, scan_list), 'rb') as tf:
-        #    self.scans = pickle.load(tf)
-
-        self.hf = h5py.File(name=os.path.join(path_root, h5file), mode='r')
-        self.scans = [f for f in self.hf.keys()]
+        self.path_root = path_root
+        self.scans = os.listdir(path_root)
         self.num_allcases = len((self.scans))
-        self.indices = indices
-        self.len = len(indices)
+        self.len = num_cases
 
         self.data_type = data_type
 
         self.rank_trained_on_mag = rank_trained_on_mag
 
         self.case_name = case_name
-        self.DiffCaseEveryEpoch = DiffCaseEveryEpoch
+        self.index = index
 
     def __len__(self):
         return self.len
 
     def __getitem__(self, idx):
-        if self.DiffCaseEveryEpoch:
+        if self.index is None:
             actual_idx = np.random.randint(self.num_allcases)
         else:
-            actual_idx = self.indices[idx]
+            actual_idx = self.index[idx]
+        hf = h5py.File(name=os.path.join(self.path_root, self.scans[actual_idx]), mode='r')
         #print(f'Load {self.scans[idx]}')
         #t = time.time()
+        smaps = np.array(hf['smaps'])
         if self.data_type == 'smap16':
-            smaps = np.array(self.hf[self.scans[actual_idx]]['smaps'])
             smaps = smaps.view(np.int16).astype(np.float32).view(np.complex64)
             smaps /= 32760
-            #print(smaps.shape)
-        else:
-            smaps = np.array(self.hf[self.scans[actual_idx]]['smaps'])
 
-        #smaps = complex_2chan(smaps)
-        #print(f'Get smap ={time.time()-t}, {smaps.dtype} {smaps.shape}')
-
-        #truth = None
-        # t = time.time()
-        # truth = np.array(self.hf[self.scans[idx]]['truths'])
-        # #truth = complex_2chan(truth)
-        # #if self.rank_trained_on_mag:
-        # #    truth = np.sqrt(np.sum(np.square(truth), axis=-1, keepdims=True))
-        # truth = zero_pad_truth(truth)
-        # truth = torch.from_numpy(truth)     # ([16, 768, 396, ch])
-        #
-        # # normalize truth to 0 and 1
-        # # maxt_truth shape  (sl, 1, 1, 1)
-        # max_truth, _ = torch.max(truth, dim=1, keepdim=True)
-        # max_truth, _ = torch.max(max_truth, dim=2, keepdim=True)
-        # max_truth, _ = torch.max(max_truth, dim=3, keepdim=True)
-        # truth /= max_truth
-        # #print(f'Get truth {time.time() - t} {truth.dtype} {truth.shape}')
-
-        #t = time.time()
-        kspace = np.array(self.hf[self.scans[actual_idx]]['kspace'])
-        kspace = zero_pad4D(kspace)  # array (sl, coil, 768, 396)
+        kspace = np.array(hf['kspace'])
+        kspace = zero_pad3D(kspace)  # array (coil, 768, 396)
         kspace /= np.max(np.abs(kspace))/np.prod(kspace.shape[-2:])
 
         # Copy to torch
