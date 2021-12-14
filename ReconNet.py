@@ -53,12 +53,20 @@ parser.add_argument('--pname', type=str, default=f'chenwei_recon_{Ntrial}')
 parser.add_argument('--resume_train', action='store_true', default=False)
 parser.add_argument('--save_all_slices', action='store_true', default=False)
 parser.add_argument('--save_train_images', action='store_true', default=False)
+parser.add_argument('--dgx', action='store_true', default=False)
+
 args = parser.parse_args()
 
-log_dir = args.log_dir
-train_folder = args.train_folder
-val_folder = args.val_folder
-metric_folder = args.metric_folder
+if args.dgx==True:
+    log_dir = args.log_dir
+    train_folder = args.train_folder
+    val_folder = args.val_folder
+    metric_folder = args.metric_folder
+else:
+    log_dir = r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020'
+    train_folder = r'D:\NYUbrain\singleslices\train'
+    val_folder = r'D:\NYUbrain\singleslices\val'
+    metric_folder = r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\rank_trained_L2cnn\CV-5'
 resume_train = args.resume_train
 saveAllSl = args.save_all_slices
 saveTrainIm = args.save_train_images
@@ -152,34 +160,34 @@ mask_gpu = sp.to_device(mask, spdevice)
 mask_torch = sp.to_pytorch(mask_gpu, requires_grad=False)
 
 # Data generator
-Ntrain = 450
-Nval = 50
-BATCH_SIZE = 1
+Ntrain = 16
+Nval = 8
+BATCH_SIZE = 8
 prefetch_data = True
 
 # indicesT = np.array([581, 711, 1167, 322, 467, 456, 354, 942, 686, 547, 258, 205, 767, 460, 1109, 452, 731, 824, 1068,
 #                      2, 864, 631, 804, 166, 352, 371, 866, 925, 297, 252, 186, 304, 185, 838, 1065, 493, 598, 773, 452,
 #                      491, 789, 37, 522, 621, 1036])
 
-SaveCaseName = False
-# DiffCaseEveryEpochT=True
-# logging.info(f'DiffCaseEveryEpochT {DiffCaseEveryEpochT}')
-# indicesT = np.random.randint(1173, size=Ntrain)
-# if not DiffCaseEveryEpochT:
-#     logging.info(f'training cases {indicesT}')
-trainingset = DataGeneratorRecon(train_folder, Ntrain, rank_trained_on_mag=rank_trained_on_mag,
-                                 data_type=smap_type, case_name=SaveCaseName)
-loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=False, pin_memory=True)
+SaveCaseName = True
+DiffCaseEveryEpochT=True
+logging.info(f'DiffCaseEveryEpochT {DiffCaseEveryEpochT}')
+indicesT = np.random.randint(len(os.listdir(train_folder)), size=Ntrain)
+if not DiffCaseEveryEpochT:
+    logging.info(f'training cases {indicesT}')
+trainingset = DataGeneratorRecon(train_folder, rank_trained_on_mag=rank_trained_on_mag,
+                                 data_type=smap_type, case_name=SaveCaseName, index=indicesT, diff_cases=DiffCaseEveryEpochT)
+loader_T = DataLoader(dataset=trainingset, batch_size=BATCH_SIZE, shuffle=True, pin_memory=True)
 
 
 # indicesV = np.array([42, 148, 19, 91, 313])
-# DiffCaseEveryEpochV=False
-# logging.info(f'DiffCaseEveryEpochV {DiffCaseEveryEpochV}')
+DiffCaseEveryEpochV=False
+logging.info(f'DiffCaseEveryEpochV {DiffCaseEveryEpochV}')
 # if not DiffCaseEveryEpochV:
 #     logging.info(f'training cases {indicesV}')
-indicesV = np.random.randint(Nval, size=Nval)
-validationset = DataGeneratorRecon(val_folder, Nval, rank_trained_on_mag=rank_trained_on_mag,
-                                   data_type=smap_type, case_name=SaveCaseName, index=indicesV)
+indicesV = np.random.randint(len(os.listdir(val_folder)), size=Nval)
+validationset = DataGeneratorRecon(val_folder, rank_trained_on_mag=rank_trained_on_mag,
+                                   data_type=smap_type, case_name=SaveCaseName, index=indicesV, diff_cases=DiffCaseEveryEpochV)
 loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=False, pin_memory=True)
 
 UNROLL = True
@@ -237,7 +245,7 @@ elif WHICH_LOSS == 'ssim':
     ssim_module = SSIM()
 
 
-Nepoch = 1001
+Nepoch = 2
 epochMSE = 0
 logging.info(f'MSE for first {epochMSE} epochs then switch to learned')
 lossT = np.zeros(Nepoch)

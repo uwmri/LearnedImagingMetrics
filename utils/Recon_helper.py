@@ -39,7 +39,7 @@ class SubtractArray(sp.linop.Linop):
 
 class DataGeneratorRecon(Dataset):
 
-    def __init__(self,path_root, num_cases, rank_trained_on_mag=False, data_type=None, case_name=False, index=None):
+    def __init__(self,path_root, rank_trained_on_mag=False, data_type=None, case_name=False, index=None, diff_cases=False, tot_cases=18518):
 
         '''
         input: mask (768, 396) complex64
@@ -50,23 +50,25 @@ class DataGeneratorRecon(Dataset):
         self.path_root = path_root
         self.scans = os.listdir(path_root)
         self.num_allcases = len((self.scans))
-        self.len = num_cases
-
         self.data_type = data_type
 
         self.rank_trained_on_mag = rank_trained_on_mag
 
         self.case_name = case_name
         self.index = index
+        self.len = len(index)
+        self.diff_cases = diff_cases
+
+        self.Ncases_tot = tot_cases
 
     def __len__(self):
         return self.len
 
     def __getitem__(self, idx):
-        if self.index is None:
-            actual_idx = np.random.randint(self.num_allcases)
-        else:
+        if not self.diff_cases:
             actual_idx = self.index[idx]
+        else:
+            actual_idx = np.random.randint(self.Ncases_tot)
         hf = h5py.File(name=os.path.join(self.path_root, self.scans[actual_idx]), mode='r')
         #print(f'Load {self.scans[idx]}')
         #t = time.time()
