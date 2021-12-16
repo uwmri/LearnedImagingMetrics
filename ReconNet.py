@@ -53,11 +53,11 @@ parser.add_argument('--pname', type=str, default=f'chenwei_recon_{Ntrial}')
 parser.add_argument('--resume_train', action='store_true', default=False)
 parser.add_argument('--save_all_slices', action='store_true', default=False)
 parser.add_argument('--save_train_images', action='store_true', default=False)
-parser.add_argument('--remote', action='store_true', default=True)
+parser.add_argument('--remote', action='store_true', default=False)
 
 args = parser.parse_args()
 
-if args.dgx==True:
+if args.remote==True:
     log_dir = args.log_dir
     train_folder = args.train_folder
     val_folder = args.val_folder
@@ -383,7 +383,7 @@ for epoch in range(Nepoch):
             if WHICH_LOSS == 'mse':
                 loss = mseloss_fcn(imEst2, im_sl)
             elif WHICH_LOSS == 'ssim':
-                loss = 1 - ssim_module(torch.unsqueeze(imEst2,0), torch.unsqueeze(im_sl,0))
+                loss = torch.mean(1 - ssim_module(imEst2, im_sl))
             elif WHICH_LOSS == 'perceptual':
                 loss = loss_perceptual(imEst2, im_sl)
             elif WHICH_LOSS == 'patchGAN':
@@ -542,7 +542,7 @@ for epoch in range(Nepoch):
         if WHICH_LOSS == 'mse':
             loss = mseloss_fcn(imEst2, im_sl)
         elif WHICH_LOSS == 'ssim':
-            loss = 1 - ssim_module(torch.unsqueeze(imEst2,0), torch.unsqueeze(im_sl,0))
+            loss = torch.mean(1 - ssim_module(imEst2, im_sl))
         elif WHICH_LOSS == 'perceptual':
             loss = loss_perceptual(imEst2, im_sl)
         elif WHICH_LOSS == 'patchGAN':
