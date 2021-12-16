@@ -215,6 +215,7 @@ def mseloss_fcn(output, target):
     mse = torch.abs(output - target)
     mse = mse.view(mse.shape[0], -1)
     mse = torch.sum(mse ** 2, dim=1, keepdim=True) ** 0.5
+    mse = torch.mean(mse)
 
     return mse
 

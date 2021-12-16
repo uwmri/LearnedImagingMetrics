@@ -53,7 +53,7 @@ parser.add_argument('--pname', type=str, default=f'chenwei_recon_{Ntrial}')
 parser.add_argument('--resume_train', action='store_true', default=False)
 parser.add_argument('--save_all_slices', action='store_true', default=False)
 parser.add_argument('--save_train_images', action='store_true', default=False)
-parser.add_argument('--dgx', action='store_true', default=False)
+parser.add_argument('--remote', action='store_true', default=True)
 
 args = parser.parse_args()
 
@@ -160,9 +160,9 @@ mask_gpu = sp.to_device(mask, spdevice)
 mask_torch = sp.to_pytorch(mask_gpu, requires_grad=False)
 
 # Data generator
-Ntrain = 16
-Nval = 8
-BATCH_SIZE = 8
+Ntrain = 450
+Nval = 50
+BATCH_SIZE = 4
 prefetch_data = True
 
 # indicesT = np.array([581, 711, 1167, 322, 467, 456, 354, 942, 686, 547, 258, 205, 767, 460, 1109, 452, 731, 824, 1068,
@@ -245,7 +245,7 @@ elif WHICH_LOSS == 'ssim':
     ssim_module = SSIM()
 
 
-Nepoch = 2
+Nepoch = 1001
 epochMSE = 0
 logging.info(f'MSE for first {epochMSE} epochs then switch to learned')
 lossT = np.zeros(Nepoch)
@@ -305,11 +305,9 @@ for epoch in range(Nepoch):
             tstart_batch = time.time()
             if SaveCaseName:
                 smaps, kspace, name = data
-                logging.info(f'training case {name}')
+                # logging.info(f'training case {name}')
             else:
                 smaps, kspace = data
-            smaps = smaps[0]
-            kspace = kspace[0]
 
             # # seems jsense and espirit wants (coil,h,w), can't do (sl, coil, h, w)
             # redo_smaps = False
@@ -326,58 +324,58 @@ for epoch in range(Nepoch):
             optimizer.zero_grad()
             loss_avg = 0.0
 
+            t_sl = time.time()
 
             # Clone to torch
-            smaps_sl = torch.clone(smaps).cuda()  # ndarray on cuda (20, 768, 396), complex64
-            kspace_sl = torch.clone(kspace).cuda()  # ndarray (20, 768, 396), complex64
+            smaps_gpu = torch.clone(smaps).cuda()  # ndarray on cuda (20, 768, 396), complex64
+            kspace_gpu = torch.clone(kspace).cuda()  # ndarray (20, 768, 396), complex64
 
             # Move to torch
-            kspaceU_sl = kspace_sl * mask_torch
+            kspaceU_gpu = kspace_gpu * mask_torch
 
             # Get truth on the fly
             #im_sl = sp.to_pytorch(Atruth.H * (kspace_sl * mask_truth), requires_grad=False)
-            im_sl = sense_adjoint(smaps_sl, kspace_sl)      # (1, 768,396)
+            im_sl = sense_adjoint(smaps_gpu, kspace_gpu)      # (1, 768,396)
 
             # Get PyTorch functions
             #A_torch = sp.to_pytorch_function(A)
             #Ah_torch = sp.to_pytorch_function(Ah)
             #imEst = 0.0 * sp.to_pytorch(Ah * kspaceU_sl, requires_grad=True)
-            imEst = torch.zeros_like(im_sl)
-            t = time.time()
-            #kspaceU_sl = sp.to_pytorch(kspaceU_sl)  # torch.Size([20, 768, 396, 2])
+            imEst = torch.zeros_like(im_sl[0])
+            imEst2 = torch.zeros_like(im_sl)
+            for sl in range(smaps.shape[0]):
+                t = time.time()
+                #kspaceU_sl = sp.to_pytorch(kspaceU_sl)  # torch.Size([20, 768, 396, 2])
 
-            if UNROLL:
-                imEst2 = ReconModel(imEst, kspaceU_sl, smaps_sl, mask_torch)  # (768, 396, 2)
-            else:
-                imEst2 = ReconModel(kspaceU_sl, mask_torch, A_torch, Ah_torch, smaps_sl, mask_torch)
+                if UNROLL:
+                    temp = ReconModel(imEst, kspaceU_gpu[sl], smaps_gpu[sl], mask_torch)  # (768, 396, 2)
+                else:
+                    temp = ReconModel(kspaceU_gpu, mask_torch, A_torch, Ah_torch, smaps_sl, mask_torch)
+                imEst2[sl,...] = temp
 
-            # crop to square
-            width = im_sl.shape[2]
-            height = im_sl.shape[1]
+                # im_slmin = torch.min(torch.abs(im_sl))
+                # im_slmax = torch.max(torch.abs(im_sl))
+                # im_sl = (im_sl - im_slmin) / (im_slmax - im_slmin)
+                #
+                # imEst2min = torch.min(torch.abs(imEst2))
+                # imEst2max = torch.max(torch.abs(imEst2))
+                # imEst2 = (imEst2-imEst2min)/(imEst2max-imEst2min)
+
+                # scale = torch.sum(torch.conj(imEst2.squeeze()).T * im_sl.squeeze()) / torch.sum(
+                #     torch.conj(im_sl.squeeze()).T * imEst2.squeeze())
+                # imEst2 *= scale
+            width = im_sl.shape[-1]
+            height = im_sl.shape[-2]
             if width < 320:
-                im_sl = im_sl[:, 160:480, :]
-                imEst2 = imEst2[:, 160:480, :]
+                im_sl = im_sl[:,:, 160:480, :]
+                imEst2 = imEst2[:,:, 160:480, :]
             else:
                 idxL = int((height - width) / 2)
                 idxR = int(idxL + width)
-                im_sl = im_sl[:, idxL:idxR, :]
-                imEst2 = imEst2[:, idxL:idxR, :]
-
-            # flipud
-            im_sl = torch.flip(im_sl, dims=(0, 1))
-            imEst2 = torch.flip(imEst2, dims=(0, 1))
-
-            # im_slmin = torch.min(torch.abs(im_sl))
-            # im_slmax = torch.max(torch.abs(im_sl))
-            # im_sl = (im_sl - im_slmin) / (im_slmax - im_slmin)
-            #
-            # imEst2min = torch.min(torch.abs(imEst2))
-            # imEst2max = torch.max(torch.abs(imEst2))
-            # imEst2 = (imEst2-imEst2min)/(imEst2max-imEst2min)
-
-            # scale = torch.sum(torch.conj(imEst2.squeeze()).T * im_sl.squeeze()) / torch.sum(
-            #     torch.conj(im_sl.squeeze()).T * imEst2.squeeze())
-            # imEst2 *= scale
+                im_sl = im_sl[:,:, idxL:idxR, :]
+                imEst2 = imEst2[:,:, idxL:idxR, :]
+            im_sl = torch.flip(im_sl, dims=(1,2))
+            imEst2 = torch.flip(imEst2, dims=(1,2))
 
             loss_mse_tensor = mseloss_fcn(imEst2, im_sl).detach()
             loss_mse_tensor0 = mseloss_fcn0(imEst2, im_sl).detach()
@@ -400,51 +398,46 @@ for epoch in range(Nepoch):
                     loss /= 5
 
             loss.backward(retain_graph=True)
-            # if saveAllSl:
-            #     imEstpltT = imEst2.detach().cpu()
-            #     truthpltT = im_sl.detach().cpu()
-            #     with h5py.File(f'ReconTraining_{Ntrial}.h5', 'a') as hf:
-            #         hf.create_dataset(f"Tcase_{i}_{sl}", data=np.squeeze(imEstpltT.numpy()))
-            #         hf.create_dataset(f"truth_Tcase_{i}_{sl}", data=np.squeeze(truthpltT.numpy()))
 
-            if saveTrainIm and i == 0:
-                truthplt = im_sl.detach().cpu()
-                perturbed = sense_adjoint(smaps_sl, kspaceU_sl)
-                noisyplt = perturbed.detach().cpu()
-                noisyplt = noisyplt[:, idxL:idxR, :]
-                del perturbed
-                imEstplt = imEst2.detach().cpu()
-
-                if epoch == 0:
-                    kspaceU_sl_gpu = sp.to_device(sp.from_pytorch(kspaceU_sl.cpu()), sp.Device(0))
-                    smaps_sl_gpu = sp.to_device(sp.from_pytorch(smaps_sl.cpu()), sp.Device(0))
-                    imSense = sp.mri.app.SenseRecon(kspaceU_sl_gpu, smaps_sl_gpu, weights=mask_gpu, lamda=.01,
-                                                    max_iter=20, device=spdevice).run()
-                    imSense = imSense[idxL:idxR, :]
-                    # L1-wavelet
-                    imL1 = sp.mri.app.L1WaveletRecon(kspaceU_sl_gpu, smaps_sl_gpu, weights=mask_gpu, lamda=.001,
-                                                     max_iter=20, device=spdevice).run()
-                    imL1 = imL1[idxL:idxR, :]
-
-                with h5py.File(out_name_train, 'a') as hf:
-                    if epoch == 0:
-                        hf.create_dataset(f"{epoch}_truth", data=np.squeeze(np.abs(truthplt.numpy())))
-                        hf.create_dataset(f"{epoch}_truth_re", data=np.squeeze(np.real(truthplt.numpy())))
-                        hf.create_dataset(f"{epoch}_truth_im", data=np.squeeze(np.imag(truthplt.numpy())))
-                        hf.create_dataset(f"{epoch}_FT", data=np.squeeze(np.abs(noisyplt.numpy())))
-                        hf.create_dataset(f"{epoch}_Sense", data=np.squeeze(np.abs(imSense.get())))
-                        hf.create_dataset(f"{epoch}_L1", data=np.squeeze(np.abs(imL1.get())))
-                        hf.create_dataset(f"p{epoch}_truth", data=np.squeeze(np.angle(truthplt.numpy())))
-                        hf.create_dataset(f"p{epoch}_FT", data=np.squeeze(np.angle(noisyplt.numpy())))
-                        hf.create_dataset(f"p{epoch}_Sense", data=np.squeeze(np.angle(imSense.get())))
-                        hf.create_dataset(f"p{epoch}_L1", data=np.squeeze(np.angle(imL1.get())))
-
-                    hf.create_dataset(f"p{epoch}_recon", data=np.squeeze(np.angle(imEstplt.numpy())))
-                    hf.create_dataset(f"{epoch}_recon", data=np.squeeze(np.abs(imEstplt.numpy())))
-                    if epoch % 100 == 0:
-                        hf.create_dataset(f"{epoch}_recon_re", data=np.squeeze(np.real(imEstplt.numpy())))
-                        hf.create_dataset(f"{epoch}_recon_im", data=np.squeeze(np.imag(imEstplt.numpy())))
-                del truthplt, noisyplt, imEstplt
+            # save training images
+            # if saveTrainIm and i == 0:
+            #     truthplt = im_sl.detach().cpu()
+            #     perturbed = sense_adjoint(smaps_sl, kspaceU_sl)
+            #     noisyplt = perturbed.detach().cpu()
+            #     noisyplt = noisyplt[:, idxL:idxR, :]
+            #     del perturbed
+            #     imEstplt = imEst2.detach().cpu()
+            #
+            #     if epoch == 0:
+            #         kspaceU_sl_gpu = sp.to_device(sp.from_pytorch(kspaceU_sl.cpu()), sp.Device(0))
+            #         smaps_sl_gpu = sp.to_device(sp.from_pytorch(smaps_sl.cpu()), sp.Device(0))
+            #         imSense = sp.mri.app.SenseRecon(kspaceU_sl_gpu, smaps_sl_gpu, weights=mask_gpu, lamda=.01,
+            #                                         max_iter=20, device=spdevice).run()
+            #         imSense = imSense[idxL:idxR, :]
+            #         # L1-wavelet
+            #         imL1 = sp.mri.app.L1WaveletRecon(kspaceU_sl_gpu, smaps_sl_gpu, weights=mask_gpu, lamda=.001,
+            #                                          max_iter=20, device=spdevice).run()
+            #         imL1 = imL1[idxL:idxR, :]
+            #
+            #     with h5py.File(out_name_train, 'a') as hf:
+            #         if epoch == 0:
+            #             hf.create_dataset(f"{epoch}_truth", data=np.squeeze(np.abs(truthplt.numpy())))
+            #             hf.create_dataset(f"{epoch}_truth_re", data=np.squeeze(np.real(truthplt.numpy())))
+            #             hf.create_dataset(f"{epoch}_truth_im", data=np.squeeze(np.imag(truthplt.numpy())))
+            #             hf.create_dataset(f"{epoch}_FT", data=np.squeeze(np.abs(noisyplt.numpy())))
+            #             hf.create_dataset(f"{epoch}_Sense", data=np.squeeze(np.abs(imSense.get())))
+            #             hf.create_dataset(f"{epoch}_L1", data=np.squeeze(np.abs(imL1.get())))
+            #             hf.create_dataset(f"p{epoch}_truth", data=np.squeeze(np.angle(truthplt.numpy())))
+            #             hf.create_dataset(f"p{epoch}_FT", data=np.squeeze(np.angle(noisyplt.numpy())))
+            #             hf.create_dataset(f"p{epoch}_Sense", data=np.squeeze(np.angle(imSense.get())))
+            #             hf.create_dataset(f"p{epoch}_L1", data=np.squeeze(np.angle(imL1.get())))
+            #
+            #         hf.create_dataset(f"p{epoch}_recon", data=np.squeeze(np.angle(imEstplt.numpy())))
+            #         hf.create_dataset(f"{epoch}_recon", data=np.squeeze(np.abs(imEstplt.numpy())))
+            #         if epoch % 100 == 0:
+            #             hf.create_dataset(f"{epoch}_recon_re", data=np.squeeze(np.real(imEstplt.numpy())))
+            #             hf.create_dataset(f"{epoch}_recon_im", data=np.squeeze(np.imag(imEstplt.numpy())))
+            #     del truthplt, noisyplt, imEstplt
 
 
 
@@ -461,13 +454,13 @@ for epoch in range(Nepoch):
             train_avg_mse.update(loss_mse_tensor.detach().cpu().item())
             train_avg_mse0.update(loss_mse_tensor0.detach().cpu().item())
 
-            del smaps_sl, kspaceU_sl, kspace_sl, im_sl
+            del smaps_gpu, kspaceU_gpu, kspace_gpu, im_sl
 
             # Slice loop
             optimizer.step()
             #scheduler.step()
 
-            print(f'case {i}, took {time.time() - t_case}s, loss {loss_avg}, avg = {train_avg.avg()}')
+            print(f'batch {i}, took {time.time() - t_case}s, loss {loss_avg}, avg = {train_avg.avg()}')
 
             # del imEst
             # del smaps, kspace, im
@@ -493,16 +486,10 @@ for epoch in range(Nepoch):
             logging.info(f'val case {i} is {name}')
         else:
             smaps, kspace = data
-        smaps = smaps[0]
-        kspace = kspace[0]
+        smaps_gpu = torch.clone(smaps).cuda()
+        kspace_gpu = torch.clone(kspace).cuda()
 
-
-
-
-        smaps_sl = torch.clone(smaps).cuda()
-        kspace_sl = torch.clone(kspace).cuda()
-
-        kspaceU_sl = kspace_sl * mask_torch
+        kspaceU_gpu = kspace_gpu * mask_torch
 
         # with spdevice:
         #     A = sp.mri.linop.Sense(smaps_sl, coil_batch_size=None, weights=mask_gpu)
@@ -510,9 +497,9 @@ for epoch in range(Nepoch):
         #     Atruth = sp.mri.linop.Sense(smaps_sl, coil_batch_size=None, weights=mask_truth)
 
         # Get truth
-        im_sl = sense_adjoint(smaps_sl, kspace_sl)
-        imEst = torch.zeros_like(im_sl)
-
+        im_sl = sense_adjoint(smaps_gpu, kspace_gpu)
+        imEst = torch.zeros_like(im_sl[0])
+        imEst2 = torch.zeros_like(im_sl)
 
         #A_torch = sp.to_pytorch_function(A)
         #Ah_torch = sp.to_pytorch_function(Ah)
@@ -520,27 +507,24 @@ for epoch in range(Nepoch):
         #imEst = 0.0 * sp.to_pytorch(Ah * kspaceU_sl, requires_grad=False)
 
         t = time.time()
-        #kspaceU_sl = sp.to_pytorch(kspaceU_sl)
-        if UNROLL:
-            imEst2 = ReconModel(imEst, kspaceU_sl, smaps_sl, mask_torch)
-        else:
-            imEst2 = ReconModel(kspaceU_sl, mask_torch, A_torch, Ah_torch)
-
+        for sl in range(smaps.shape[0]):
+            #kspaceU_sl = sp.to_pytorch(kspaceU_sl)
+            if UNROLL:
+                temp = ReconModel(imEst, kspaceU_gpu[sl], smaps_gpu[sl], mask_torch)
+            else:
+                temp = ReconModel(kspaceU_gpu, mask_torch, A_torch, Ah_torch)
+            imEst2[sl,...] = temp
         # crop to square
-        width = im_sl.shape[2]
-        height = im_sl.shape[1]
         if width < 320:
-            im_sl = im_sl[:,160:480, :]
-            imEst2 = imEst2[:,160:480, :]
+            im_sl = im_sl[:, :, 160:480, :]
+            imEst2 = imEst2[:, :, 160:480, :]
         else:
             idxL = int((height - width) / 2)
             idxR = int(idxL + width)
-            im_sl = im_sl[:,idxL:idxR, :]
-            imEst2 = imEst2[:,idxL:idxR, :]
-
-        # flipud
-        im_sl = torch.flip(im_sl, dims=(0,1))
-        imEst2 = torch.flip(imEst2, dims=(0,1))
+            im_sl = im_sl[:, :, idxL:idxR, :]
+            imEst2 = imEst2[:, :, idxL:idxR, :]
+        im_sl = torch.flip(im_sl, dims=(1, 2))
+        imEst2 = torch.flip(imEst2, dims=(1, 2))
 
         # im_slmin = torch.min(torch.abs(im_sl))
         # im_slmax = torch.max(torch.abs(im_sl))
@@ -582,21 +566,23 @@ for epoch in range(Nepoch):
                 loss_mseV.append(loss_mse_tensor.cpu())
                 loss_mseV0.append(loss_mse_tensor0.cpu())
 
-        if i == 4:
-            out_name = os.path.join(log_dir, f'Images_{Ntrial}_{WHICH_LOSS}_eval_case{indicesV[i]}.h5')
+        if i == 0:
+            out_name = os.path.join(log_dir, f'Images_{Ntrial}_{WHICH_LOSS}_eval.h5')
+            logging.info(f'save val case {name}')
+            logging.info(f'save val case {indicesV}')
             truthplt = im_sl.detach().cpu()
-            perturbed = sense_adjoint(smaps_sl, kspaceU_sl)
+            perturbed = sense_adjoint(smaps_gpu, kspaceU_gpu)
             noisyplt = perturbed.detach().cpu()
-            noisyplt = noisyplt[:, idxL:idxR,:]
+            noisyplt = noisyplt[:, :,idxL:idxR,:]
             del perturbed
             imEstplt = imEst2.detach().cpu()
-            imEstfig = plt_recon(torch.squeeze(torch.abs(imEstplt)))
-            writer_val.add_figure('Recon_val', imEstfig, epoch)
+            # imEstfig = plt_recon(torch.squeeze(torch.abs(imEstplt)))
+            # writer_val.add_figure('Recon_val', imEstfig, epoch)
 
             # SENSE
             if epoch == 0:
-                kspaceU_sl_gpu = sp.to_device(sp.from_pytorch(kspaceU_sl.cpu()), sp.Device(0))
-                smaps_sl_gpu = sp.to_device(sp.from_pytorch(smaps_sl.cpu()), sp.Device(0))
+                kspaceU_sl_gpu = sp.to_device(sp.from_pytorch(kspaceU_gpu.cpu()), sp.Device(0))
+                smaps_sl_gpu = sp.to_device(sp.from_pytorch(smaps_gpu.cpu()), sp.Device(0))
                 imSense = sp.mri.app.SenseRecon(kspaceU_sl_gpu, smaps_sl_gpu, weights=mask_gpu, lamda=.01,
                                                 max_iter=20, device=spdevice).run()
                 imSense = imSense[idxL:idxR,:]
@@ -625,7 +611,7 @@ for epoch in range(Nepoch):
                     hf.create_dataset(f"{epoch}_recon_im", data=np.squeeze(np.imag(imEstplt.numpy())))
             del truthplt, noisyplt, imEstplt
 
-        del smaps_sl, kspaceU_sl, im_sl
+        del smaps_gpu, kspaceU_gpu, im_sl
         #del imEst
         #del smaps, im, kspace
         #A = None
