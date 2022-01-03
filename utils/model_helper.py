@@ -215,7 +215,7 @@ class ComplexAvgPool(nn.Module):
 
 
 class L2cnnBlock(nn.Module):
-    def __init__(self, channels_in=64, channels_out=64, ndims=2, pool_rate=2, bias=False, norm=False,
+    def __init__(self, channels_in=64, channels_out=64, ndims=2, pool_rate=1, bias=False, norm=False,
                  activation=True, train_on_mag=False):
         super(L2cnnBlock, self).__init__()
 
@@ -238,21 +238,17 @@ class L2cnnBlock(nn.Module):
             self.shortcut = nn.Conv2d( channels_in, channels_out, kernel_size=1, padding=0, stride=1, bias=bias)
             self.pool = nn.AvgPool2d(pool_rate)
         else:
-            self.conv1 = ComplexConv2d(channels_in, channels_out, kernel_size=7, padding=3, stride=1, bias=bias)
-            self.conv2 = ComplexConv2d(channels_out, channels_out, kernel_size=7, padding=3, stride=1, bias=bias)
+            self.conv1 = ComplexConv2d(channels_in, channels_out, kernel_size=3, padding=1, stride=1, bias=bias)
+            self.conv2 = ComplexConv2d(channels_out, channels_out, kernel_size=3, padding=1, stride=1, bias=bias)
             self.shortcut = ComplexConv2d(channels_in, channels_out, kernel_size=1, padding=0, stride=1, bias=bias)
-
-            #self.conv1 = ComplexConv2d(channels_in, channels_out, kernel_size=3, padding=1, stride=1, bias=bias)
-            #self.conv2 = ComplexConv2d(channels_out, channels_out, kernel_size=3, padding=1, stride=1, bias=bias)
-            #self.shortcut = ComplexConv2d(channels_in, channels_out, kernel_size=1, padding=0, stride=1, bias=bias)
-
             self.pool = ComplexAvgPool(pool_rate)
+
         self.bn1 = VarNorm2d(channels_out)
         self.bn2 = VarNorm2d(channels_out)
 
         self.norm = norm
 
-    def forward(self,x):
+    def forward(self, x):
 
         shortcut = self.shortcut(x)
         x = self.conv1(x)
@@ -306,40 +302,36 @@ class L2cnn(nn.Module):
         pool_rate = 2
         channels_out = channel_base
         self.train_on_mag=train_on_mag
-        # Connect to output using a linear combination
-        # self.weight_mse = torch.nn.Parameter(torch.tensor([1.0]).view(1,1))
-        # self.weight_cnn = torch.nn.Parameter(torch.tensor([1.0]).view(1, 1))
-        # self.weight_ssim = torch.nn.Parameter(torch.tensor([1.0]).view(1, 1))
-        # self.scale_weight = nn.Parameter(torch.ones([group_depth]), requires_grad=True)
-        # self.ssim_op = SSIM( window_size=11, size_average=False, val_range=1)
-        #self.scale = nn.Parameter(torch.FloatTensor(init_scale* torch.ones([2])), requires_grad=True)
 
-        #self.mse_module = MSEmodule()
+        # Connect to output using a linear combination
+        self.weight_mse = torch.nn.Parameter(torch.tensor([1.0]).view(1,1))
+
         self.layers = nn.ModuleList()
         self.dropout = ComplexDropout2D(p=0.5)
+        count = 1
         for block in range(group_depth):
-
-            self.layers.append(L2cnnBlock(channels_in, channels_out, pool_rate, bias=bias, activation=False,
+            self.layers.append(L2cnnBlock(channels_in, channels_out, pool_rate,
+                                          bias=bias,
+                                          activation=False,
                                           train_on_mag=self.train_on_mag))
+
+            count = count + channels_out
 
             # Update channels
             channels_in = channels_out
             channels_out = channels_out * channel_scale
 
+        self.f_end = torch.nn.Parameter(torch.ones((1, count)))
+        self.final_dropout = torch.nn.Dropout(p=0.5)
+
     def layer_mse(self, x):
         y = x.view(x.shape[0], -1)
-        return 1e3*torch.sum((torch.abs(y) + 1e-6)**2, dim=1, keepdim=True)**0.5
-        #return 1e3*torch.sum(torch.abs(y)**2, dim=1, keepdim=True)**0.5
+        return torch.sum((torch.abs(y) + 1e-6)**2, dim=1, keepdim=True)**0.5
+
+    def channel_mse(self, x):
+        return torch.sum(torch.sum((torch.abs(x) + 1e-6) ** 2, dim=-1),dim=-1) ** 0.5
 
     def forward(self, input, truth):
-        x = input.clone()
-
-        # SSIM (range is -1 to 1)
-        #ssim = 2.0 - self.ssim_op(x, truth)
-
-        # print(f'scale shape {self.scale}')
-        # for i in range(2):
-        #     input[:, i, :, :] *= self.scale[i]
 
         if self.train_on_mag:
             diff_mag = torch.abs(input - truth)
@@ -347,20 +339,22 @@ class L2cnn(nn.Module):
             diff_mag = input - truth
 
         # Convolutional pathway with MSE at multiple scales
-        for l in self.layers:
-            diff_mag = l(diff_mag)
+        cnn_score = []
+        cnn_score.append(self.weight_mse*self.channel_mse(diff_mag))
+        for conv_layer in self.layers:
+            diff_mag = conv_layer(diff_mag)
             diff_mag = self.dropout(diff_mag)
+            cnn_score.append(self.channel_mse(diff_mag))
 
-        # print(f'diff_mag shape {diff_mag.shape}') # [64, 32, 1, 1]
-        cnn_score = self.layer_mse(diff_mag)    #(64, 1)
+        # Create a vector of scores at each level
+        f = torch.concat(cnn_score, dim=1)
 
-        # mse = self.mse_module(input, truth)
-        # scale = torch.sum(mse.T * cnn_score) / torch.sum(mse.T * mse)
-        # mse = mse * scale
+        # Combine multiple levels
+        f = f * torch.abs(self.f_end)
+        f = self.final_dropout(f)
 
-        # Combine scores
-        # score = cnn_score + mse
-        score = cnn_score
+        # Sum the scores
+        score = torch.sum(f, dim=-1)
 
         return score
 
@@ -469,104 +463,6 @@ class ResNet2(nn.Module):
             x = self.fc(x)
 
             return x
-
-# # lost precision while converting between array and pil?
-# transform = transforms.Compose([
-#      transforms.ToPILImage(),
-#      transforms.RandomHorizontalFlip(p=1),
-#      transforms.ToTensor(),
-#      ])
-
-
-# class MobileNetV2_2chan(nn.Module):
-#     def __init__(self,
-#                  num_classes=1,
-#                  width_mult=1.0,
-#                  inverted_residual_setting=None,
-#                  round_nearest=8,
-#                  block=None):
-#         """
-#         MobileNet V2 main class
-#
-#         Args:
-#             num_classes (int): Number of classes
-#             width_mult (float): Width multiplier - adjusts number of channels in each layer by this amount
-#             inverted_residual_setting: Network structure
-#             round_nearest (int): Round the number of channels in each layer to be a multiple of this number
-#             Set to 1 to turn off rounding
-#             block: Module specifying inverted residual building block for mobilenet
-#
-#         """
-#         super(MobileNetV2_2chan, self).__init__()
-#
-#         if block is None:
-#             block = InvertedResidual
-#         input_channel = 32
-#         last_channel = 1280
-#
-#         if inverted_residual_setting is None:
-#             inverted_residual_setting = [
-#                 # t, c, n, s
-#                 [1, 16, 1, 1],
-#                 [6, 24, 2, 2],
-#                 [6, 32, 3, 2],
-#                 [6, 64, 4, 2],
-#                 [6, 96, 3, 1],
-#                 [6, 160, 3, 2],
-#                 [6, 320, 1, 1],
-#             ]
-#
-#         # only check the first element, assuming user knows t,c,n,s are required
-#         if len(inverted_residual_setting) == 0 or len(inverted_residual_setting[0]) != 4:
-#             raise ValueError("inverted_residual_setting should be non-empty "
-#                              "or a 4-element list, got {}".format(inverted_residual_setting))
-#
-#         # building first layer
-#         input_channel = _make_divisible(input_channel * width_mult, round_nearest)
-#         self.last_channel = _make_divisible(last_channel * max(1.0, width_mult), round_nearest)
-#         features = [ConvBNReLU(2, input_channel, stride=2)]
-#         # building inverted residual blocks
-#         for t, c, n, s in inverted_residual_setting:
-#             output_channel = _make_divisible(c * width_mult, round_nearest)
-#             for i in range(n):
-#                 stride = s if i == 0 else 1
-#                 features.append(block(input_channel, output_channel, stride, expand_ratio=t))
-#                 input_channel = output_channel
-#         # building last several layers
-#         features.append(ConvBNReLU(input_channel, self.last_channel, kernel_size=1))
-#         # make it nn.Sequential
-#         self.features = nn.Sequential(*features)
-#
-#         # building classifier
-#         self.classifier = nn.Sequential(
-#             nn.Dropout(0.2),
-#             nn.Linear(self.last_channel, num_classes),
-#         )
-#
-#         # weight initialization
-#         for m in self.modules():
-#             if isinstance(m, nn.Conv2d):
-#                 nn.init.kaiming_normal_(m.weight, mode='fan_out')
-#                 if m.bias is not None:
-#                     nn.init.zeros_(m.bias)
-#             elif isinstance(m, nn.BatchNorm2d):
-#                 nn.init.ones_(m.weight)
-#                 nn.init.zeros_(m.bias)
-#             elif isinstance(m, nn.Linear):
-#                 nn.init.normal_(m.weight, 0, 0.01)
-#                 nn.init.zeros_(m.bias)
-#
-#     def _forward_impl(self, x):
-#         # This exists since TorchScript doesn't support inheritance, so the superclass method
-#         # (this one) needs to have a name other than `forward` that can be accessed in a subclass
-#         x = self.features(x)
-#         # Cannot use "squeeze" as batch-size can be 1 => must use reshape with x.shape[0]
-#         x = nn.functional.adaptive_avg_pool2d(x, 1).reshape(x.shape[0], -1)
-#         x = self.classifier(x)
-#         return x
-#
-#     def forward(self, x):
-#         return self._forward_impl(x)
 
 
 mod_cuda = """
@@ -841,7 +737,7 @@ class DataGenerator_rank(Dataset):
             ROT = True
             ROLL = True
             LPHASE = True
-            CONSTPHASE = False
+            CONSTPHASE = True
         else:
             FLIP = False
             ROT = False
@@ -867,12 +763,6 @@ class DataGenerator_rank(Dataset):
 
         # Add linear phase to the 'bad' image
         if LPHASE:
-            # if y == 0:
-            #     x1 = add_phase_im(x1, kshift_max=self.kshift_max)
-            # elif y== 2:
-            #     x2 = add_phase_im(x2, kshift_max=self.kshift_max)
-            # else:
-            #     pass
             kshift = np.random.randint(-self.kshift_max, self.kshift_max)
             x1 = add_phase_im(x1, kshift=kshift)
             x2 = add_phase_im(x2, kshift=kshift)
@@ -906,14 +796,6 @@ class DataGenerator_rank(Dataset):
         x1 = sp.to_pytorch(x1, requires_grad=False)
         x2 = sp.to_pytorch(x2, requires_grad=False)
         xt = sp.to_pytorch(xt, requires_grad=False)
-
-        # xtmin_im = torch.min(torch.imag(xt))
-        # xtmax_im = torch.max(torch.imag(xt))
-        # xtmin_re = torch.min(torch.real(xt))
-        # xtmax_re = torch.max(torch.real(xt))
-        # xt_re = (torch.real(xt) - xtmin_re) / (xtmax_re - xtmin_re)
-        # xt_im = (torch.imag(xt) - xtmin_im) / (xtmax_im - xtmin_im)
-        # xt = xt_re + 1j*xt_im
 
         y = self.Y[idx]
 

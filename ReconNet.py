@@ -33,12 +33,11 @@ from random import randrange
 
 def main():
 
+    # Network parameters
+    INNER_ITER = 5
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-    mempool = cupy.get_default_memory_pool()
-    pinned_mempool = cupy.get_default_pinned_memory_pool()
     spdevice = sp.Device(0)
-    xp = spdevice.xp
-
     Ntrial = randrange(10000)
 
     # Argument parser
@@ -68,11 +67,12 @@ def main():
     saveAllSl = args.save_all_slices
     saveTrainIm = args.save_train_images
 
-    metric_files = [ 'H:/LearnedImageMetric/MultiMetric/RankClassifier2614.pt',
-                     'H:/LearnedImageMetric/MultiMetric/RankClassifier3121.pt',
-                     'H:/LearnedImageMetric/MultiMetric/RankClassifier3914.pt',
-                     'H:/LearnedImageMetric/MultiMetric/RankClassifier4022.pt',
-                     'H:/LearnedImageMetric/MultiMetric/RankClassifier9265.pt']
+    # metric_files = [ 'H:/LearnedImageMetric/MultiMetric/RankClassifier2614.pt',
+    #                  'H:/LearnedImageMetric/MultiMetric/RankClassifier3121.pt',
+    #                  'H:/LearnedImageMetric/MultiMetric/RankClassifier3914.pt',
+    #                  'H:/LearnedImageMetric/MultiMetric/RankClassifier4022.pt',
+    #                  'H:/LearnedImageMetric/MultiMetric/RankClassifier9265.pt']
+    metric_files = [ 'H:/LearnedImageMetric/ImagePairs_Pack_04032020/RankClassifier9644.pt', ]
 
     # load RankNet
     try:
@@ -90,23 +90,20 @@ def main():
 
     scorenets = []
     for name in metric_files:
-        ranknet = L2cnn(channels_in=rank_channel, channel_base=16, train_on_mag=rank_trained_on_mag)
+        # ranknet = L2cnn(channels_in=rank_channel, channel_base=16, train_on_mag=rank_trained_on_mag)
+        # ranknet = L2cnn(channels_in=1, channel_base=8, group_depth=1, train_on_mag=rank_trained_on_mag)
+        ranknet = L2cnn(channels_in=1, channel_base=8, group_depth=5, train_on_mag=rank_trained_on_mag)
+
         classifier = Classifier(ranknet)
 
         state = torch.load(name)
         classifier.load_state_dict(state['state_dict'], strict=True)
         classifier.eval()
-        # for param in classifier.parameters():
-        #     param.requires_grad = False
         score = classifier.rank
-        # for param in score.parameters():
-        #     param.requires_grad = False
-        score.cuda()
+        score.to(device)
 
         scorenets.append(score)
 
-    file_train = 'ksp_truths_smaps_train_lzf.h5'
-    file_val = 'ksp_truths_smaps_val_lzf.h5'
     smap_type = 'smap16'
 
     # Only choose 20-coil data for now
@@ -118,7 +115,7 @@ def main():
 
     acc = 8
     WHICH_MASK = 'poisson'
-    NUM_MASK = 16
+    NUM_MASK = 64
     logging.info(f'Acceleration = {acc}, {WHICH_MASK} mask, {NUM_MASK}')
 
     masks = []
@@ -161,11 +158,9 @@ def main():
 
     # Data generator
     Ntrain = 64
-    Nval = 20
+    Nval = 200
     BATCH_SIZE = 32
-    prefetch_data = True
     SaveCaseName = True
-    DiffCaseEveryEpochT=True
     print('Loading datasets')
     trainingset = DataGeneratorReconSlices(data_folder_train, rank_trained_on_mag=rank_trained_on_mag,
                                      data_type=smap_type, case_name=SaveCaseName)
@@ -178,7 +173,6 @@ def main():
     loader_V = DataLoader(dataset=validationset, batch_size=1, shuffle=False, pin_memory=True,
                            )
 
-    UNROLL = True
     print('Setting Model')
 
     if resume_train:
@@ -189,49 +183,35 @@ def main():
         recon_file = 'H:\LearnedImageMetric\runs\recon\Recon5046_learned.pt'
 
         recon_file = 'H:/LearnedImageMetric/runs/recon/Recon5046_learned.pt'
-        ReconModel = MoDL(inner_iter=15, DENOISER='unet')
+        ReconModel = MoDL(inner_iter=INNER_ITER, DENOISER='unet')
 
         state = torch.load(recon_file)
         ReconModel.load_state_dict(state['state_dict'], strict=True)
     else:
-        if UNROLL:
-            denoiser = 'unet'
-            logging.info(f'denoiser is {denoiser}')
+        denoiser = 'unet'
+        logging.info(f'denoiser is {denoiser}')
 
-            INNER_ITER = 1
-            #ReconModel = unrolledK(inner_iter=INNER_ITER, DENOISER=denoiser)
-            ReconModel = MoDL(inner_iter=INNER_ITER, DENOISER=denoiser)
-            logging.info(f'MoDL, inner iter = {INNER_ITER}')
-        else:
-            NUM_CASCADES = 12
-            ReconModel = EEVarNet(num_cascades=NUM_CASCADES)
-            logging.info(f'EEVarNet, {NUM_CASCADES} cascades')
-    ReconModel.cuda();
+        ReconModel = MoDL(inner_iter=INNER_ITER, DENOISER=denoiser)
+        logging.info(f'MoDL, inner iter = {INNER_ITER}')
+
+    ReconModel.to(device)
 
     LR = 1e-4
-    # optimizer = optim.SGD(ReonModel.parameters(), lr=LR, momentum=0.9)
     optimizer = optim.Adam(ReconModel.parameters(), lr=LR)
     lmbda = lambda epoch: 0.99
     scheduler = torch.optim.lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lmbda)
-    # if epochMSE != 0:
-    #     lambda1 = lambda epoch: 1e1 if epoch<epochMSE else 1.0
-    #     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda1)
-    #if resume_train:
-    #    optimizer.load_state_dict(state['optimizer'])
 
-
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     writer_train = SummaryWriter(os.path.join(log_dir,f'runs/recon/train_{Ntrial}'))
     writer_val = SummaryWriter(os.path.join(log_dir,f'runs/recon/val_{Ntrial}'))
 
-    WHICH_LOSS = 'mse'
+    WHICH_LOSS = 'learned'
     if WHICH_LOSS == 'perceptual':
         loss_perceptual = PerceptualLoss_VGG16()
-        loss_perceptual.cuda()
+        loss_perceptual.to(device)
     elif WHICH_LOSS == 'patchGAN':
         patchGAN = NLayerDiscriminator(input_nc=2)
-        patchGAN.cuda()
+        patchGAN.to(device)
     elif WHICH_LOSS == 'ssim':
         ssim_module = SSIM()
 
@@ -301,26 +281,28 @@ def main():
                 optimizer.zero_grad()
 
                 loss_avg = 0.0
+
+                # Loop over slices to reduce memory
                 for sl in range(smaps.shape[0]):
 
                     t_sl = time.time()
 
                     # Clone to torch
-                    smaps_sl = torch.clone(smaps[sl]).cuda()  # ndarray on cuda (20, 768, 396), complex64
-                    kspace_sl = torch.clone(kspace[sl]).cuda()  # ndarray (20, 768, 396), complex64
+                    smaps_sl = torch.clone(smaps[sl]).to(device)  # ndarray on cuda (20, 768, 396), complex64
+                    kspace_sl = torch.clone(kspace[sl]).to(device)  # ndarray (20, 768, 396), complex64
 
                     # Get mask
                     mask_idx = np.random.randint(NUM_MASK)
-                    mask_torch = masks[mask_idx].cuda()
+                    mask_torch = masks[mask_idx].to(device)
 
                     # Move to torch
                     kspaceU_sl = kspace_sl * mask_torch
 
                     # Get truth on the fly
-                    im_sl = sense_adjoint(smaps_sl, kspace_sl * mask_truth.cuda())
+                    im_sl = sense_adjoint(smaps_sl, kspace_sl * mask_truth.to(device))
 
                     # Get zerofilled image to estimate max
-                    imU_sl = sense_adjoint(smaps_sl, kspaceU_sl * mask_truth.cuda())
+                    imU_sl = sense_adjoint(smaps_sl, kspaceU_sl * mask_truth.to(device))
 
                     # Scale based on max value
                     scale = 1.0/torch.max(torch.abs(imU_sl))
@@ -333,10 +315,7 @@ def main():
                         # Get PyTorch functions
                         t = time.time()
                         imEst = torch.zeros_like(im_sl)
-                        if UNROLL:
-                            imEst2 = ReconModel(imEst, kspaceU_sl, smaps_sl, mask_torch)  # (768, 396, 2)
-                        else:
-                            imEst2 = ReconModel(kspaceU_sl, mask_torch, smaps_sl, mask_torch)
+                        imEst2 = ReconModel(imEst, kspaceU_sl, smaps_sl, mask_torch)  # (768, 396, 2)
 
                         t = time.time()
                         # crop to square
@@ -377,8 +356,6 @@ def main():
                     scaler.scale(loss).backward()
 
                     t = time.time()
-                    #loss.backward(retain_graph=True)
-                    #print(f'   Backwards {time.time() - t}')
 
                     if saveAllSl:
                         imEstpltT = imEst2.detach().cpu()
@@ -473,19 +450,19 @@ def main():
                 Nslices = smaps.shape[0]
 
                 for sl in range(smaps.shape[0]):
-                    smaps_sl = torch.clone(smaps[sl]).cuda()
-                    kspace_sl = torch.clone(kspace[sl]).cuda()
+                    smaps_sl = torch.clone(smaps[sl]).to(device)
+                    kspace_sl = torch.clone(kspace[sl]).to(device)
 
                     # Get mask
-                    mask_torch = masks[0].cuda()
+                    mask_torch = masks[0].to(device)
 
                     kspaceU_sl = kspace_sl * mask_torch
 
                     # Get truth
-                    im_sl = sense_adjoint(smaps_sl, kspace_sl * mask_truth.cuda())
+                    im_sl = sense_adjoint(smaps_sl, kspace_sl * mask_truth.to(device))
 
                     # Get zerofilled image to estimate max
-                    imU_sl = sense_adjoint(smaps_sl, kspaceU_sl * mask_truth.cuda())
+                    imU_sl = sense_adjoint(smaps_sl, kspaceU_sl * mask_truth.to(device))
 
                     # Scale based on max value
                     scale = 1.0/torch.max(torch.abs(imU_sl))
@@ -496,11 +473,7 @@ def main():
                     imEst = torch.zeros_like(im_sl)
 
                     t = time.time()
-                    #kspaceU_sl = sp.to_pytorch(kspaceU_sl)
-                    if UNROLL:
-                        imEst2 = ReconModel(imEst, kspaceU_sl, smaps_sl, mask_torch)
-                    else:
-                        imEst2 = ReconModel(kspaceU_sl, mask_torch)
+                    imEst2 = ReconModel(imEst, kspaceU_sl, smaps_sl, mask_torch)
 
                     # crop to square
                     width = im_sl.shape[2]

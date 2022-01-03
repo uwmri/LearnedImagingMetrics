@@ -13,20 +13,15 @@ import torch
 import argparse
 import os
 
-os.environ["CUPY_CACHE_SAVE_CUDA_SOURCE"] = "1"
-os.environ["CUPY_DUMP_CUDA_SOURCE_ON_ERROR"] = "1"
-
 from random import randrange
 Ntrial = randrange(10000)
 parser = argparse.ArgumentParser()
 parser.add_argument('--pname', type=str, default=f'learned_ranking_{Ntrial}')
-parser.add_argument('--dgx', action='store_true', default=False)
 parser.add_argument('--file_csv', type=str, default=Path(r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\consensus_mode_all.csv'))
 parser.add_argument('--file_images', type=str, default=Path(r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\TRAINING_IMAGES_04032020.h5'))
 parser.add_argument('--resume_train', action='store_true', default=False)
 args = parser.parse_args()
 
-DGX = args.dgx
 resume_train = args.resume_train
 if resume_train:
     Ntrial_prev=4437
@@ -36,14 +31,13 @@ try:
 except:
     print('NO ax')
 
-if DGX:
-    try:
-        import setproctitle
+try:
+    import setproctitle
 
-        setproctitle.setproctitle(args.pname)
-        print(f'Setting program name to {args.pname}')
-    except:
-        print('setproctitle not installled,unavailable, or failed')
+    setproctitle.setproctitle(args.pname)
+    print(f'Setting program name to {args.pname}')
+except:
+    print('setproctitle not installled,unavailable, or failed')
 
 from utils.model_helper import *
 from utils.utils_DL import *
@@ -98,7 +92,6 @@ if shuffle_observers:
     np.random.shuffle(ranks)
 # np.savetxt("consensus_mode_all.csv", ranks, fmt='%d', delimiter=',')
 
-
 # Images and truth
 X_1 = np.zeros((NEXAMPLES, 1, maxMatSize, maxMatSize), dtype=np.complex64)
 X_2 = np.zeros((NEXAMPLES, 1, maxMatSize, maxMatSize), dtype=np.complex64)
@@ -107,26 +100,25 @@ X_T = np.zeros((NEXAMPLES, 1, maxMatSize, maxMatSize), dtype=np.complex64)
 # X_T = np.zeros((NEXAMPLES, maxMatSize, maxMatSize),dtype=np.complex64)
 Labels = np.zeros(NRANKS, dtype=np.int32)
 
-hf = h5.File(name=args.file_images, mode='r')
+with h5.File(name=args.file_images, mode='r') as hf:
+    # Just read and subtract truth for now, index later
+    for i in range(NEXAMPLES):
 
-# Just read and subtract truth for now, index later
-for i in range(NEXAMPLES):
+        nameT = 'EXAMPLE_%07d_TRUTH' % (i+1)
+        name1 = 'EXAMPLE_%07d_IMAGE_%04d' % (i+1, 0)
+        name2 = 'EXAMPLE_%07d_IMAGE_%04d' % (i+1, 1)
 
-    nameT = 'EXAMPLE_%07d_TRUTH' % (i+1)
-    name1 = 'EXAMPLE_%07d_IMAGE_%04d' % (i+1, 0)
-    name2 = 'EXAMPLE_%07d_IMAGE_%04d' % (i+1, 1)
+        im1 = zero_pad2D(np.array(hf[name1]), maxMatSize, maxMatSize)
+        im2 = zero_pad2D(np.array(hf[name2]), maxMatSize, maxMatSize)
+        truth = zero_pad2D(np.array(hf[nameT]), maxMatSize, maxMatSize)
 
-    im1 = zero_pad2D(np.array(hf[name1]), maxMatSize, maxMatSize)
-    im2 = zero_pad2D(np.array(hf[name2]), maxMatSize, maxMatSize)
-    truth = zero_pad2D(np.array(hf[nameT]), maxMatSize, maxMatSize)
+        # Convert to torch
+        X_1[i, 0] = im1[...,0] + 1j*im1[...,1]
+        X_2[i, 0] = im2[...,0] + 1j*im2[...,1]
+        X_T[i, 0] = truth[...,0] + 1j*truth[...,1]
 
-    # Convert to torch
-    X_1[i, 0] = im1[...,0] + 1j*im1[...,1]
-    X_2[i, 0] = im2[...,0] + 1j*im2[...,1]
-    X_T[i, 0] = truth[...,0] + 1j*truth[...,1]
-
-    if i % 1e2 == 0:
-        print(f'loading example pairs {i + 1}')
+        if i % 1e2 == 0:
+            print(f'loading example pairs {i + 1}')
 
 # All labels
 for i in range(0, NRANKS):
@@ -143,29 +135,6 @@ for i in range(0, NRANKS):
         Labels[i] = 2
 
 print(f'X_1 shape {X_1.shape}')
-
-# MobileNet requires values [0,1] and normalized
-if MOBILE:
-    x1max = X_1.max(axis=(2, 3))
-    x1min = X_1.min(axis=(2, 3))
-    x2max = X_2.max(axis=(2, 3))
-    x2min = X_2.min(axis=(2, 3))
-
-    mean = [0.485, 0.456, 0.406]
-    std = [0.229, 0.224, 0.225]
-
-    for i in range(X_1.shape[0]):
-        for ch in range(X_1.shape[1]):
-            X_1[i,ch,...] = (X_1[i,ch,...]-x1min[i,ch])/(x1max[i,ch]-x1min[i,ch])
-            X_2[i, ch, ...] = (X_2[i, ch, ...] - x2min[i, ch]) / (x2max[i, ch] - x2min[i, ch])
-
-            X_1[i, ch, ...] = (X_1[i, ch, ...] - mean[ch]) / std[ch]
-            X_2[i, ch, ...] = (X_2[i, ch, ...] - mean[ch]) / std[ch]
-
-        if i % 1e2 == 0:
-            print(f'Normalizing pairs {i + 1}')
-
-
 
 log_dir = os.path.dirname(args.file_images)
 logging.basicConfig(filename=os.path.join(log_dir,f'runs/rank/ranking_{Ntrial}.log'), filemode='w', level=logging.INFO)
@@ -186,7 +155,7 @@ Labels_cnnT = np.concatenate((Labels[:idV_L], Labels[idV_R:]))
 Labels_cnnV = Labels[idV_L:idV_R]
 
 # Data generator
-BATCH_SIZE = 48
+BATCH_SIZE = 24
 BATCH_SIZE_EVAL = 1
 logging.info(f'batchsize={BATCH_SIZE}')
 logging.info(f'batchsize_eval={BATCH_SIZE_EVAL}')
@@ -228,7 +197,7 @@ if resume_train:
         rank_fileMSE = rf'/raid/DGXUserDataRaid/cxt004/NYUbrain/RankClassifier{Ntrial_prev}_MSE.pt'
         rank_fileSSIM = rf'/raid/DGXUserDataRaid/cxt004/NYUbrain/RankClassifier{Ntrial_prev}_SSIM.pt'
         #ranknet = L2cnn(channels_in=1, channel_base=8, train_on_mag=train_on_mag)
-        ranknet = L2cnn(channels_in=1, channel_base=8, group_depth=1, train_on_mag=train_on_mag)
+        ranknet = L2cnn(channels_in=1, channel_base=8, group_depth=5, train_on_mag=train_on_mag)
 
         classifier = Classifier(ranknet)
         mse_module = MSEmodule()
@@ -254,7 +223,8 @@ else:
     else:
         #ranknet = L2cnn(channels_in=1, channel_base=8, train_on_mag=train_on_mag)
         #ranknet = L2cnn(channels_in=1, channel_base=8, train_on_mag=train_on_mag)
-        ranknet = L2cnn(channels_in=1, channel_base=8, group_depth=1, train_on_mag=train_on_mag)
+        # ranknet = L2cnn(channels_in=1, channel_base=8, group_depth=1, train_on_mag=train_on_mag)
+        ranknet = L2cnn(channels_in=1, channel_base=8, group_depth=5, train_on_mag=train_on_mag)
 
     print(ranknet)
 
@@ -269,9 +239,9 @@ else:
 
 
 # torchsummary.summary(ranknet.cuda(), [(X_1.shape[-3], maxMatSize, maxMatSize)
-#                              ,(X_1.shape[-3], maxMatSize, maxMatSize)])
+#                               ,(X_1.shape[-3], maxMatSize, maxMatSize)])
 
-learning_rate_classifier = 1e-4
+learning_rate_classifier = 1e-3
 learning_rate_rank = 1e-4
 learning_rate_MSE = 1e-3
 learning_rate_SSIM = 1e-3
@@ -280,7 +250,7 @@ optimizer = optim.Adam([
     {'params': classifier.f.parameters()},
     {'params': classifier.g.parameters()},
     {'params': classifier.rank.parameters(), 'lr': learning_rate_rank}
-], lr=learning_rate_classifier)
+], lr=learning_rate_classifier, weight_decay=1e-5)
 
 logging.info(f'Adam, lr={learning_rate_rank}')
 if trainScoreandMSE:
@@ -296,7 +266,7 @@ if resume_train:
     if trainScoreandSSIM:
         optimizerSSIM.load_state_dict(stateSSIM['optimizer'])
 
-lmbda = lambda epoch: 0.99
+lmbda = lambda epoch: 0.999
 scheduler = torch.optim.lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lmbda)
 schedulerMSE = torch.optim.lr_scheduler.MultiplicativeLR(optimizerMSE, lr_lambda=lmbda)
 schedulerSSIM = torch.optim.lr_scheduler.MultiplicativeLR(optimizerSSIM, lr_lambda=lmbda)
@@ -346,7 +316,7 @@ diff_scoreV = []
 diff_mseV = []
 diff_ssimV = []
 
-mixed_training = False
+mixed_training = True
 
 if mixed_training:
     scaler = torch.cuda.amp.GradScaler()
@@ -387,7 +357,7 @@ for epoch in range(Nepoch):
 
     # training
     classifier.train()
-    with torch.autograd.set_detect_anomaly(True):
+    with torch.autograd.set_detect_anomaly(False):
         for i, data in enumerate(loader_T, 0):
 
             # zero the parameter gradients, backward and update
@@ -409,25 +379,12 @@ for epoch in range(Nepoch):
 
                     # Cross entropy
                     loss = loss_func(delta, labels)
-                    # Add L2 norm for kernels
-                    l2_lambda = 1e-5
-                    l2_reg = torch.tensor(0.).cuda()
-                    for param in classifier.rank.parameters():
-                        l2_reg += torch.norm(param)
-                    loss += l2_lambda * l2_reg
             else:
                 # classifier and scores for each image
                 delta, score1, score2 = classifier(im1, im2, imt)
 
                 # Cross entropy
                 loss = loss_func(delta, labels)
-
-                # Add L2 norm for kernels
-                l2_lambda = 1e-5
-                l2_reg = torch.tensor(0.).cuda()
-                for param in classifier.rank.parameters():
-                    l2_reg += torch.norm(param)
-                loss += l2_lambda * l2_reg
 
             # Track loss
             train_avg.update(loss.item(), n=BATCH_SIZE)  # here is total loss of all batches
@@ -436,12 +393,6 @@ for epoch in range(Nepoch):
             acc = acc_calc(delta, labels, BatchSize=BATCH_SIZE)
             #print(f'Training: acc of minibatch {i} is {acc}')
             train_acc.update(acc, n=1)
-
-            # # every 30 minibatch, show image pairs and predictions
-            # if i % 30 == 0:
-            #     writer.add_figure()
-            #if i % 30 == 0:
-            #    print(train_acc.avg())
 
             if mixed_training:
                 scaler.scale(loss).backward()
@@ -611,12 +562,10 @@ for epoch in range(Nepoch):
         corrV, pV = pearsonr(mselistV, ssimlistV)
         writer_val.add_scalar('PearsonCorr_SSIM_MSE',corrV, epoch)
 
-    #print('Epoch = %d : Loss Eval = %f , Loss Train = %f' % (epoch, eval_avg.avg(), train_avg.avg()))
     print(f'Epoch = {epoch:03d}, Loss = {eval_avg.avg()}, Loss train = {train_avg.avg()}, Acc = {eval_acc.avg()}, Acc train = {train_acc.avg()}')
 
     lossT[epoch] = train_avg.avg()
     lossV[epoch] = eval_avg.avg()
-
 
     writer_val.add_scalar('Loss', eval_avg.avg(), epoch)
     writer_train.add_scalar('Loss', train_avg.avg(), epoch)

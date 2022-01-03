@@ -605,14 +605,17 @@ class conv_bn(nn.Module):
 
 class CNN_shortcut(nn.Module):
 
-    def __init__(self, Nkernels=10):
+    def __init__(self, Nkernels=64):
         super(CNN_shortcut, self).__init__()
         self.conv_in = nn.Sequential(ComplexConv2d(1, Nkernels, kernel_size=3, stride=1, padding=1),
                                      CReLu())
-        self.block1 = conv_bn(Nkernels=Nkernels, BN=False)
-        self.block2 = conv_bn(Nkernels=Nkernels, BN=False)
-        self.block3 = conv_bn(Nkernels=Nkernels, BN=False)
-        self.block4 = conv_bn(Nkernels=Nkernels, BN=False)
+        self.block1 = nn.Sequential(ComplexConv2d(Nkernels, Nkernels, kernel_size=3, stride=1, padding=1),
+                                     CReLu())
+        self.block2 = nn.Sequential(ComplexConv2d(Nkernels, Nkernels, kernel_size=3, stride=1, padding=1),
+                                    CReLu())
+        self.block3 = nn.Sequential(ComplexConv2d(Nkernels, Nkernels, kernel_size=3, stride=1, padding=1),
+                                    CReLu())
+
         self.conv_out = ComplexConv2d(Nkernels, 1, kernel_size=3, padding=1)
 
     def forward(self, x):
@@ -840,12 +843,14 @@ class MoDL(nn.Module):
 
         # Options for UNET
         if DENOISER == 'unet':
-            #self.denoiser =  MRI_UNet(in_channels=1, out_channels=1, f_maps=64,
+            #self.denoiser =  MRI_UNet(in_channels=1, out_channels=1, f_maps=64,h
             #     layer_order='cr', complex_kernel=False, complex_input=True)
 
-            self.denoiser = UNet(in_channels=1, out_channels=1, f_maps=64, depth=3,
+            self.denoiser = UNet(in_channels=1, out_channels=1, f_maps=64, depth=2,
                                  layer_order=['convolution', 'relu'],
-                                 complex_kernel=False, complex_input=True)
+                                 complex_kernel=False, complex_input=True,
+                                 residual=True, scaled_residual=True)
+            print(self.denoiser)
             #self.denoiser = ComplexUNet2D(1, 1, depth=2, final_activation='none', f_maps=32, layer_order='cr')
         elif DENOISER == 'varnet':
             self.varnets = nn.ModuleList()
