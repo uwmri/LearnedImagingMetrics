@@ -185,7 +185,16 @@ DiffCaseEveryEpochV=False
 logging.info(f'DiffCaseEveryEpochV {DiffCaseEveryEpochV}')
 # if not DiffCaseEveryEpochV:
 #     logging.info(f'training cases {indicesV}')
-indicesV = np.random.randint(len(os.listdir(val_folder)), size=Nval)
+#indicesV = np.random.randint(len(os.listdir(val_folder)), size=Nval)
+# Recon_1981
+# indicesV = np.array([538, 32, 5266, 2342, 5379, 5263,  642, 3349, 3433, 768, 5029, 5316, 286, 3902, 4579, 1132, 2236,
+#                      1966, 2737, 5396, 2314, 4941, 5424, 1592, 298, 3272, 4450, 883, 3585, 4637, 309, 866, 692, 2307,
+#                      2095, 1840, 1479, 2110, 868, 1812, 4059, 47, 2132, 826, 1762, 3460, 1056, 3278, 4199, 1482])
+# Recon_8048
+# indicesV = np.array([2715, 3229, 3826, 1814, 1467, 4778, 1757, 1699, 586, 3150, 4357, 2895, 910, 513, 1212, 1115, 3606,
+#                      3259, 3769, 1208, 5090, 858, 4877, 3216, 349, 1795, 3658, 3270, 482, 273, 3347, 2640, 619, 287,
+#                      5411, 3538, 2199, 1674, 2238, 238, 2235, 759, 1255, 5212, 5210, 4585, 4399, 4734, 2929, 935])
+
 validationset = DataGeneratorRecon(val_folder, rank_trained_on_mag=rank_trained_on_mag,
                                    data_type=smap_type, case_name=SaveCaseName, index=indicesV, diff_cases=DiffCaseEveryEpochV)
 loader_V = DataLoader(dataset=validationset, batch_size=BATCH_SIZE, shuffle=False, pin_memory=True)
