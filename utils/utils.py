@@ -49,17 +49,6 @@ def zero_pad4D(ksp_raw, Nxmax=396, Nymax=768):
     return ksp_zp
 
 def zero_pad3D(ksp_raw, Nxmax=396, Nymax=768):
-<<<<<<< HEAD
-    """ zero-pad kspace to the same size (sl, coil, 768, 396)"""
-
-    pady = int(.5 * (Nymax - ksp_raw.shape[1]))
-    padx = int(.5 * (Nxmax - ksp_raw.shape[2]))
-
-    ksp_zp = np.pad(ksp_raw, ((0, 0), (pady, Nymax - ksp_raw.shape[1] - pady),
-                                 (padx, Nxmax - ksp_raw.shape[2] - padx)), 'constant', constant_values=0 + 0j)
-    return ksp_zp
-=======
-    """ zero-pad kspace to the same size (coil, 768, 396)"""
 
     pady = int(.5 * (Nymax - ksp_raw.shape[-2]))
     padx = int(.5 * (Nxmax - ksp_raw.shape[-1]))
@@ -69,7 +58,6 @@ def zero_pad3D(ksp_raw, Nxmax=396, Nymax=768):
     return ksp_zp
 
 
->>>>>>> 69a2625ce9e64b020524248372c14c4a2dedd85a
 
 def zero_pad_truth(truth, Nymax=768):
     ''' zero pad truth from ([16, 396, 396, 2]) to ([16, 768, 396, 2]) '''

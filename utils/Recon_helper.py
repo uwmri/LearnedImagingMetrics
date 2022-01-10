@@ -18,7 +18,7 @@ from utils.CreateImagePairs import get_smaps, add_gaussian_noise
 from utils.unet_componets import *
 from utils.unet_components_complex import *
 from utils.varnet_components_complex import *
-from mri_unet.unet import UNet
+from utils.unet import UNet
 
 spdevice = sp.Device(0)
 

@@ -44,7 +44,7 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description='Process some integers.')
     parser.add_argument('--data_folder', type=str,
-                        default=r'I:\NYUbrain',
+                        default=r'D:\NYUbrain\singleslices',
                         help='Data path')
     parser.add_argument('--metric_file', type=str,
                         default=r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\rank_trained_L2cnn\RankClassifier6390.pt',
@@ -88,21 +88,32 @@ def main():
 
     logging.basicConfig(filename=os.path.join(log_dir,f'Recon_{Ntrial}.log'), filemode='w', level=logging.INFO)
 
-    scorenets = []
-    for name in metric_files:
-        # ranknet = L2cnn(channels_in=rank_channel, channel_base=16, train_on_mag=rank_trained_on_mag)
-        # ranknet = L2cnn(channels_in=1, channel_base=8, group_depth=1, train_on_mag=rank_trained_on_mag)
-        ranknet = L2cnn(channels_in=1, channel_base=8, group_depth=5, train_on_mag=rank_trained_on_mag)
+    WHICH_LOSS = 'mse'
+    if WHICH_LOSS == 'perceptual':
+        loss_perceptual = PerceptualLoss_VGG16()
+        loss_perceptual.to(device)
+    elif WHICH_LOSS == 'patchGAN':
+        patchGAN = NLayerDiscriminator(input_nc=2)
+        patchGAN.to(device)
+    elif WHICH_LOSS == 'ssim':
+        ssim_module = SSIM()
 
-        classifier = Classifier(ranknet)
+    if WHICH_LOSS == 'learned':
+        scorenets = []
+        for name in metric_files:
+            # ranknet = L2cnn(channels_in=rank_channel, channel_base=16, train_on_mag=rank_trained_on_mag)
+            # ranknet = L2cnn(channels_in=1, channel_base=8, group_depth=1, train_on_mag=rank_trained_on_mag)
+            ranknet = L2cnn(channels_in=1, channel_base=8, group_depth=5, train_on_mag=rank_trained_on_mag)
 
-        state = torch.load(name)
-        classifier.load_state_dict(state['state_dict'], strict=True)
-        classifier.eval()
-        score = classifier.rank
-        score.to(device)
+            classifier = Classifier(ranknet)
 
-        scorenets.append(score)
+            state = torch.load(name)
+            classifier.load_state_dict(state['state_dict'], strict=True)
+            classifier.eval()
+            score = classifier.rank
+            score.to(device)
+
+            scorenets.append(score)
 
     smap_type = 'smap16'
 
@@ -205,15 +216,7 @@ def main():
     writer_train = SummaryWriter(os.path.join(log_dir,f'runs/recon/train_{Ntrial}'))
     writer_val = SummaryWriter(os.path.join(log_dir,f'runs/recon/val_{Ntrial}'))
 
-    WHICH_LOSS = 'learned'
-    if WHICH_LOSS == 'perceptual':
-        loss_perceptual = PerceptualLoss_VGG16()
-        loss_perceptual.to(device)
-    elif WHICH_LOSS == 'patchGAN':
-        patchGAN = NLayerDiscriminator(input_nc=2)
-        patchGAN.to(device)
-    elif WHICH_LOSS == 'ssim':
-        ssim_module = SSIM()
+
 
 
     Nepoch = 1001
