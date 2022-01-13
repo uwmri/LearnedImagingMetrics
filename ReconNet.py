@@ -88,7 +88,7 @@ def main():
 
     logging.basicConfig(filename=os.path.join(log_dir,f'Recon_{Ntrial}.log'), filemode='w', level=logging.INFO)
 
-    WHICH_LOSS = 'mse'
+    WHICH_LOSS = 'ssim'
     if WHICH_LOSS == 'perceptual':
         loss_perceptual = PerceptualLoss_VGG16()
         loss_perceptual.to(device)
@@ -343,7 +343,7 @@ def main():
                         if WHICH_LOSS == 'mse':
                             loss = mseloss_fcn(imEst2, im_sl)
                         elif WHICH_LOSS == 'ssim':
-                            loss = 1 - ssim_module(torch.unsqueeze(imEst2,0), torch.unsqueeze(im_sl,0))
+                            loss = torch.mean(1 - ssim_module(imEst2.unsqueeze(dim=0), im_sl.unsqueeze(dim=0)))
                         elif WHICH_LOSS == 'perceptual':
                             loss = loss_perceptual(imEst2, im_sl)
                         elif WHICH_LOSS == 'patchGAN':
@@ -499,7 +499,7 @@ def main():
                     if WHICH_LOSS == 'mse':
                         loss = mseloss_fcn(imEst2, im_sl)
                     elif WHICH_LOSS == 'ssim':
-                        loss = 1 - ssim_module(torch.unsqueeze(imEst2,0), torch.unsqueeze(im_sl,0))
+                        loss = torch.mean(1 - ssim_module(imEst2.unsqueeze(dim=0), im_sl.unsqueeze(dim=0)))
                     elif WHICH_LOSS == 'perceptual':
                         loss = loss_perceptual(imEst2, im_sl)
                     elif WHICH_LOSS == 'patchGAN':
