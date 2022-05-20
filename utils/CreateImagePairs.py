@@ -333,7 +333,7 @@ def add_incoherent_noise(ksp, prob=None, central=0.4, mode=1, num_corrupted=0, d
 
             for c in range(len(kspace[:,0,0])):
                 kspace[c, :, :] = kspace[c, :, :] * randuni_m
-            percent_actualRemoved=(1-np.count_nonzero(kspace)/(kspace.shape[0]*kspace.shape[1]*kspace.shape[2]))
+            percent_actualRemoved=(1-np.count_nonzero(kspace)/(kspace.shape[0]*kspace.shape[1]*kspace.shape[2])) * 100
     else:
         mode = 0
         percent = 0.99
@@ -587,6 +587,7 @@ def generate_pairs():
             #     plt.show()
 
             # Get list of slice numbers without duplicates
+            # if not CORR:
             mu, sigma = 0, 0.7 * tot_slices
             for ii in range(10000):  # Not ideal...
                 num_duplicates = 0
@@ -602,6 +603,10 @@ def generate_pairs():
                             num_duplicates += 1
                 if num_duplicates == 0 and num_outrange == 0:
                     break
+            # else:
+            #     # not inluding top of brain images for score-mse-ssim correlation calc
+            #     # those are likely the pairs skipped
+            #     slice_nums = np.random.choice(np.arange(0,int(tot_slices * 0.75)), num_slices, replace=False)
 
             # for each slice, generate truth, corrupted1, corrupted2
             for s in slice_nums:
@@ -630,7 +635,8 @@ def generate_pairs():
 
                     if recon == 0:
 
-                        image_corrupted1, acc1, gaussian_level1, percent1, mode1, smaps1 = get_corrupted(ksp, s, num_corrupted=recon, num_coils=tot_coils, device=device)  # has been normalized to its max
+                        image_corrupted1, acc1, gaussian_level1, percent1, mode1, smaps1 = \
+                            get_corrupted(ksp, s, num_corrupted=recon, num_coils=tot_coils, device=device)  # has been normalized to its max
                         logger.info(f'gaussian_level is {gaussian_level1} for both')
                         # Find scaling that minimizes MSE(corrupted, ori)
                         scale = np.sum(np.conj(image_corrupted1).T * image_sense) / np.sum(

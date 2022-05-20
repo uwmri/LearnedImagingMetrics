@@ -310,6 +310,7 @@ class L2cnn(nn.Module):
 
         self.layers = nn.ModuleList()
         self.dropout = ComplexDropout2D(p=0.5)
+        # self.dropout = torch.nn.Dropout(p=0.5)
         count = 1
         for block in range(group_depth):
             self.layers.append(L2cnnBlock(channels_in, channels_out, pool_rate,

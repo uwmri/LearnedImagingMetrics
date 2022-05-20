@@ -1,5 +1,5 @@
-import tkinter as tk
-from tkinter import filedialog
+# import tkinter as tk
+# from tkinter import filedialog
 import h5py as h5
 import csv
 import logging
@@ -240,7 +240,9 @@ else:
 
 # torchsummary.summary(ranknet.cuda(), [(X_1.shape[-3], maxMatSize, maxMatSize)
 #                               ,(X_1.shape[-3], maxMatSize, maxMatSize)])
-
+#
+# torchsummary.summary(classifier.cuda(), [(X_1.shape[-3], maxMatSize, maxMatSize)
+#                               ,(X_1.shape[-3], maxMatSize, maxMatSize), (X_1.shape[-3], maxMatSize, maxMatSize)])
 learning_rate_classifier = 1e-3
 learning_rate_rank = 1e-4
 learning_rate_MSE = 1e-3

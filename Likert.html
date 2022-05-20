@@ -1,0 +1,140 @@
+<SCRIPT LANGUAGE="JavaScript">
+
+
+
+var count = 0
+var Ndownload = 1
+var reconID = new Array()
+var pairID = new Array()
+var likert = new Array()
+
+var example = 0
+var recon_num = 0
+
+var pairIDs = [1,7,8]
+var NEXAMPLES = 5
+var NRECONS = 2
+
+
+function getRndInteger(min, max) {
+    return Math.floor(Math.random() * (max - min + 1) ) + min;
+}
+
+function display_image(){
+
+	reconID[count] = recon_num;
+	pairID[count] = example;
+    likert[count] = 0;
+    update_images();
+}
+
+
+function update_images(){
+
+	document.getElementById("toptext").textContent="Likert scoring (count = " + count + ")";
+    likert[count] =  document.getElementById("score").value;
+	example = pairIDs[getRndInteger(1,3)]
+	recon_num = getRndInteger(0,NRECONS-1)
+    var appearance = 0;
+    for (let i=0; i<count; i++){
+        if (example==pairID[i]){
+            appearance ++;
+            if (appearance===2){
+                if (count===NEXAMPLES){
+                     document.getElementById("Finished").textContent="All images scored! Thank you!";
+                }else {
+                    update_images();
+                    count--;
+                }
+
+            }
+            else{
+                recon_num = 1 - reconID[i];
+	            }
+            }
+        }
+    }
+    document.canvas1.src = "ImagePairs_png_2/NYU_" + pad(example,7) + "_IMAGE_" + pad(recon_num,4) + ".png";
+
+    count++;
+
+}
+
+function pad(n, width, z) {
+  z = z || '0';
+  n = n + '';
+  return n.length >= width ? n : new Array(width - n.length + 1).join(z) + n;
+}
+
+function getInitials() {
+    var initials = document.getElementById("Initials").value;
+    return initials
+}
+
+// function getScore() {
+//     var score = document.getElementById("score").value;
+//     return score
+// }
+
+function TimeStamp() {
+    var now = new Date()
+    var min = String(now.getMinutes()).padStart(2,'0');
+    var hour = String(now.getHours()).padStart(2,'0');
+    var dd = String(now.getDate()).padStart(2, '0');
+    var mm = String(now.getMonth() + 1).padStart(2, '0'); //January is 0!
+    var yyyy = now.getFullYear();
+
+    now = hour + min + '_' + mm + dd + yyyy
+    return now
+}
+
+function export_data() {
+    var data = '';
+	for(let i=0; i<NEXAMPLES; i++){
+		console.log(pairID[i]);
+		data += pairID[i];
+		data += ',';
+		data += reconID[i];
+		data += ',';
+		data += likert[i];
+		data += '\r\n';
+   }
+
+	var pom = document.createElement('a');
+	var csvContent=data; //here we load our csv data
+	var blob = new Blob([csvContent],{type: 'text/csv;charset=utf-8;'});
+	var url = URL.createObjectURL(blob);
+	pom.href = url;
+	pom.setAttribute('download', 'Results_' + getInitials() + '_' + TimeStamp() + '.csv');
+	pom.click();
+    Ndownload += 1
+    // if (typeof(Storage) !== "undefined") {
+    //     if (localStorage.Ndownload) {
+    //         localStorage.Ndownload = Number(localStorage.Ndownload) + 1;
+    //     } else {
+    //         localStorage.Ndownload += 1;
+    //     }
+    // }
+}
+
+window.onload = function() {
+	update_images();
+};
+
+//  End -->
+</script>
+
+</HEAD>
+
+
+<BODY bgcolor="#0F0F0F">
+
+<text id="toptext" style="font-size:40;color:white;font-family:monospace;">Likert score</text><br>
+<input id="Initials" placeholder="Enter your initials">
+<br><button onclick="getInitials" style="font-size:24px;">Save Initial </button><br>
+<input id="score" placeholder="1 (unusable) to 5 (ideal)">
+<img src="IMAGE.jpg" name="canvas1" width="600" height="600"/>
+<br><button onClick="display_image();" style="font-size:24px;">Next Image</button><br>
+<br><button onClick="export_data();" style="font-size:24px;" type="button">SaveResults</button>
+
+</BODY>

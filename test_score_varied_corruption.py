@@ -4,6 +4,9 @@ from random import randrange
 import sigpy.mri as mri
 import pywt
 import time
+import matplotlib
+matplotlib.use('TKAgg')
+import scipy
 
 from utils.utils import *
 from utils.CreateImagePairs import *
@@ -20,9 +23,9 @@ val_folder = Path("D:/NYUbrain/brain_multicoil_val/multicoil_val")
 test_folder = Path("D:/NYUbrain/brain_multicoil_test/multicoil_test")
 files = find("*.h5", train_folder)
 
-CORRUPTIONS = ['PE Motion Corrupted (%)', 'Random undersampling (%)', 'PE removed randomly (%)',
-             'Blurring (a.u.)', 'Gaussian noise level(a.u.)']
-# CORRUPTIONS = ['Random undersampling (%)']
+# CORRUPTIONS = ['PE Motion Corrupted (%)', 'PE removed randomly (%)',
+#              'Blurring (a.u.)', 'Gaussian noise level(a.u.)']
+CORRUPTIONS = [ 'Gaussian noise level(a.u.)']
 SAME_IMAGE = '(the same image)'
 # out_name = os.path.join(f'corrupted_images_{WHICH_CORRUPTION}.h5')
 # try:
@@ -30,7 +33,7 @@ SAME_IMAGE = '(the same image)'
 # except OSError:
 #     pass
 
-Ntrials = 500
+Ntrials = 50
 Nxmax = 320
 Nymax = 640
 # Nxmax = 396
@@ -100,12 +103,18 @@ image_truthSQ = crop_flipud(image_truth)
 #     hf.create_dataset(name, data=image_truth)
 
 
-RankID = [2614, 3121, 3914, 4022, 9265]
 filepath_rankModel = Path(r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\rank_trained_L2cnn\CV-5')
 filepath_train = Path("I:/NYUbrain")
 filepath_val = Path("I:/NYUbrain")
 
+cor = 0
 for WHICH_CORRUPTION in CORRUPTIONS:
+
+    try:
+        os.remove(os.path.join(filepath_rankModel, f'example_images_{WHICH_CORRUPTION}.h5'))
+    except OSError:
+        pass
+
     scoreList = []
     mseList = []
     ssimList = []
@@ -119,9 +128,9 @@ for WHICH_CORRUPTION in CORRUPTIONS:
 
         if WHICH_CORRUPTION == 'PE Motion Corrupted (%)':
             # corruption_mag is from which PE line the motion started/total PEs
-            maxshift=40
+            maxshift=30
             ksp2, corruption_mag = trans_motion(ksp_full, dir_motion=2, maxshift=maxshift, prob=1, startPE=180,
-                                                fix_shift=True, fix_start=False, low=0.0, high=1)
+                                                fix_shift=True, fix_start=False, low=0.0, high=0.82)
         if WHICH_CORRUPTION == 'Total shift (pixels)':
             # corruption_mag is magnitude of the motion
             startPE=203
@@ -129,21 +138,21 @@ for WHICH_CORRUPTION in CORRUPTIONS:
                                                 startPE=startPE,fix_shift=False, fix_start=True)
 
         elif WHICH_CORRUPTION == 'Gaussian noise level(a.u.)':
-            gaussian_ulim = 10
+            gaussian_ulim = 8
             gaussian_level = np.random.randint(0, gaussian_ulim)
             ksp2, sigma_real, sigma_imag = add_gaussian_noise(ksp_full, 1, kedge_len=30,level=gaussian_level, mode=1, mean=0)
             #corruption_mag = (sigma_real**2 + sigma_imag**2)**0.5
             corruption_mag = gaussian_level
         elif WHICH_CORRUPTION == 'Blurring (a.u.)':
-            ksp2, corruption_mag = blurring(ksp_full, 2.7)
+            ksp2, corruption_mag = blurring(ksp_full, 3.2)
         elif WHICH_CORRUPTION == 'Random undersampling (%)':
             ksp2,_,_, corruption_mag= add_incoherent_noise(ksp_full, prob=1,
                                                        central=0.1, mode=0,
                                                        num_corrupted=0, dump=0.1)
         elif WHICH_CORRUPTION == 'PE removed randomly (%)':
             ksp2,_,_, corruption_mag = add_incoherent_noise(ksp_full, prob=1,
-                                                       central=.02, mode=1,
-                                                       num_corrupted=0, dump=0.2)
+                                                       central=.05, mode=1,
+                                                       num_corrupted=0, dump=0.27)
 
         elif WHICH_CORRUPTION =='none':
             ksp2 = ksp_full
@@ -167,14 +176,15 @@ for WHICH_CORRUPTION in CORRUPTIONS:
         image_truth_tensor = image_truth_tensor.unsqueeze(0)
         image_truth_tensor, image_tensor = image_truth_tensor.cuda(), image_tensor.cuda()
         scores = []
+        metric_files = os.listdir(filepath_rankModel)
         for i_cv in range(5):
 
-            file_rankModel = os.path.join(filepath_rankModel, f"RankClassifier{RankID[i_cv]}.pt")
+            file_rankModel = os.path.join(filepath_rankModel, metric_files[i_cv])
             log_dir = filepath_rankModel
 
             rank_channel = 1
             # ranknet = ISOResNet2(BasicBlock, [2,2,2,2], for_denoise=False)
-            ranknet = L2cnn(channels_in=rank_channel, channel_base=16)
+            ranknet = L2cnn(channels_in=rank_channel, channel_base=8)
             classifier = Classifier(ranknet)
 
             state = torch.load(file_rankModel)
@@ -207,6 +217,13 @@ for WHICH_CORRUPTION in CORRUPTIONS:
         mseList.append(mse)
         ssimList.append(ssim)
 
+        # save example images
+
+        # with h5py.File(os.path.join(r'D:\LearnedImagingMetrics_figs_docs\new_cv5_perturbation', f'example_images_{cor}.h5'), 'a') as hf:
+        #     hf.create_dataset(f'{i}_{corruption_mag}', data=np.abs(np.squeeze(image_tensor.cpu().numpy())))
+        #     hf.create_dataset(f'{i}_truth', data=np.abs(np.squeeze(image_truth_tensor.cpu().numpy())))
+
+    cor += 1
     # if index_file == 25:
     #     break
 
@@ -242,42 +259,45 @@ for WHICH_CORRUPTION in CORRUPTIONS:
     # plt.xlabel(f'{WHICH_CORRUPTION} ')
     # plt.ylabel('ssim')
     # plt.show()
-    corruption_magList *= 100
     fig_ssim, ax1 = plt.subplots(figsize=(7,5))
-    color = 'tab:red'
-    ax1.set_xlabel(f'{WHICH_CORRUPTION}', fontsize=18)
-    ax1.set_ylabel('1-ssim', color=color, fontsize=18)
-    ax1.scatter(corruption_magList, ssimList, color=color, alpha=0.2)
-    ax1.set_ylim([0,1])
+    color = 'tab:orange'
+    ax1.set_xlabel(f'{WHICH_CORRUPTION}', fontsize=28)
+    ax1.set_ylabel('1-ssim', color=color, fontsize=26)
+    ax1.scatter(corruption_magList, ssimList, color=color, alpha=0.2, marker="^", s=120)
+    ax1.set_ylim([0,0.25])
     ax1.tick_params(axis='y', labelcolor=color)
-    ax1.tick_params(axis='both', labelsize=14)
+    ax1.tick_params(axis='both', labelsize=22)
 
     ax2 = ax1.twinx()  # instantiate a second axes that shares the same x-axis
     color = 'tab:blue'
-    ax2.set_ylabel('score', color=color, fontsize=18)  # we already handled the x-label with ax1
-    ax2.scatter(corruption_magList, scoreList, color=color, alpha=0.2)
+    ax2.set_ylabel('score', color=color, fontsize=26)  # we already handled the x-label with ax1
+    ax2.scatter(corruption_magList, scoreList, color=color, alpha=0.15, s=100)
+    # ax2.set_ylim([0,125])
     ax2.tick_params(axis='y', labelcolor=color)
-    ax2.tick_params(axis='both', labelsize=14)
+    ax2.tick_params(axis='both', labelsize=22)
     fig_ssim.tight_layout()  # otherwise the right y-label is slightly clipped
-    fig_ssim.savefig(f'cv5Mean_{WHICH_CORRUPTION}_ssim-score-corruption.png')
+    plt.show()
+    # fig_ssim.savefig(f'cv5Mean_{WHICH_CORRUPTION}_ssim-score-corruption_test.png')
 
     fig_mse, ax1 = plt.subplots(figsize=(7,5))
-    color = 'tab:red'
-    ax1.set_xlabel(f'{WHICH_CORRUPTION}', fontsize=18)
-    ax1.set_ylabel('mse', color=color, fontsize=18)
-    ax1.scatter(corruption_magList, mseList, color=color, alpha=0.2)
-    ax1.set_ylim([0,27])
+    color = 'tab:orange'
+    ax1.set_xlabel(f'{WHICH_CORRUPTION}', fontsize=28)
+    ax1.set_ylabel('mse', color=color, fontsize=26)
+    ax1.scatter(corruption_magList, mseList, color=color, alpha=0.2, marker='x', s=120)
+    ax1.set_ylim([0,12])
     ax1.tick_params(axis='y', labelcolor=color)
-    ax1.tick_params(axis='both', labelsize=14)
-
+    ax1.tick_params(axis='both', labelsize=22)
+    #
     ax2 = ax1.twinx()  # instantiate a second axes that shares the same x-axis
     color = 'tab:blue'
-    ax2.set_ylabel('score', color=color, fontsize=18)  # we already handled the x-label with ax1
-    ax2.scatter(corruption_magList, scoreList, color=color, alpha=0.15)
+    ax2.set_ylabel('score', color=color, fontsize=26)  # we already handled the x-label with ax1
+    ax2.scatter(corruption_magList, scoreList, color=color, alpha=0.15, s=100)
+    # ax2.set_ylim([0,125])
     ax2.tick_params(axis='y', labelcolor=color)
-    ax2.tick_params(axis='both', labelsize=14)
+    ax2.tick_params(axis='both', labelsize=22)
     fig_mse.tight_layout()  # otherwise the right y-label is slightly clipped
-    fig_mse.savefig(f'cv5Mean_{WHICH_CORRUPTION}_mse-score-corruption.png')
+    plt.show()
+    # fig_mse.savefig(f'cv5Mean_{WHICH_CORRUPTION}_mse-score-corruption_test.png')
 
     fig_mseVscore, ax3 = plt.subplots(figsize=(7,5))
     ax3.scatter(mseList, scoreList, alpha=0.5)
@@ -295,5 +315,5 @@ for WHICH_CORRUPTION in CORRUPTIONS:
     ax4.set_ylabel('score', fontsize=18)
     ax4.tick_params(axis='both', labelsize=14)
     fig_ssimVscore.tight_layout()
-    fig_ssimVscore.savefig(f'cv5Mean_{WHICH_CORRUPTION}_ssim-score.png')
+    # fig_ssimVscore.savefig(f'cv5Mean_{WHICH_CORRUPTION}_ssim-score.png')
     #

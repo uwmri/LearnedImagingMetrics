@@ -67,12 +67,13 @@ def main():
     saveAllSl = args.save_all_slices
     saveTrainIm = args.save_train_images
 
-    # metric_files = [ 'H:/LearnedImageMetric/MultiMetric/RankClassifier2614.pt',
-    #                  'H:/LearnedImageMetric/MultiMetric/RankClassifier3121.pt',
-    #                  'H:/LearnedImageMetric/MultiMetric/RankClassifier3914.pt',
-    #                  'H:/LearnedImageMetric/MultiMetric/RankClassifier4022.pt',
-    #                  'H:/LearnedImageMetric/MultiMetric/RankClassifier9265.pt']
-    metric_files = [ 'H:/LearnedImageMetric/ImagePairs_Pack_04032020/RankClassifier9644.pt', ]
+    cv_folder = r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\rank_trained_L2cnn\CV-5'
+    metric_files = [ os.path.join(cv_folder, os.listdir(cv_folder)[0]),
+                     os.path.join(cv_folder, os.listdir(cv_folder)[1]),
+                     os.path.join(cv_folder, os.listdir(cv_folder)[2]),
+                     os.path.join(cv_folder, os.listdir(cv_folder)[3]),
+                     os.path.join(cv_folder, os.listdir(cv_folder)[4])]
+    # metric_files = [ 'H:/LearnedImageMetric/ImagePairs_Pack_04032020/RankClassifier9644.pt', ]
 
     # load RankNet
     try:
@@ -103,7 +104,7 @@ def main():
         for name in metric_files:
             # ranknet = L2cnn(channels_in=rank_channel, channel_base=16, train_on_mag=rank_trained_on_mag)
             # ranknet = L2cnn(channels_in=1, channel_base=8, group_depth=1, train_on_mag=rank_trained_on_mag)
-            ranknet = L2cnn(channels_in=1, channel_base=8, group_depth=5, train_on_mag=rank_trained_on_mag)
+            ranknet = L2cnn(channels_in=1, channel_base=16, group_depth=5, train_on_mag=rank_trained_on_mag)
 
             classifier = Classifier(ranknet)
 
@@ -134,7 +135,7 @@ def main():
         if WHICH_MASK == 'poisson':
             # Sample elipsoid to not be overly optimistic
             mask = mri.poisson((act_xres, act_yres), accel=acc * 2, calib=(0, 0), crop_corner=True, return_density=False,
-                               dtype='float32')
+                               dtype='float32', seed=None)
 
         elif WHICH_MASK == 'randLines':
             length_center = 20
@@ -181,8 +182,7 @@ def main():
 
     validationset = DataGeneratorReconSlices(data_folder_val, rank_trained_on_mag=rank_trained_on_mag,
                                      data_type=smap_type, case_name=SaveCaseName)
-    loader_V = DataLoader(dataset=validationset, batch_size=1, shuffle=False, pin_memory=True,
-                           )
+    loader_V = DataLoader(dataset=validationset, batch_size=1, shuffle=False, pin_memory=True)
 
     print('Setting Model')
 
@@ -280,6 +280,8 @@ def main():
                 else:
                     smaps, kspace = data
 
+                if i > -1:
+                    break
                 t_case = time.time()
                 optimizer.zero_grad()
 
