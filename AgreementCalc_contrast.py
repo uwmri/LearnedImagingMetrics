@@ -9,72 +9,7 @@ import csv
 import re
 import glob
 import pandas as pd
-
-def pad_beginning(data, prob):
-    # data: dataframe
-    # prob: 1d numpy array
-    # fix bug when dataframe doen't start with [ID,1,Prob, Reviewer]
-    if data.iloc[0]['Results'] == 10:
-        prob = np.insert(prob,0, 0, axis=0)
-    elif data.iloc[0]['Results'] == 22:
-        prob = np.insert(prob,0, (0,0), axis=0)
-    else:
-        pass
-    return prob
-
-
-def add_zero_prob(reviewerdata, num_intersection):
-
-    reviewer_results = reviewerdata['Results'].to_numpy()
-    reviewer_ID = reviewerdata['ID'].to_numpy()
-
-    idx_incomp = []
-    jj = np.arange(0, len(reviewer_results), 1)
-    j = 0
-    idx_incomp.append(j)
-    for i in range(1, len(reviewer_results)):
-        if reviewer_ID[i] == reviewer_ID[i - 1]:
-            if reviewer_results[i - 1] == 1:
-                if reviewer_results[i] == 10:
-                    j += 1
-                else:
-                    j += 2
-            else:
-                j += 1
-        else:
-            if reviewer_results[i - 1] == 1:
-                if reviewer_results[i] == 1:
-                    j += 3
-                elif reviewer_results[i] == 10:
-                    j += 4
-                else:
-                    j += 5
-            elif reviewer_results[i - 1] == 10:
-                if reviewer_results[i] == 1:
-                    j += 2
-                elif reviewer_results[i] == 10:
-                    j += 3
-                else:
-                    j += 4
-            else:
-                if reviewer_results[i] == 1:
-                    j += 1
-                elif reviewer_results[i] == 10:
-                    j += 2
-                else:
-                    j += 3
-
-        idx_incomp.append(j)
-    idx_incomp = np.array(idx_incomp)
-
-    reviewerdata['j'] = idx_incomp
-    reviewerdata = reviewerdata.set_index('j')
-
-    # this will fill missing data as nan
-    reviewerdata = reviewerdata.reindex(index=np.arange(num_intersection * 3))
-    reviewerdata['Prob'].fillna(0, inplace=True)
-
-    return reviewerdata
+from utils.utils import pad_beginning, add_zero_prob
 
 with open(r"I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\file.txt", "r") as log_file:
     log = log_file.readlines()
