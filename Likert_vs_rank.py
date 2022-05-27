@@ -26,6 +26,14 @@ def compare_likert(likert2, i, score, agreement):
     elif likert2.iloc[i, 2] == 5:
         agreement[4, score-1] += 1
 
+def compare_rank(rank2, i, score, agreement):
+    if rank2.iloc[i, 1] == 1:
+        agreement[0, score-1] += 1
+    elif rank2.iloc[i, 1] == 10:
+        agreement[1, score-1] += 1
+    elif rank2.iloc[i, 1] == 22:
+        agreement[2, score-1] += 1
+
 
 # Quadratic weights for cohen's kappa
 weights = np.array([[1, 0.94, 0.75, 0.44, 0],
@@ -33,7 +41,9 @@ weights = np.array([[1, 0.94, 0.75, 0.44, 0],
                     [0.75, 0.94, 1, 0.94, 0.75],
                     [0.44, 0.75, 0.94, 1, 0.94],
                     [0, 0.44, 0.75, 0.94, 1]])
-
+weights3 = np.array([[1, 0.75, 0.94 ],
+                     [0.75, 1, 0.94],
+                     [0.94, 0.94, 1]])
 with open(r"I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\file.txt", "r") as log_file:
     log = log_file.readlines()
 
@@ -126,7 +136,8 @@ for i in range(len(rankers)):
 
 contrast_types = ['AXT1', 'AXT2', 'AXT1POST', 'AXFLAIR']
 ALL_C = False
-LIKERT_V_RANK = True
+LIKERT_V_RANK = False
+CONFUSION_LIKERT = False
 if LIKERT_V_RANK:
     # compare a single reader's agreement on Likert and ranking
     for rr in rankers:
@@ -202,7 +213,7 @@ if LIKERT_V_RANK:
                 print(f'Agreement on one is better than the other {agreed110}')
                 print('-----------------------------------------------------------------------------------------------')
 
-else:
+elif CONFUSION_LIKERT:
     # Compare the likert score from two readers.
     if ALL_C:
 
@@ -272,6 +283,143 @@ else:
             sd = np.sqrt((po * (1 - po)) / ((1 - pe) ** 2))
             z = 1.96  # for 95% confidence level
             print(f'{cc}: Quadratic weighted kappa={kappa}, sd {sd}, plus-minus {z * sd} for CI 95%')
+
+
+else:
+    # get confusion matrix between two readers from rank_fromLikert and ranks
+    if ALL_C:
+        for rr in rankers:
+            exec('likert = likert_%s_all' % (rr))
+            ranks_fromLikert = likert[['ID', 'Results', 'Prob', 'Reviewer']].copy()
+            ranks_fromLikert = ranks_fromLikert[:num_pairs_likert]
+            num_images = ranks_fromLikert.groupby('Results').size()
+            exec('ranks_fromLikert_%s = ranks_fromLikert' % rr)
+            exec('num_images_%s = num_images' % rr)
+
+            exec('ranks = ranks_%s' % (rr))
+            id = ranks.ID.isin(ranks_fromLikert.ID)
+            ranks_sub = ranks[id]
+            ranks_sub = add_zero_prob(ranks_sub, num_intersection=num_pairs_likert)
+            ranks_prob_sub = ranks_sub['Prob'].to_numpy()
+            ranks_prob = pad_beginning(ranks_sub, ranks_prob_sub)
+            ranks_prob = ranks_prob[:num_pairs_likert * 3]
+            exec('ranks_prob_%s = ranks_prob' % rr)
+
+        # confusion matrix of rank_fromLikert
+        agreement = np.zeros((3, 3))
+        for i in range(len(ranks_fromLikert_JS)):
+            if ranks_fromLikert_JS.iloc[i, 1] == 1:
+                compare_rank(ranks_fromLikert_AP, i, 1, agreement)
+            elif ranks_fromLikert_JS.iloc[i, 1] == 10:
+                compare_rank(ranks_fromLikert_AP, i, 2, agreement)
+            elif ranks_fromLikert_JS.iloc[i, 1] == 22:
+                compare_rank(ranks_fromLikert_AP, i, 3, agreement)
+        print('confusion matrix of ranks_fromLikert')
+        print(agreement)
+        # po = np.sum(agreement/(num_pairs_likert) * weights3)
+        # bychance = num_images_JS.to_numpy() * \
+        #            np.expand_dims(num_images_AP.to_numpy(),1) / (num_pairs_likert**2)
+        # pe = np.sum(bychance * weights3)
+        # kappa = (po-pe) / (1-pe)
+        # print(kappa)
+        print(f'agreement = {(agreement[0, 0] + agreement[1, 1] + agreement[2, 2])/num_pairs_likert}')
+
+        # confusion matrix of ranks_sub. ranks_sub is ranks of 104 pairs used for Likert
+        agreement_ranks = np.zeros((3, 3))
+        agreement_ranks[0,0] = np.sum(ranks_prob_JS[::3]*ranks_prob_AP[::3])
+        agreement_ranks[1,1] = np.sum(ranks_prob_JS[1::3]*ranks_prob_AP[1::3])
+        agreement_ranks[2,2] = np.sum(ranks_prob_JS[2::3]*ranks_prob_AP[2::3])
+        agreement_ranks[0,1] = np.sum(ranks_prob_JS[::3]*ranks_prob_AP[1::3])
+        agreement_ranks[0, 2] = np.sum(ranks_prob_JS[::3]*ranks_prob_AP[2::3])
+        agreement_ranks[1,0] = np.sum(ranks_prob_JS[1::3]*ranks_prob_AP[::3])
+        agreement_ranks[1,2] = np.sum(ranks_prob_JS[1::3]*ranks_prob_AP[2::3])
+        agreement_ranks[2,0] = np.sum(ranks_prob_JS[2::3]*ranks_prob_AP[::3])
+        agreement_ranks[2,1] = np.sum(ranks_prob_JS[2::3]*ranks_prob_AP[1::3])
+        print('confusion matrix of ranks')
+        print(agreement_ranks)
+        # num_images_1_ranks = np.sum(agreement_ranks, axis=0)
+        # num_images_2_ranks = np.sum(agreement_ranks, axis=1)
+        #
+        # po = np.sum(agreement_ranks/(num_pairs_likert) * weights3)
+        # bychance = num_images_1_ranks* \
+        #            np.expand_dims(num_images_2_ranks,1) / (num_pairs_likert**2)
+        # pe = np.sum(bychance * weights3)
+        # kappa = (po-pe) / (1-pe)
+        # print(kappa)
+        print(
+            f'agreement = {(agreement_ranks[0, 0] + agreement_ranks[1, 1] + agreement_ranks[2, 2]) /num_pairs_likert}')
+
+    else:
+        for cc in contrast_types:
+            for rr in rankers:
+                exec('likert = likert_%s_all' % (rr))
+                ranks_fromLikert = likert[['ID', 'Results', 'Prob', 'Contrast','Reviewer']].copy()
+                ranks_fromLikert = ranks_fromLikert[:num_pairs_likert]
+                ranks_fromLikert_c = ranks_fromLikert.loc[ranks_fromLikert['Contrast'] == cc]
+
+                exec('ranks_fromLikert_%s = ranks_fromLikert_c' % rr)
+                num_images = ranks_fromLikert_c.groupby('Results').size()
+                exec('num_images_%s = num_images' % rr)
+
+                exec('ranks = ranks_%s' % (rr))
+                id = ranks.ID.isin(ranks_fromLikert_c.ID)
+                ranks_sub = ranks[id]
+                ranks_sub = add_zero_prob(ranks_sub, num_intersection=num_pairs_likert)
+                ranks_prob_sub = ranks_sub['Prob'].to_numpy()
+                ranks_prob = pad_beginning(ranks_sub, ranks_prob_sub)
+                ranks_prob = ranks_prob[:num_pairs_likert * 3]
+                exec('ranks_prob_%s = ranks_prob' % rr)
+
+
+            agreement = np.zeros((3, 3))
+            for i in range(len(ranks_fromLikert_JS)):
+                if ranks_fromLikert_JS.iloc[i, 1] == 1:
+                    compare_rank(ranks_fromLikert_AP, i, 1, agreement)
+                elif ranks_fromLikert_JS.iloc[i, 1] == 10:
+                    compare_rank(ranks_fromLikert_AP, i, 2, agreement)
+                elif ranks_fromLikert_JS.iloc[i, 1] == 22:
+                    compare_rank(ranks_fromLikert_AP, i, 3, agreement)
+            print(cc)
+            print('confusion matrix of ranks_fromLikert')
+            print(agreement)
+            agreement_prob = agreement / len(ranks_fromLikert_JS)
+
+            # po = np.sum(agreement_prob * weights3)
+            # bychance = num_images_JS.to_numpy() * np.expand_dims(num_images_AP.to_numpy(), 1) / (len(ranks_fromLikert_JS) ** 2)
+            # pe = np.sum(bychance * weights3)
+            # kappa = (po - pe) / (1 - pe)
+            # print(f'quadratic weighted kappa = {kappa}')
+            print(f'agreement = {(agreement_prob[0,0]+agreement_prob[1,1]+agreement_prob[2,2])}')
+
+
+            # confusion matrix of ranks_sub. ranks_sub is ranks of 104 pairs used for Likert
+            agreement_ranks = np.zeros((3, 3))
+            agreement_ranks[0, 0] = np.sum(ranks_prob_JS[::3] * ranks_prob_AP[::3])
+            agreement_ranks[1, 1] = np.sum(ranks_prob_JS[1::3] * ranks_prob_AP[1::3])
+            agreement_ranks[2, 2] = np.sum(ranks_prob_JS[2::3] * ranks_prob_AP[2::3])
+            agreement_ranks[0, 1] = np.sum(ranks_prob_JS[::3] * ranks_prob_AP[1::3])
+            agreement_ranks[0, 2] = np.sum(ranks_prob_JS[::3] * ranks_prob_AP[2::3])
+            agreement_ranks[1, 0] = np.sum(ranks_prob_JS[1::3] * ranks_prob_AP[::3])
+            agreement_ranks[1, 2] = np.sum(ranks_prob_JS[1::3] * ranks_prob_AP[2::3])
+            agreement_ranks[2, 0] = np.sum(ranks_prob_JS[2::3] * ranks_prob_AP[::3])
+            agreement_ranks[2, 1] = np.sum(ranks_prob_JS[2::3] * ranks_prob_AP[1::3])
+            print('confusion matrix of ranks')
+            print(f'{cc}')
+            print(agreement_ranks)
+            num_images_1_ranks = np.sum(agreement_ranks, axis=0)
+            num_images_2_ranks = np.sum(agreement_ranks, axis=1)
+            print(num_images_2_ranks)
+            print(num_images_1_ranks)
+
+            # po = np.sum(agreement_ranks / len(ranks_fromLikert_JS) * weights3)
+            # bychance = num_images_1_ranks * \
+            #            np.expand_dims(num_images_2_ranks, 1) / ( len(ranks_fromLikert_JS) ** 2)
+            # pe = np.sum(bychance * weights3)
+            # kappa = (po - pe) / (1 - pe)
+            # print(kappa)
+            print(f'agreement = {(agreement_ranks[0,0]+agreement_ranks[1,1]+agreement_ranks[2,2])/len(ranks_fromLikert_c)}')
+
+
 
 # # plot time
 # time_JS = likert['Time'].to_numpy()
