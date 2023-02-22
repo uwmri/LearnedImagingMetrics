@@ -37,7 +37,7 @@ def get_score(idx, imEstL, im_sl, scorenets, scorelist, rank_trained_on_mag=Fals
 
 import argparse
 parser = argparse.ArgumentParser()
-parser.add_argument('--num_slices', type=int, default=50)
+parser.add_argument('--num_slices', type=int, default=5)
 parser.add_argument('--reconID_learned', type=str, default='1980')
 parser.add_argument('--reconID_mse', type=str, default='8470')
 parser.add_argument('--reconID_ssim', type=str, default='3987')
@@ -105,8 +105,8 @@ for m in range(args.num_slices):
     print(f'padx = {(padx, xres - padx - act_xres)}, {(pady, yres - pady - act_yres)}')
     pad = ((padx, xres - padx - act_xres), (pady, yres - pady - act_yres))
     mask = np.pad(mask, pad, 'constant', constant_values=0)
-    # mask = mri.poisson((xres, yres), accel=acc, calib=(0, 0), crop_corner=True, return_density=False,
-    #                    dtype='float32')
+    mask = mri.poisson((xres, yres), accel=acc, calib=(0, 0), crop_corner=True, return_density=False,
+                       dtype='float32')
 
     # random PE lines
     # calib = 24
@@ -133,8 +133,8 @@ masks = torch.tensor(masks)
 effective_acc = torch.count_nonzero(masks[0]) / torch.count_nonzero(mask_truth)
 print(f'effective acc {effective_acc}')
 
-# contrasts = ['T1', 'T1post', 'T2', 'FLAIR']
-contrasts = ['T1']
+contrasts = ['T1', 'T1post', 'T2', 'FLAIR']
+# contrasts = ['T1']
 
 for contrast in contrasts:
 
@@ -151,13 +151,13 @@ for contrast in contrasts:
     globals()['scorelistSSIM' + contrast] = np.zeros(args.num_slices)
     globals()['psnrlistSSIM' + contrast] = np.zeros(args.num_slices)
 
-    try:
-        os.remove(rf'I:\NYUbrain\poisson_acc1\ReconMSE_{contrast}.h5')
-        os.remove(rf'I:\NYUbrain\poisson_acc1\ReconSSIM_{contrast}.h5')
-        os.remove(rf'I:\NYUbrain\poisson_acc1\ReconL_{contrast}.h5')
-        os.remove(rf'I:\NYUbrain\poisson_acc1\truth_{contrast}.h5')
-    except OSError:
-        pass
+    # try:
+    #     os.remove(rf'I:\NYUbrain\poisson_acc1\ReconMSE_{contrast}.h5')
+    #     os.remove(rf'I:\NYUbrain\poisson_acc1\ReconSSIM_{contrast}.h5')
+    #     os.remove(rf'I:\NYUbrain\poisson_acc1\ReconL_{contrast}.h5')
+    #     os.remove(rf'I:\NYUbrain\poisson_acc1\truth_{contrast}.h5')
+    # except OSError:
+    #     pass
 
     data_folder_val = os.path.join(args.data_dir, contrast)
     logging.basicConfig(filename=os.path.join(args.project_dir, f'metrics_compare_{contrast}.log'), filemode='w',
@@ -210,18 +210,18 @@ for contrast in contrasts:
             imEstMSE = torch.flip(imEstMSE, dims=(0, 1))
             imEstSSIM = torch.flip(imEstSSIM, dims=(0, 1))
 
-            with h5py.File(os.path.join(r'I:\NYUbrain\poisson_acc1', f'ReconMSE_{contrast}.h5'), 'a') as hf:
-                hf.create_dataset(f"{fname}_mag", data=np.abs(np.squeeze(imEstMSE.cpu().numpy())))
-                hf.create_dataset(f"{fname}_phase", data=np.angle(np.squeeze(imEstMSE.cpu().numpy())))
-            with h5py.File(os.path.join(r'I:\NYUbrain\poisson_acc1', f'ReconSSIM_{contrast}.h5'), 'a') as hf:
-                hf.create_dataset(f"{fname}_mag", data=np.abs(np.squeeze(imEstSSIM.cpu().numpy())))
-                hf.create_dataset(f"{fname}_phase", data=np.angle(np.squeeze(imEstSSIM.cpu().numpy())))
-            with h5py.File(os.path.join(r'I:\NYUbrain\poisson_acc1', f'ReconL_{contrast}.h5'), 'a') as hf:
-                hf.create_dataset(f"{fname}_mag", data=np.abs(np.squeeze(imEstL.cpu().numpy())))
-                hf.create_dataset(f"{fname}_phase", data=np.angle(np.squeeze(imEstL.cpu().numpy())))
-            with h5py.File(os.path.join(r'I:\NYUbrain\poisson_acc1', f'truth_{contrast}.h5'), 'a') as hf:
-                hf.create_dataset(f"{fname}_mag", data=np.abs(np.squeeze(im_sl).cpu().numpy()))
-                hf.create_dataset(f"{fname}_phase", data=np.angle(np.squeeze(im_sl).cpu().numpy()))
+            # with h5py.File(os.path.join(r'I:\NYUbrain\poisson_acc1', f'ReconMSE_{contrast}.h5'), 'a') as hf:
+            #     hf.create_dataset(f"{fname}_mag", data=np.abs(np.squeeze(imEstMSE.cpu().numpy())))
+            #     hf.create_dataset(f"{fname}_phase", data=np.angle(np.squeeze(imEstMSE.cpu().numpy())))
+            # with h5py.File(os.path.join(r'I:\NYUbrain\poisson_acc1', f'ReconSSIM_{contrast}.h5'), 'a') as hf:
+            #     hf.create_dataset(f"{fname}_mag", data=np.abs(np.squeeze(imEstSSIM.cpu().numpy())))
+            #     hf.create_dataset(f"{fname}_phase", data=np.angle(np.squeeze(imEstSSIM.cpu().numpy())))
+            # with h5py.File(os.path.join(r'I:\NYUbrain\poisson_acc1', f'ReconL_{contrast}.h5'), 'a') as hf:
+            #     hf.create_dataset(f"{fname}_mag", data=np.abs(np.squeeze(imEstL.cpu().numpy())))
+            #     hf.create_dataset(f"{fname}_phase", data=np.angle(np.squeeze(imEstL.cpu().numpy())))
+            # with h5py.File(os.path.join(r'I:\NYUbrain\poisson_acc1', f'truth_{contrast}.h5'), 'a') as hf:
+            #     hf.create_dataset(f"{fname}_mag", data=np.abs(np.squeeze(im_sl).cpu().numpy()))
+            #     hf.create_dataset(f"{fname}_phase", data=np.angle(np.squeeze(im_sl).cpu().numpy()))
 
             # MSE
             mseL = (mseloss_fcn(imEstL, im_sl)).squeeze().cpu().numpy()
@@ -365,14 +365,14 @@ import seaborn as sns
 dd_mse=pd.melt(pd.concat([df_mseT1, df_mseT1post, df_mseT2, df_mseFLAIR], ignore_index=True),id_vars=['Contrast'],value_vars=['MSE','SSIM', 'Score'],var_name='ReconLoss')
 plt.figure()
 sns.boxplot(x='Contrast',y='value',data=dd_mse,hue='ReconLoss', width=0.6, showfliers=False, palette='colorblind')
-plt.savefig('evalMSE.png')
+# plt.savefig('evalMSE.png')
 
 dd_ssim=pd.melt(pd.concat([df_ssimT1, df_ssimT1post, df_ssimT2, df_ssimFLAIR], ignore_index=True),id_vars=['Contrast'],value_vars=['MSE','SSIM', 'Score'],var_name='ReconLoss')
 plt.figure()
 sns.boxplot(x='Contrast',y='value',data=dd_ssim,hue='ReconLoss', width=0.6, showfliers=False, palette='colorblind')
-plt.savefig('evalSSIM.png')
+# plt.savefig('evalSSIM.png')
 
 dd_score=pd.melt(pd.concat([df_scoreT1, df_scoreT1post, df_scoreT2, df_scoreFLAIR], ignore_index=True),id_vars=['Contrast'],value_vars=['MSE','SSIM', 'Score'],var_name='ReconLoss')
 plt.figure()
 sns.boxplot(x='Contrast',y='value',data=dd_score,hue='ReconLoss', width=0.6, showfliers=False, palette='colorblind')
-plt.savefig('evalScore.png')
+# plt.savefig('evalScore.png')

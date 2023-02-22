@@ -61,7 +61,7 @@ files_csv = glob.glob("*.csv")
 
 rankers = ['JS', 'AP']
 for i in range(len(rankers)):
-    files = glob.glob('Results_'+rankers[i]+'*.csv')
+    files = glob.glob('Rank_vLikert_'+rankers[i]+'*.csv')
 
     ranks = []
     for file in files:
@@ -73,7 +73,7 @@ for i in range(len(rankers)):
     ranks = np.array(ranks, dtype=np.int)
     ranks = ranks[ranks[:, 2].argsort()]
 
-    ranks = pd.DataFrame(ranks, dtype=int, columns=['Better', 'Worse', 'ID'])
+    ranks = pd.DataFrame(ranks, dtype=int, columns=['Better', 'Worse', 'ID', 'Time'])
 
     # Merge results for easier probability calc
     ranks['Results'] = ranks['Better']*10 + ranks['Worse']
@@ -135,8 +135,8 @@ for i in range(len(rankers)):
 
 
 contrast_types = ['AXT1', 'AXT2', 'AXT1POST', 'AXFLAIR']
-ALL_C = False
-LIKERT_V_RANK = False
+ALL_C = True
+LIKERT_V_RANK = True
 CONFUSION_LIKERT = False
 if LIKERT_V_RANK:
     # compare a single reader's agreement on Likert and ranking
@@ -151,29 +151,48 @@ if LIKERT_V_RANK:
             id = ranks.ID.isin(ranks_fromLikert.ID)
             ranks = ranks[id]
 
-            num_intersection = len(ranks_fromLikert)
-            ranks = add_zero_prob(ranks, num_intersection=num_intersection)
-            ranks_fromLikert = add_zero_prob(ranks_fromLikert, num_intersection=num_intersection)
+            # num_intersection = len(ranks_fromLikert)
+            # ranks = add_zero_prob(ranks, num_intersection=num_intersection)
+            # ranks_fromLikert = add_zero_prob(ranks_fromLikert, num_intersection=num_intersection)
+            #
+            # ranks_prob = ranks['Prob'].to_numpy()
+            # ranks_fromLikert_prob = ranks_fromLikert['Prob'].to_numpy()
+            #
+            # ranks_prob = pad_beginning(ranks, ranks_prob)
+            # ranks_fromLikert_prob = pad_beginning(ranks_fromLikert, ranks_fromLikert_prob)
+            # ranks_prob = ranks_prob[:num_intersection*3]
+            # ranks_fromLikert_prob = ranks_fromLikert_prob[:num_intersection*3]
+            #
+            # tot_agreed = np.dot(ranks_prob, ranks_fromLikert_prob)
+            # agreed22 = np.dot(ranks_prob[2::3], ranks_fromLikert_prob[2::3])
+            #
+            # ranks_prob110 = np.delete(ranks_prob, np.s_[2::3])
+            # ranks_fromLikert_prob110 = np.delete(ranks_fromLikert_prob, np.s_[2::3])
+            # agreed110 = np.dot(ranks_prob110, ranks_fromLikert_prob110)
+            #
+            # print(f'Reader {rr}---------------------------------------------------------------------------------------')
+            # print(f'Total number of agreed pair {tot_agreed}')
+            # print(f'Agreement on similar pair {agreed22}')
+            # print(f'Agreement on one is better than the other {agreed110}')
+            # print('------------------------------------------------------------------------------------------------')
 
-            ranks_prob = ranks['Prob'].to_numpy()
-            ranks_fromLikert_prob = ranks_fromLikert['Prob'].to_numpy()
-
-            ranks_prob = pad_beginning(ranks, ranks_prob)
-            ranks_fromLikert_prob = pad_beginning(ranks_fromLikert, ranks_fromLikert_prob)
-            ranks_prob = ranks_prob[:num_intersection*3]
-            ranks_fromLikert_prob = ranks_fromLikert_prob[:num_intersection*3]
-
-            tot_agreed = np.dot(ranks_prob, ranks_fromLikert_prob)
-            agreed22 = np.dot(ranks_prob[2::3], ranks_fromLikert_prob[2::3])
-
-            ranks_prob110 = np.delete(ranks_prob, np.s_[2::3])
-            ranks_fromLikert_prob110 = np.delete(ranks_fromLikert_prob, np.s_[2::3])
-            agreed110 = np.dot(ranks_prob110, ranks_fromLikert_prob110)
-
+            # confusion matrix likert vs ranking for the same reader
+            agreement = np.zeros((3, 3))
+            for i in range(len(ranks_fromLikert)):
+                if ranks_fromLikert.iloc[i, 1] == 1:
+                    compare_rank(ranks, i, 1, agreement)
+                elif ranks_fromLikert.iloc[i, 1] == 10:
+                    compare_rank(ranks, i, 2, agreement)
+                elif ranks_fromLikert.iloc[i, 1] == 22:
+                    compare_rank(ranks, i, 3, agreement)
             print(f'Reader {rr}---------------------------------------------------------------------------------------')
-            print(f'Total number of agreed pair {tot_agreed}')
-            print(f'Agreement on similar pair {agreed22}')
-            print(f'Agreement on one is better than the other {agreed110}')
+            print(f'confusion matrix')
+            print(f'Likert')
+            print(f'       1  10  22')
+            print(f'r  1 {agreement[0,:]}')
+            print(f'a  10 {agreement[1,:]}')
+            print(f'n  22 {agreement[2,:]}')
+            print(f'k')
             print('------------------------------------------------------------------------------------------------')
 
         else:
@@ -187,31 +206,51 @@ if LIKERT_V_RANK:
                 id = ranks_c.ID.isin(ranks_fromLikert.ID)
                 ranks_c = ranks_c[id]
 
-                num_intersection = len(ranks_fromLikert)
-                ranks_c = add_zero_prob(ranks_c, num_intersection=num_intersection)
-                ranks_fromLikert = add_zero_prob(ranks_fromLikert, num_intersection=num_intersection)
+                # num_intersection = len(ranks_fromLikert)
+                # ranks_c = add_zero_prob(ranks_c, num_intersection=num_intersection)
+                # ranks_fromLikert = add_zero_prob(ranks_fromLikert, num_intersection=num_intersection)
+                #
+                # ranks_prob = ranks_c['Prob'].to_numpy()
+                # ranks_fromLikert_prob = ranks_fromLikert['Prob'].to_numpy()
+                #
+                # ranks_prob = pad_beginning(ranks_c, ranks_prob)
+                # ranks_fromLikert_prob = pad_beginning(ranks_fromLikert, ranks_fromLikert_prob)
+                # ranks_prob = ranks_prob[:num_intersection * 3]
+                # ranks_fromLikert_prob = ranks_fromLikert_prob[:num_intersection * 3]
+                #
+                # tot_agreed = np.dot(ranks_prob, ranks_fromLikert_prob)
+                # agreed22 = np.dot(ranks_prob[2::3], ranks_fromLikert_prob[2::3])
+                #
+                # ranks_prob110 = np.delete(ranks_prob, np.s_[2::3])
+                # ranks_fromLikert_prob110 = np.delete(ranks_fromLikert_prob, np.s_[2::3])
+                # agreed110 = np.dot(ranks_prob110, ranks_fromLikert_prob110)
+                #
+                # print(f'Reader {rr}-----------------------------------------------------------------------------------')
+                # print(f'Contrast_{cc}: {num_intersection} pairs were both ranked and scored by reviewers')
+                # print(f'Total number of agreed pair {tot_agreed}')
+                # print(f'Agreement on similar pair {agreed22}')
+                # print(f'Agreement on one is better than the other {agreed110}')
+                # print('-----------------------------------------------------------------------------------------------')
 
-                ranks_prob = ranks_c['Prob'].to_numpy()
-                ranks_fromLikert_prob = ranks_fromLikert['Prob'].to_numpy()
+                # confusion matrix likert vs ranking for the same reader
+                agreement = np.zeros((3, 3))
+                for i in range(len(ranks_fromLikert)):
+                    if ranks_fromLikert.iloc[i, 1] == 1:
+                        compare_rank(ranks, i, 1, agreement)
+                    elif ranks_fromLikert.iloc[i, 1] == 10:
+                        compare_rank(ranks, i, 2, agreement)
+                    elif ranks_fromLikert.iloc[i, 1] == 22:
+                        compare_rank(ranks, i, 3, agreement)
+                print(f'Reader {rr} contrast {cc}---------------------------------------------------------------------')
+                print(f'confusion matrix')
+                print(f'Likert')
+                print(f'       1  10  22')
+                print(f'r  1 {agreement[0, :]}')
+                print(f'a  10 {agreement[1, :]}')
+                print(f'n  22 {agreement[2, :]}')
+                print(f'k')
+                print('----------------------------------------------------------------------------------------------')
 
-                ranks_prob = pad_beginning(ranks_c, ranks_prob)
-                ranks_fromLikert_prob = pad_beginning(ranks_fromLikert, ranks_fromLikert_prob)
-                ranks_prob = ranks_prob[:num_intersection * 3]
-                ranks_fromLikert_prob = ranks_fromLikert_prob[:num_intersection * 3]
-
-                tot_agreed = np.dot(ranks_prob, ranks_fromLikert_prob)
-                agreed22 = np.dot(ranks_prob[2::3], ranks_fromLikert_prob[2::3])
-
-                ranks_prob110 = np.delete(ranks_prob, np.s_[2::3])
-                ranks_fromLikert_prob110 = np.delete(ranks_fromLikert_prob, np.s_[2::3])
-                agreed110 = np.dot(ranks_prob110, ranks_fromLikert_prob110)
-
-                print(f'Reader {rr}-----------------------------------------------------------------------------------')
-                print(f'Contrast_{cc}: {num_intersection} pairs were both ranked and scored by reviewers')
-                print(f'Total number of agreed pair {tot_agreed}')
-                print(f'Agreement on similar pair {agreed22}')
-                print(f'Agreement on one is better than the other {agreed110}')
-                print('-----------------------------------------------------------------------------------------------')
 
 elif CONFUSION_LIKERT:
     # Compare the likert score from two readers.

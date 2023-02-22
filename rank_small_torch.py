@@ -1,5 +1,7 @@
 # import tkinter as tk
 # from tkinter import filedialog
+import  matplotlib
+matplotlib.use('TKAgg')
 import h5py as h5
 import csv
 import logging
@@ -119,6 +121,11 @@ with h5.File(name=args.file_images, mode='r') as hf:
 
         if i % 1e2 == 0:
             print(f'loading example pairs {i + 1}')
+
+sub1 = X_1 - X_T
+sub2 = X_2 - X_T
+plt.imshow(np.abs(sub1[10, 0,...]), cmap='gray');plt.axis('off');plt.savefig('sub1_10.png',bbox_inches='tight', pad_inches=0)
+plt.imshow(np.abs(sub2[10, 0,...]), cmap='gray');plt.axis('off');plt.savefig('sub2_10.png',bbox_inches='tight', pad_inches=0)
 
 # All labels
 for i in range(0, NRANKS):

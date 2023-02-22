@@ -94,7 +94,7 @@ class DataGeneratorReconSlices(Dataset):
 import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument('--num_slices', type=int, default=200)
-parser.add_argument('--acc', type=int, default=8)
+parser.add_argument('--acc', type=int, default=4)
 parser.add_argument('--calib', type=int, default=0)
 parser.add_argument('--mask_type', type=str, default='poisson')
 parser.add_argument('--data_folder', type=str,
@@ -189,13 +189,13 @@ scorelistSSIM = []
 psnrlistSSIM = []
 logging.basicConfig(filename=os.path.join(args.project_dir, f'metrics_compare_knee.log'), filemode='w', level=logging.INFO)
 
-try:
-    os.remove(rf'I:\NYUknee\poisson_2x2\knee_ReconMSE.h5')
-    os.remove(rf'I:\NYUknee\poisson_2x2\knee_ReconSSIM.h5')
-    os.remove(rf'I:\NYUknee\poisson_2x2\knee_ReconL.h5')
-    os.remove(rf'I:\NYUknee\poisson_2x2\knee_truth.h5')
-except OSError:
-    pass
+# try:
+#     os.remove(rf'I:\NYUknee\poisson_2x2\knee_ReconMSE.h5')
+#     os.remove(rf'I:\NYUknee\poisson_2x2\knee_ReconSSIM.h5')
+#     os.remove(rf'I:\NYUknee\poisson_2x2\knee_ReconL.h5')
+#     os.remove(rf'I:\NYUknee\poisson_2x2\knee_truth.h5')
+# except OSError:
+#     pass
 
 
 with torch.no_grad():
@@ -240,14 +240,14 @@ with torch.no_grad():
         imEstMSE = imEstMSE[:, idxU:idxD, idxL:idxR]
         imEstSSIM = imEstSSIM[:, idxU:idxD, idxL:idxR]
 
-        with h5py.File(os.path.join(r'I:\NYUknee\poisson_2x2', 'knee_ReconMSE.h5'), 'a') as hf:
-            hf.create_dataset(f"{fname}_{slice_num}", data=np.abs(np.squeeze(imEstMSE.cpu().numpy())))
-        with h5py.File(os.path.join(r'I:\NYUknee\poisson_2x2', 'knee_ReconSSIM.h5'), 'a') as hf:
-            hf.create_dataset(f"{fname}_{slice_num}", data=np.abs(np.squeeze(imEstSSIM.cpu().numpy())))
-        with h5py.File(os.path.join(r'I:\NYUknee\poisson_2x2', 'knee_ReconL.h5'), 'a') as hf:
-            hf.create_dataset(f"{fname}_{slice_num}", data=np.abs(np.squeeze(imEstL.cpu().numpy())))
-        with h5py.File(os.path.join(r'I:\NYUknee\poisson_2x2', 'knee_truth.h5'), 'a') as hf:
-            hf.create_dataset(f"{fname}_{slice_num}", data=np.abs(np.squeeze(im_sl).cpu().numpy()))
+        # with h5py.File(os.path.join(r'I:\NYUknee\poisson_2x2', 'knee_ReconMSE.h5'), 'a') as hf:
+        #     hf.create_dataset(f"{fname}_{slice_num}", data=np.abs(np.squeeze(imEstMSE.cpu().numpy())))
+        # with h5py.File(os.path.join(r'I:\NYUknee\poisson_2x2', 'knee_ReconSSIM.h5'), 'a') as hf:
+        #     hf.create_dataset(f"{fname}_{slice_num}", data=np.abs(np.squeeze(imEstSSIM.cpu().numpy())))
+        # with h5py.File(os.path.join(r'I:\NYUknee\poisson_2x2', 'knee_ReconL.h5'), 'a') as hf:
+        #     hf.create_dataset(f"{fname}_{slice_num}", data=np.abs(np.squeeze(imEstL.cpu().numpy())))
+        # with h5py.File(os.path.join(r'I:\NYUknee\poisson_2x2', 'knee_truth.h5'), 'a') as hf:
+        #     hf.create_dataset(f"{fname}_{slice_num}", data=np.abs(np.squeeze(im_sl).cpu().numpy()))
 
         # MSE
         mseL = (mseloss_fcn(imEstL, im_sl)).squeeze().cpu().numpy()
@@ -317,42 +317,88 @@ logging.info(f'psnr mean {np.mean(psnrlistL)}, std {np.std(psnrlistL)}')
 
 
 # boxplot
-dict = {'MSE': mselistMSE.transpose().squeeze(), 'SSIM': mselistSSIM.transpose().squeeze(), 'Learned': mselistL.transpose().squeeze()}
-fig, ax = plt.subplots(figsize=(3,2),tight_layout=True)
-# ax.set_title('MSE')
-ax.boxplot(dict.values(), showfliers=False)
-ax.set_xlabel('Training metrics')
-ax.set_ylabel('MSE')
-ax.set_xticklabels(dict.keys())
-fig.savefig(os.path.join(args.recon_dir, f'metrics_compare_mse_knee.png'))
+import pandas as pd
+import seaborn as sns
 
-dict = {'MSE': ssimlistMSE.transpose().squeeze(), 'SSIM': ssimlistSSIM.transpose().squeeze(), 'Learned': ssimlistL.transpose().squeeze()}
-fig, ax = plt.subplots(figsize=(3,2),tight_layout=True)
-# ax.set_title('SSIM')
-ax.boxplot(dict.values(), showfliers=False)
-ax.set_xlabel('Training metrics')
-ax.set_ylabel('SSIM')
-ax.set_xticklabels(dict.keys())
-fig.savefig(os.path.join(args.recon_dir, f'metrics_compare_ssim_knee.png'))
-
-dict = {'MSE': scorelistMSE.transpose().squeeze(), 'SSIM': scorelistSSIM.transpose().squeeze(), 'Learned': scorelistL.transpose().squeeze()}
-fig, ax = plt.subplots(figsize=(3,2),tight_layout=True)
-# ax.set_title('Learned')
-ax.boxplot(dict.values(), showfliers=False)
-ax.set_xlabel('Training metrics')
-ax.set_ylabel('Score')
-ax.set_xticklabels(dict.keys())
-fig.savefig(os.path.join(args.recon_dir, f'metrics_compare_learned_knee.png'))
-
-dict = {'MSE': psnrlistMSE.transpose().squeeze(), 'SSIM': psnrlistSSIM.transpose().squeeze(), 'Learned': psnrlistL.transpose().squeeze()}
-fig, ax = plt.subplots(figsize=(3,2),tight_layout=True)
-# ax.set_title('PSNR')
-ax.boxplot(dict.values(), showfliers=False)
-ax.set_xlabel('Training metrics')
-ax.set_ylabel('PSNR')
-ax.set_xticklabels(dict.keys())
-fig.savefig(os.path.join(args.recon_dir, f'metrics_compare_psnr_knee.png'))
+df_mse = pd.DataFrame(
+        {'Contrast': 'PD', 'MSE': mselistMSE,'SSIM':mselistSSIM, 'Score': mselistL})
+dd_mse=pd.melt(pd.concat([df_mse], ignore_index=True),id_vars=['Contrast'],value_vars=['MSE','SSIM', 'Score'],var_name='ReconLoss')
+plt.figure(figsize=(6,4))
+fig = sns.boxplot(x='Contrast',y='value',data=dd_mse,hue='ReconLoss', width=0.6, showfliers=False, palette='colorblind')
+# # for legend text
+# plt.setp(fig.get_legend().get_texts(), fontsize='20')
+# plt.setp(fig.get_legend().get_title(), fontsize='20')
+fig.set(xticklabels=[])
+fig.set(xlabel=None)
+fig.tick_params(bottom=False)
+fig.legend([],[], frameon=False)
+plt.savefig(os.path.join(args.recon_dir, f'metrics_compare_mse_knee_axislabel.png'))
 
 
+df_ssim = pd.DataFrame(
+        {'Contrast': 'PD', 'MSE': ssimlistMSE,'SSIM':ssimlistSSIM, 'Score': ssimlistL})
+df_ssim=pd.melt(pd.concat([df_ssim], ignore_index=True),id_vars=['Contrast'],value_vars=['MSE','SSIM', 'Score'],var_name='ReconLoss')
+plt.figure(figsize=(6,4))
+fig = sns.boxplot(x='Contrast',y='value',data=df_ssim,hue='ReconLoss', width=0.6, showfliers=False, palette='colorblind')
+# # for legend text
+# plt.setp(fig.get_legend().get_texts(), fontsize='20')
+# plt.setp(fig.get_legend().get_title(), fontsize='20')
+fig.set(xticklabels=[])
+fig.set(xlabel=None)
+fig.tick_params(bottom=False)
+fig.legend([],[], frameon=False)
+fig.legend([],[], frameon=False)
+plt.savefig(os.path.join(args.recon_dir, f'metrics_compare_ssim_knee_axislabel.png'))
 
-
+df_learned = pd.DataFrame(
+        {'Contrast': 'PD', 'MSE': scorelistMSE[:,0],'SSIM':scorelistSSIM[:,0], 'Score': scorelistL[:,0]})
+df_learned=pd.melt(pd.concat([df_learned], ignore_index=True),id_vars=['Contrast'],value_vars=['MSE','SSIM', 'Score'],var_name='ReconLoss')
+plt.figure(figsize=(6,4))
+fig = sns.boxplot(x='Contrast',y='value',data=df_learned,hue='ReconLoss', width=0.6, showfliers=False, palette='colorblind')
+# plt.legend(loc='upper right', title='ReconLoss')
+# plt.setp(fig.get_legend().get_texts(), fontsize='20')
+# plt.setp(fig.get_legend().get_title(), fontsize='20')
+fig.set(xticklabels=[])
+fig.set(xlabel='Loss function', ylabel='Score')
+fig.tick_params(bottom=False)
+fig.legend([],[], frameon=False)
+plt.savefig(os.path.join(args.recon_dir, f'metrics_compare_score_knee_axislabel.png'))
+# dict = {'MSE': mselistMSE.transpose().squeeze(), 'SSIM': mselistSSIM.transpose().squeeze(), 'Learned': mselistL.transpose().squeeze()}
+# fig, ax = plt.subplots(figsize=(3,2),tight_layout=True)
+# # ax.set_title('MSE')
+# ax.boxplot(dict.values(), showfliers=False)
+# ax.set_xlabel('Training metrics')
+# ax.set_ylabel('MSE')
+# ax.set_xticklabels(dict.keys())
+# fig.savefig(os.path.join(args.recon_dir, f'metrics_compare_mse_knee.png'))
+#
+# dict = {'MSE': ssimlistMSE.transpose().squeeze(), 'SSIM': ssimlistSSIM.transpose().squeeze(), 'Learned': ssimlistL.transpose().squeeze()}
+# fig, ax = plt.subplots(figsize=(3,2),tight_layout=True)
+# # ax.set_title('SSIM')
+# ax.boxplot(dict.values(), showfliers=False)
+# ax.set_xlabel('Training metrics')
+# ax.set_ylabel('SSIM')
+# ax.set_xticklabels(dict.keys())
+# fig.savefig(os.path.join(args.recon_dir, f'metrics_compare_ssim_knee.png'))
+#
+# dict = {'MSE': scorelistMSE.transpose().squeeze(), 'SSIM': scorelistSSIM.transpose().squeeze(), 'Learned': scorelistL.transpose().squeeze()}
+# fig, ax = plt.subplots(figsize=(3,2),tight_layout=True)
+# # ax.set_title('Learned')
+# ax.boxplot(dict.values(), showfliers=False)
+# ax.set_xlabel('Training metrics')
+# ax.set_ylabel('Score')
+# ax.set_xticklabels(dict.keys())
+# fig.savefig(os.path.join(args.recon_dir, f'metrics_compare_learned_knee.png'))
+#
+# dict = {'MSE': psnrlistMSE.transpose().squeeze(), 'SSIM': psnrlistSSIM.transpose().squeeze(), 'Learned': psnrlistL.transpose().squeeze()}
+# fig, ax = plt.subplots(figsize=(3,2),tight_layout=True)
+# # ax.set_title('PSNR')
+# ax.boxplot(dict.values(), showfliers=False)
+# ax.set_xlabel('Training metrics')
+# ax.set_ylabel('PSNR')
+# ax.set_xticklabels(dict.keys())
+# fig.savefig(os.path.join(args.recon_dir, f'metrics_compare_psnr_knee.png'))
+#
+#
+#
+#
