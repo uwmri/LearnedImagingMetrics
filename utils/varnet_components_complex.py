@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from utils.unet_components_complex import ComplexReLu
+from utils.model_components import ComplexReLu
 
 USE_BIAS=False
 

@@ -23,7 +23,7 @@ import h5py
 import pandas as pd
 
 from utils.Recon_helper import *
-from utils.model_helper import *
+from utils.ISOResNet import *
 from utils import *
 from utils.CreateImagePairs import get_smaps, get_truth
 from utils.utils_DL import *

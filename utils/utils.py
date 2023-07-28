@@ -83,23 +83,6 @@ def crop_im(image):
     return image
 
 
-def imshow(im):
-
-    npim = im.numpy()
-    npim = np.squeeze(npim)
-    if npim.ndim == 3:
-        abs = np.sqrt(npim[:,:,0]**2 + npim[:,:,1]**2)
-        plt.imshow(abs, cmap='gray')
-    else:
-        plt.imshow(npim, cmap='gray')
-    plt.show()
-
-
-def get_slices(ksp_zp, Nsl):
-    """ get N slices from each case, return fully sampled (and undersampled ksp) """
-    idx = np.random.randint(0, ksp_zp.shape[0], Nsl)
-
-    return ksp_zp[idx, ...]
 
 
 def complex_2chan(input):
@@ -205,3 +188,77 @@ def add_zero_prob(reviewerdata, num_intersection):
     reviewerdata['Prob'].fillna(0, inplace=True)
 
     return reviewerdata
+
+
+def plt_scoreVsMse(scorelist, mselist, xname='Learned Score', yname='MSE', add_regression=False):
+    """
+
+    :param scorelistT: 1d np array on cpu(N minibatches*batchsize, )
+    :param mselistT: 1d np array on cpu(N minibatches*batchsize, )
+    :param epoch:
+    :return: figure
+    """
+
+    figure = plt.figure(figsize=(10,10))
+    ax = plt.gca()
+    plt.scatter(scorelist, mselist,s=150, alpha=0.3)
+
+    # Add regression
+    if add_regression:
+        from scipy import stats
+        slope, intercept, r_value, p_value, std_err = stats.linregress(scorelist, mselist)
+        x = np.linspace( 0, np.max(scorelist),100)
+        line = slope * x + intercept
+        plt.plot(x, line, 'k', label='y={:.2f}x+{:.2f}'.format(slope, intercept), linewidth=5)
+
+
+    # plt.xlim([0, 2*np.median(scorelist)])
+    # plt.ylim([0, 2*np.median(mselist)])
+    plt.xlabel(xname, fontsize=24)
+    plt.ylabel(yname, fontsize=24)
+    ax.tick_params(axis='both', which='major', labelsize=20)
+    plt.ticklabel_format(axis='both', style='sci', scilimits=(0,0))
+    ax.xaxis.get_offset_text().set_fontsize(24)
+    ax.yaxis.get_offset_text().set_fontsize(24)
+
+    return figure
+
+
+def plt_loss_learnedVsMse(loss_learned, loss_mse, xname='Learned Loss', yname='MSE'):
+
+    figure = plt.figure(figsize=(10,10))
+    ax = plt.gca()
+    plt.scatter(loss_learned, loss_mse,s=150, alpha=0.3)
+    plt.xlim([0, 2*np.median(loss_learned)])
+    plt.ylim([0, 2*np.median(loss_mse)])
+    plt.xlabel(xname, fontsize=24)
+    plt.ylabel(yname, fontsize=24)
+    ax.tick_params(axis='both', which='major', labelsize=20)
+    plt.ticklabel_format(axis='both', style='sci', scilimits=(0,0))
+    ax.xaxis.get_offset_text().set_fontsize(24)
+    ax.yaxis.get_offset_text().set_fontsize(24)
+
+    return figure
+
+
+def plt_recon(recon):
+
+    figure = plt.figure(figsize=(10,10))
+    plt.imshow(recon.numpy(), cmap='gray')
+
+    return figure
+
+
+def plt_scores(score1, score2):
+    if not isinstance(score1,np.ndarray):
+        score1 = score1.detach().cpu().numpy()
+        score2 = score2.detach().cpu().numpy()
+    figure = plt.figure(figsize=(10, 10))
+    plt.scatter(score1.squeeze(), score2.squeeze())
+    # plt.xlabel('score of unshifted/unscaled')
+    # plt.ylabel('score of shifted/scaled')
+    plt.xlabel('score of (imt1, imt2))')
+    plt.ylabel('score of (imt, im1))')
+
+    return figure
+

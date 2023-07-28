@@ -1,21 +1,18 @@
-# import tkinter as tk
-# from tkinter import filedialog
 import  matplotlib
 matplotlib.use('TKAgg')
 import h5py as h5
 import csv
 import logging
 from scipy.stats import pearsonr
-from pathlib import Path
-from torchvision.models import mobilenet_v2
-import torchsummary
-from torch.utils.tensorboard import SummaryWriter
-from torch.utils.data import DataLoader
-import torch
-import argparse
-import os
-
 from random import randrange
+import torch.optim as optim
+from torchvision.models import mobilenet_v2
+from torch.utils.tensorboard import SummaryWriter
+import argparse
+from IQNet import L2cnn, Classifier
+from utils.ISOResNet import *
+from utils.utils_DL import *
+
 Ntrial = randrange(10000)
 parser = argparse.ArgumentParser()
 parser.add_argument('--pname', type=str, default=f'learned_ranking_{Ntrial}')
@@ -28,22 +25,6 @@ resume_train = args.resume_train
 if resume_train:
     Ntrial_prev=4437
 
-try:
-    from ax.service.managed_loop import optimize
-except:
-    print('NO ax')
-
-try:
-    import setproctitle
-
-    setproctitle.setproctitle(args.pname)
-    print(f'Setting program name to {args.pname}')
-except:
-    print('setproctitle not installled,unavailable, or failed')
-
-from utils.model_helper import *
-from utils.utils_DL import *
-
 train_on_mag = False
 shuffle_observers = False
 MOBILE = False
@@ -54,11 +35,12 @@ CLIP = False
 WeightedLoss = False
 
 trainScoreandMSE = True    # train score based classifier and mse(im1)-mse(im2) based classifier at the same time
-trainScoreandSSIM = True    # train score based classifier and mse(im1)-mse(im2) based classifier at the same time
+trainScoreandSSIM = True
 
 maxMatSize = 396  # largest matrix size seems to be 396
 NEXAMPLES = 2920
 
+# make sure to use consensus -> consensus_mode.csv
 # Load the ranks
 ranks = []
 print(args.file_csv)
@@ -68,7 +50,7 @@ with open(args.file_csv) as csvfile:
         ranks.append(row)
 ranks = np.array(ranks, dtype=np.int32)
 
-# make sure to use consensus -> consensus_mode.csv
+
 # import scipy.stats
 # uranks_id = np.unique(ranks[:,2])
 # new_ranks = np.zeros((len(uranks_id),3), ranks.dtype)
@@ -98,8 +80,6 @@ if shuffle_observers:
 X_1 = np.zeros((NEXAMPLES, 1, maxMatSize, maxMatSize), dtype=np.complex64)
 X_2 = np.zeros((NEXAMPLES, 1, maxMatSize, maxMatSize), dtype=np.complex64)
 X_T = np.zeros((NEXAMPLES, 1, maxMatSize, maxMatSize), dtype=np.complex64)
-
-# X_T = np.zeros((NEXAMPLES, maxMatSize, maxMatSize),dtype=np.complex64)
 Labels = np.zeros(NRANKS, dtype=np.int32)
 
 with h5.File(name=args.file_images, mode='r') as hf:
@@ -178,32 +158,15 @@ if WeightedLoss:
 else:
     weight = torch.ones(3).cuda()
 
-# # check loader, show a batch
-# check = iter(loader_T)
-# checkim1, checkim2, checkimt, checklb = check.next()
-# checkim1 = checkim1.permute(0, 2, 3, 1)
-# checkim2 = checkim2.permute(0, 2, 3, 1)
-# checkimt = checkimt.permute(0, 2, 3, 1)
-# checklbnp = checklb.numpy()
-#
-# randnum = np.random.randint(16)
-# imshow(checkim1[randnum, :, :, :].cpu())
-# imshow(checkim2[randnum, :, :, :].cpu())
-# imshow(checkimt[randnum, :, :, :].cpu())
-# print(f'Label is {checklbnp[randnum]}')
-# print(f'Label is {checktrans[randnum]}')
-# print(f'Label is {checkcrop[randnum]}')
 
 # Ranknet
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 if resume_train:
     try:
-        #recon_file = '/raid/DGXUserDataRaid/cxt004/NYUbrain/Recon6680_learned.pt'
         rank_file = rf'/raid/DGXUserDataRaid/cxt004/NYUbrain/RankClassifier{Ntrial_prev}.pt'
         rank_fileMSE = rf'/raid/DGXUserDataRaid/cxt004/NYUbrain/RankClassifier{Ntrial_prev}_MSE.pt'
         rank_fileSSIM = rf'/raid/DGXUserDataRaid/cxt004/NYUbrain/RankClassifier{Ntrial_prev}_SSIM.pt'
-        #ranknet = L2cnn(channels_in=1, channel_base=8, train_on_mag=train_on_mag)
         ranknet = L2cnn(channels_in=1, channel_base=8, group_depth=5, train_on_mag=train_on_mag)
 
         classifier = Classifier(ranknet)
@@ -228,11 +191,7 @@ else:
     elif RESNET:
         ranknet = ISOResNet2(BasicBlock, [2,2,2,2], for_denoise=False)  # Less than ResNet18
     else:
-        #ranknet = L2cnn(channels_in=1, channel_base=8, train_on_mag=train_on_mag)
-        #ranknet = L2cnn(channels_in=1, channel_base=8, train_on_mag=train_on_mag)
-        # ranknet = L2cnn(channels_in=1, channel_base=8, group_depth=1, train_on_mag=train_on_mag)
         ranknet = L2cnn(channels_in=1, channel_base=8, group_depth=5, train_on_mag=train_on_mag)
-
     print(ranknet)
 
     classifier = Classifier(ranknet)
@@ -374,10 +333,6 @@ for epoch in range(Nepoch):
 
             # get the inputs
             im1, im2, imt, labels = data             # im (sl, ch , 396, 396)
-            # showsl = np.random.randint(BATCH_SIZE)
-            # plt.imshow(np.angle(im1[showsl,0,...].numpy())); plt.show()
-            # plt.imshow(np.angle(im2[showsl, 0, ...].numpy())); plt.show()
-            # plt.imshow(np.angle(imt[showsl, 0, ...].numpy())); plt.show()
             im1, im2, imt = im1.cuda(), im2.cuda(), imt.cuda()
             labels = labels.to(device, dtype=torch.long)
 

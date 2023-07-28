@@ -7,7 +7,7 @@ import os
 import csv
 import h5py as h5
 
-from utils.model_helper import *
+from utils.ISOResNet import *
 from utils import *
 from utils.CreateImagePairs import get_smaps, get_truth
 from utils.utils_DL import *

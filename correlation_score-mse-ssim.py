@@ -17,7 +17,7 @@ from pathlib import Path
 
 from utils.utils import *
 from utils.CreateImagePairs import *
-from utils.model_helper import *
+from utils.ISOResNet import *
 from utils.utils_DL import *
 
 spdevice = sp.Device(0)

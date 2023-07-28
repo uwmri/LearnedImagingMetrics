@@ -2,93 +2,10 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from utils.complex_modules import *
-from utils.unet_components_complex import ComplexUpsamplingBilinear2d
-
+from model_components import *
 __all__ = ['UNet']
 
 USE_BIAS = False
-
-def conv(in_channels, out_channels, kernel_size, bias=False, padding=1, groups=1, ndims=2):
-    if ndims == 2:
-        return nn.Conv2d(in_channels, out_channels, kernel_size, padding=padding, bias=bias, groups=groups)
-    elif ndims == 3:
-        return nn.Conv3d(in_channels, out_channels, kernel_size, padding=padding, bias=bias, groups=groups)
-    else:
-        raise ValueError(f'Convolution  must be 2D or 3D passed {ndims}')
-
-
-class VarNorm2d(nn.BatchNorm2d):
-    def __init__(self, num_features, eps=1e-5, momentum=0.05, affine=True, track_running_stats=True):
-        super(VarNorm2d, self).__init__(num_features, eps, momentum, affine, track_running_stats)
-
-    def forward(self, input):
-        self._check_input_dim(input)
-
-        exponential_average_factor = 0.0
-
-        if self.training and self.track_running_stats:
-            if self.num_batches_tracked is not None:
-                self.num_batches_tracked += 1
-                if self.momentum is None:  # use cumulative moving average
-                    exponential_average_factor = 1.0 / float(self.num_batches_tracked)
-                else:  # use exponential moving average
-                    exponential_average_factor = self.momentum
-
-        # calculate running estimates
-        if self.training:
-            # use biased var in train
-            var = input.var([0, 2, 3], unbiased=False)
-            n = input.numel() / input.size()
-            with torch.no_grad():
-                # update running_var with unbiased var
-                self.running_var = exponential_average_factor * var * n / (n - 1) \
-                                   + (1 - exponential_average_factor) * self.running_var
-        else:
-            var = self.running_var
-
-        input = input / (torch.sqrt(var[None, :, None, None] + self.eps))
-        if self.affine:
-            input = input * self.weight[None, :, None, None]
-
-        return input
-
-
-class VarNorm3d(nn.BatchNorm3d):
-    def __init__(self, num_features, eps=1e-5, momentum=0.05, affine=True, track_running_stats=True):
-        super(VarNorm3d, self).__init__(num_features, eps, momentum, affine, track_running_stats)
-
-    def forward(self, input):
-        self._check_input_dim(input)
-
-        exponential_average_factor = 0.0
-
-        if self.training and self.track_running_stats:
-            if self.num_batches_tracked is not None:
-                self.num_batches_tracked += 1
-                if self.momentum is None:  # use cumulative moving average
-                    exponential_average_factor = 1.0 / float(self.num_batches_tracked)
-                else:  # use exponential moving average
-                    exponential_average_factor = self.momentum
-
-        # calculate running estimates
-        if self.training:
-            # use biased var in train
-            var = input.var([0, 2, 3, 4], unbiased=False)
-            n = input.numel() / input.size()
-            with torch.no_grad():
-                # update running_var with unbiased var
-                self.running_var = exponential_average_factor * var * n / (n - 1) \
-                                   + (1 - exponential_average_factor) * self.running_var
-        else:
-            var = self.running_var
-
-        input = input / (torch.sqrt(var[None, :, None, None, None] + self.eps))
-        if self.affine:
-            input = input * self.weight[None, :, None, None, None]
-
-        return input
-
 
 def create_conv(in_channels, out_channels, kernel_size, order, padding=1, ndims=2,
                 complex_input=True, complex_kernel=False):
@@ -100,16 +17,7 @@ def create_conv(in_channels, out_channels, kernel_size, order, padding=1, ndims=
         in_channels (int): number of input channels
         out_channels (int): number of output channels
         kernel_size (int): size of convolution channel
-
-        order (string): order of modules ('crb')
-            r = relu
-            l = leaky relu
-            e = elu
-            c = Standard convolution
-            C = depthwise convolution
-            i = instance norm
-            b = batch norm
-            v = batch norm without bias
+        order (list): order of modules
         padding (int): add zero-padding to the input
         ndims (int): 2 or 3 to indicate 2D or 3D convolutions
         complex_input (bool): True -> the input is complex, False -> the input is real values
@@ -123,7 +31,7 @@ def create_conv(in_channels, out_channels, kernel_size, order, padding=1, ndims=
     for i, char in enumerate(order):
         if char == 'relu':
             if complex_input:
-                modules.append((f'ComplexReLU{i}', ComplexReLU()))
+                modules.append((f'CReLU{i}', CReLu()))
             else:
                 modules.append((f'ReLU{i}', nn.ReLU(inplace=True)))
 
@@ -132,11 +40,27 @@ def create_conv(in_channels, out_channels, kernel_size, order, padding=1, ndims=
                 modules.append((f'modReLU{i}', modReLU(in_channels=in_channels, ndims=ndims)))
             else:
                 modules.append((f'ReLU{i}', nn.ReLU(inplace=True)))
+        elif char == 'zrelu':
+            modules.append((f'ZReLU{i}',ZReLU()))
+        elif char =='srelu':
+            if complex_input:
+                modules.append((f'SCReLU{i}', SCReLU(nc=in_channels)))
+            else:
+                modules.append((f'SReLU{i}', SReLU(nc=in_channels)))
+        elif char == 'leakly relu':
+            if complex_input:
+                modules.append((f'LeakyReLU{i}', ComplexLeakyReLu(inplace=True)))
+            else:
+                modules.append((f'ReLU{i}', nn.LeakyReLU(inplace=True)))
+        elif char == 'elu':
+            if complex_input:
+                modules.append((f'ELU{i}', ComplexELU(inplace=True)))
+            else:
+                modules.append((f'ELU{i}', nn.ELU(inplace=True)))
+
 
         elif char == 'convolution':
             # add learnable bias only in the absence of gatchnorm/groupnorm
-            # bias = not ('g' in order or 'b' in order)
-            # bias = not ('g' in order)
             if complex_input:
                 modules.append((f'complex_conv{i}',
                                 ComplexConv(in_channels, out_channels, kernel_size,
@@ -168,8 +92,7 @@ def create_conv(in_channels, out_channels, kernel_size, order, padding=1, ndims=
             else:
                 modules.append((f'varnorm{i}', VarNorm3d(out_channels)))
         else:
-            raise ValueError(f"Unsupported layer type '{char}'. "
-                             f"MUST be one of ['b', 'g', 'r', 'l', 'e', 'c', 'C', 'i', v']")
+            raise ValueError(f"Unsupported layer type '{char}'. ")
 
     return modules
 
@@ -264,7 +187,7 @@ class Encoder(nn.Module):
     """
 
     def __init__(self, in_channels, out_channels, conv_kernel_size=3,
-                 basic_module=DoubleConv, downsample=True, conv_layer_order='crb',
+                 basic_module=DoubleConv, downsample=True, conv_layer_order=None,
                  scale_factor=2, ndims=2, complex_input=True, complex_kernel=False,
                  padding=1):
         super(Encoder, self).__init__()
@@ -429,7 +352,7 @@ class UNet(nn.Module):
                  in_channels,
                  out_channels,
                  f_maps=64,
-                 layer_order=['convolution', 'mod relu'],
+                 layer_order=None,
                  depth=4,
                  layer_growth=2.0,
                  residual=True,
@@ -442,6 +365,8 @@ class UNet(nn.Module):
         super(UNet, self).__init__()
 
         # Create feature maps as list if specified by integer
+        if layer_order is None:
+            layer_order = ['convolution', 'mod relu']
         if isinstance(f_maps, int):
             f_maps = create_feature_maps(f_maps, number_of_fmaps=depth, growth_rate=layer_growth)
 
@@ -545,8 +470,6 @@ class UNet(nn.Module):
                 #print(f'   Down layer size not divisible {input_size}')
                 return False
             input_size = input_size // 2
-
-
             #print(f'   Down Layer size {input_size}')
 
         # Flat layer
@@ -560,14 +483,12 @@ class UNet(nn.Module):
 
             # Convolution
             input_size -= 4
-
             #print(f'Up Layer size {input_size}')
 
         return True
 
     def forward(self, x):
 
-        # Keep x
         input = x
 
         # encoder part
@@ -576,21 +497,17 @@ class UNet(nn.Module):
             x = encoder(x)
 
             # reverse the encoder outputs to be aligned with the decoder
-            #print(x.shape)
             encoders_features.insert(0, x)
 
         # Last encoder is flat
         x = self.encoders[-1](x)
-        #print(x.shape)
 
         # decoder part
         for decoder, encoder_output, crop_amount in zip(self.decoders, encoders_features, self.crop_amount):
             # pass the output from the corresponding encoder and the output
             # of the previous decoder
-            #print(f'Decoder {x.shape} {encoder_output.shape} {crop_amount}')
             if self.padding != 1:
                 encoder_output = F.pad(encoder_output, crop_amount)
-            #print(f'Decoder {x.shape} {encoder_output.shape}')
             x = decoder(encoder_output, x)
 
         x = self.final_conv(x)
@@ -598,7 +515,6 @@ class UNet(nn.Module):
         # Keep skip to end
         if self.residual:
             if self.padding != 1:
-                #print(f'Residual {x.shape} {input.shape} {self.output_pad}')
                 x += F.pad(self.residual_conv(input), self.output_pad)
             else:
                 x += self.residual_conv(input)
