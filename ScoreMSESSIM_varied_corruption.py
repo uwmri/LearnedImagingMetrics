@@ -1,16 +1,11 @@
-import logging
-from skimage.metrics import structural_similarity
-from random import randrange
-import sigpy.mri as mri
-import pywt
-import time
+"""
+This scripts put random corruptions in images and see how IQNet, MSE and SSIM behaves.
+THis is the script generated Figure 3.
+"""
 import matplotlib
 matplotlib.use('TKAgg')
-import scipy
-
-from utils.utils import *
+from IQNet import *
 from utils.CreateImagePairs import *
-from utils.ISOResNet import *
 from utils.utils_DL import *
 
 spdevice = sp.Device(0)

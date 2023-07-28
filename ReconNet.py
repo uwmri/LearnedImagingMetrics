@@ -20,7 +20,7 @@ import sigpy.mri as mri
 from pathlib import Path
 import os
 import h5py
-
+from IQNet import *
 from utils.Recon_helper import *
 from utils.ISOResNet import *
 from utils import *

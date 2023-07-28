@@ -64,7 +64,7 @@ def trans_motion(kspace, dir_motion=2, maxshift=10, prob=1, startPE=180,fix_shif
     # dir_motion: direction of phase encode. 0 for width, 1 for height-dir
     # maxshift: np.random.uniform(0,maxshift) is the size of displacement in pixel
     # prob: if np.random.randint(prob) == 1, there's motion for that PE line
-    # for test_score_varied_corruption.py: Always, dir_motion=2, prob=1
+    # for ScoreMSESSIM_varied_corruption.py: Always, dir_motion=2, prob=1
     #                   fix_shift, when enabled, maxshift IS the amount of shift. corruption mag=corrupted PE/total PE
     #                   fix_start, startPE should not be none. corruption mag=total shift
 

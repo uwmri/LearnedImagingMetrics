@@ -1,3 +1,8 @@
+"""
+This file grabs N slices, do the recon with MoDL trained with IQNet, MSE and SSIM
+and compares the reconstructed image IQNet score, MSE and SSIM.
+This is the script that generated the boxplots in the paper.
+"""
 import torch
 import torchvision
 import torch.optim as optim
@@ -18,7 +23,7 @@ from pathlib import Path
 import os
 import h5py
 import pandas as pd
-
+from IQNet import *
 from utils.Recon_helper import *
 from utils.ISOResNet import *
 from utils import *

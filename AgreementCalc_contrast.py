@@ -1,3 +1,7 @@
+"""
+This file is for calculating inter- intra- and overall agreement for each contrast types.
+"""
+
 import tkinter as tk
 from tkinter import filedialog
 import fnmatch

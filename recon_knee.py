@@ -1,3 +1,6 @@
+"""
+This script takes trained MoDL on brain images and recon knee images.
+"""
 import os
 import h5py
 import numpy as np
