@@ -1,5 +1,7 @@
-from utils.model_components import *
-from utils.utils import *
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from utils.model_components import SReLU, ComplexConv2d, ComplexAvgPool, VarNorm2d, ComplexDropout2D
 
 class L2cnnBlock(nn.Module):
     def __init__(self, channels_in=64, channels_out=64, pool_rate=1, bias=False, norm=False,

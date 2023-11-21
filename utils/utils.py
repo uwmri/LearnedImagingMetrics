@@ -1,15 +1,13 @@
 import h5py
-import cupy
+# import cupy
 import numpy as np
 from matplotlib import pyplot as plt
-from pathlib import Path
-from PIL import Image
 import fnmatch
 import os
 import torch
 import sigpy as sp
-import sigpy.mri as mri
-import sigpy.plot as pl
+
+from scipy import stats
 
 
 def find(pattern, path):
@@ -111,16 +109,16 @@ def chan2_complex(input):
     return output
 
 
-def print_mem():
-    cupy_mempool = cupy.get_default_memory_pool()
-    cupy_pinned_mempool = cupy.get_default_pinned_memory_pool()
-    torch_allocated = torch.cuda.memory_allocated()
-    torch_max_allocated = torch.cuda.max_memory_allocated()
-    torch_cached = torch.cuda.memory_reserved()
-    print(f'cupy mem {cupy_mempool.used_bytes()*9.313e-10} Gb')
-    print(f'torch mempool {torch_allocated*9.313e-10} Gb')
-    print(f'torch max mempool {torch_max_allocated*9.313e-10} Gb')
-    print(f'torch reserved {torch_cached*9.313e-10} Gb')
+# def print_mem():
+#     cupy_mempool = cupy.get_default_memory_pool()
+#     cupy_pinned_mempool = cupy.get_default_pinned_memory_pool()
+#     torch_allocated = torch.cuda.memory_allocated()
+#     torch_max_allocated = torch.cuda.max_memory_allocated()
+#     torch_cached = torch.cuda.memory_reserved()
+#     print(f'cupy mem {cupy_mempool.used_bytes()*9.313e-10} Gb')
+#     print(f'torch mempool {torch_allocated*9.313e-10} Gb')
+#     print(f'torch max mempool {torch_max_allocated*9.313e-10} Gb')
+#     print(f'torch reserved {torch_cached*9.313e-10} Gb')
 
 
 def pad_beginning(data, prob):
@@ -205,7 +203,6 @@ def plt_scoreVsMse(scorelist, mselist, xname='Learned Score', yname='MSE', add_r
 
     # Add regression
     if add_regression:
-        from scipy import stats
         slope, intercept, r_value, p_value, std_err = stats.linregress(scorelist, mselist)
         x = np.linspace( 0, np.max(scorelist),100)
         line = slope * x + intercept

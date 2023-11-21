@@ -356,7 +356,7 @@ def main():
                             else:
                                 loss = 0.0
                                 for score in scorenets:
-                                    loss += learnedloss_fcn(imEst2, im_sl, score, rank_trained_on_mag=rank_trained_on_mag, augmentation=True)
+                                    loss += learnedloss_fcn(imEst2, im_sl, score, rank_trained_on_mag=rank_trained_on_mag, augmentation=False)
 
                     scaler.scale(loss).backward()
 

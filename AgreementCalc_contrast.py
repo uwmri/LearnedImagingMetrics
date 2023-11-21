@@ -34,8 +34,8 @@ files_csv = glob.glob("*.csv")
 rankers = ['LBE', 'ADK', 'JJ', 'eh', 'AP','THO','JS']
 
 # I merged T1 and T1PRE
-# contrast_types = ['AXT1', 'AXT2', 'AXT1POST', 'AXFLAIR']
-contrast_types = ['AXT1']
+contrast_types = ['AXT1', 'AXT2', 'AXT1POST', 'AXFLAIR']
+# contrast_types = ['AXT1POST']
 
 for i in range(len(rankers)):
     files = glob.glob('Results_'+rankers[i]+'*.csv')
@@ -180,6 +180,10 @@ else:
         ranks_all = pd.concat([ranks_LBE, ranks_ADK, ranks_JJ, ranks_eh, ranks_AP, ranks_THO, ranks_JS], ignore_index=True)
         ranks_all = ranks_all.sort_values(by=['ID'])
 
+        ranks_unique = ranks_all.drop_duplicates(subset=['ID'])
+
+        print(f'Contrast {cc}: total number of image pairs {len(ranks_unique)}')
+
         # Only keeps duplicated IDs
         ranks_dup = ranks_all[ranks_all.duplicated(subset=['ID'], keep=False)]
 
@@ -240,6 +244,7 @@ else:
             ranks_all = pd.concat([ranks_LBE, ranks_ADK, ranks_JJ, ranks_eh, ranks_AP, ranks_THO, ranks_JS],
                                   ignore_index=True)
             ranks_all = ranks_all.sort_values(by=['ID'])
+
 
             # Only keeps duplicated IDs
             ranks_dup = ranks_all[ranks_all.duplicated(subset=['ID'], keep=False)]
