@@ -144,15 +144,19 @@ class MoDL(nn.Module):
 
     def forward(self, image, kspace, maps, mask):
 
-        for i in range(self.inner_iter):
-            # Ex
-            Ex = sense(maps, image)
+        if self.inner_iter == 0:
+            pass
+        else:
 
-            # Ex - d
-            diff = (Ex - kspace)*mask
+            for i in range(self.inner_iter):
+                # Ex
+                Ex = sense(maps, image)
 
-            # image = image - scale*E.H*(Ex-d)
-            image = image - self.scale_layers[i] * sense_adjoint(maps, diff)   # (768, 396)
+                # Ex - d
+                diff = (Ex - kspace)*mask
+
+                # image = image - scale*E.H*(Ex-d)
+                image = image - self.scale_layers[i] * sense_adjoint(maps, diff)   # (768, 396)
 
             PAD=False
 

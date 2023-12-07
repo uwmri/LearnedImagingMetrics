@@ -98,9 +98,9 @@ image_truthSQ = crop_flipud(image_truth)
 #     hf.create_dataset(name, data=image_truth)
 
 
-filepath_rankModel = Path(r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\rank_trained_L2cnn\CV-5')
-filepath_train = Path("I:/NYUbrain")
-filepath_val = Path("I:/NYUbrain")
+filepath_rankModel = r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\rank_trained_L2cnn\CV-5'
+filepath_train = r"I:\NYUbrain"
+filepath_val = r"I:\NYUbrain"
 
 cor = 0
 for WHICH_CORRUPTION in CORRUPTIONS:

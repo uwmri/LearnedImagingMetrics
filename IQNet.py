@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from utils.model_components import SReLU, ComplexConv2d, ComplexAvgPool, VarNorm2d, ComplexDropout2D
+from efficientnet_pytorch import EfficientNet
 
 class L2cnnBlock(nn.Module):
     def __init__(self, channels_in=64, channels_out=64, pool_rate=1, bias=False, norm=False,
@@ -43,11 +44,14 @@ class L2cnnBlock(nn.Module):
         x = self.conv1(x)
         if self.norm:
             x = self.bn1(x)
+
+        # x = self.act_func(x)
         x = self.act_func(x.real) + 1j* self.act_func(x.imag)
         x = self.conv2(x)
         if self.norm:
             x = self.bn2(x)
         x = x + shortcut
+        # x = self.act_func(x)
         x = self.act_func(x.real) + 1j* self.act_func(x.imag)
         x = self.pool(x)
         return x
@@ -90,30 +94,34 @@ class L2cnn(nn.Module):
 
     def forward(self, input, truth):
 
+        # if self.subtract_truth:
         if self.train_on_mag:
             diff_mag = torch.abs(input - truth)
         else:
             diff_mag = input - truth
+        # else:
+        #     diff_mag = input
 
-        # Convolutional pathway with MSE at multiple scales
-        cnn_score = []
-        cnn_score.append(self.weight_mse*self.channel_mse(diff_mag))
-        for conv_layer in self.layers:
-            diff_mag = conv_layer(diff_mag)
-            diff_mag = self.dropout(diff_mag)
-            cnn_score.append(self.channel_mse(diff_mag))
+            # Convolutional pathway with MSE at multiple scales
+            cnn_score = []
+            cnn_score.append(self.weight_mse*self.channel_mse(diff_mag))
+            for conv_layer in self.layers:
+                diff_mag = conv_layer(diff_mag)
+                diff_mag = self.dropout(diff_mag)
+                cnn_score.append(self.channel_mse(diff_mag))
 
-        # Create a vector of scores at each level
-        f = torch.concat(cnn_score, dim=1)
+            # Create a vector of scores at each level
+            f = torch.concat(cnn_score, dim=1)
 
-        # Combine multiple levels
-        f = f * torch.abs(self.f_end)
-        f = self.final_dropout(f)
+            # Combine multiple levels
+            f = f * torch.abs(self.f_end)
+            f = self.final_dropout(f)
 
-        # Sum the scores
-        score = torch.sum(f, dim=-1)
+            # Sum the scores
+            score = torch.sum(f, dim=-1)
 
-        return score
+            return score
+
 
 
 class Classifier(nn.Module):
@@ -139,7 +147,11 @@ class Classifier(nn.Module):
         truth_combined = torch.cat([imaget, imaget], dim=0)
 
         # Calculate scores
+        # if efficient or mobilenet, images_combined should be im1-imt already
+        # scores_combined = self.rank(images_combined)
+        # if L2cnn
         scores_combined = self.rank(images_combined, truth_combined)
+
         scores_combined = scores_combined.view(scores_combined.shape[0],-1) #(batchsize*2,1)
         score1 = scores_combined[:image1.shape[0], ...]
         score2 = scores_combined[image1.shape[0]:, ...]
@@ -159,3 +171,21 @@ class Classifier(nn.Module):
         d = F.softmax(d, dim=1)      # (BatchSize, 3)
 
         return d, score1, score2
+
+
+class EfficientNet2chan(nn.Module):
+    def __init__(self, efficientnet_pretrained='efficientnet-b0', num_classes=1):
+        super(EfficientNet2chan, self).__init__()
+
+        self.efficientnet = EfficientNet.from_pretrained(efficientnet_pretrained)
+
+        self.conv1x1 = nn.Conv2d(2, 3, kernel_size=1)
+
+        in_features = self.efficientnet._fc.in_features
+        self.efficientnet._fc = nn.Linear(in_features, num_classes)
+
+    def forward(self, x):
+        x = self.conv1x1(x)
+        x = self.efficientnet(x)
+
+        return x

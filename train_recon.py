@@ -7,7 +7,7 @@ from torch.utils.tensorboard import SummaryWriter
 import torch.linalg
 
 import matplotlib
-
+matplotlib.use('TKAgg')
 import cupy
 import h5py as h5
 import pickle
@@ -47,7 +47,7 @@ def main():
                         default=r'D:\NYUbrain\singleslices',
                         help='Data path')
     parser.add_argument('--metric_file', type=str,
-                        default=r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\rank_trained_L2cnn\RankClassifier6390.pt',
+                        default=r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\rank_trained_L2cnn\CV-5\RankClassifier326.pt',
                         help='Name of learned metric file')
     parser.add_argument('--log_dir', type=str,
                         default=r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020',
@@ -89,7 +89,7 @@ def main():
 
     logging.basicConfig(filename=os.path.join(log_dir,f'Recon_{Ntrial}.log'), filemode='w', level=logging.INFO)
 
-    WHICH_LOSS = 'ssim'
+    WHICH_LOSS = 'learned'
     if WHICH_LOSS == 'perceptual':
         loss_perceptual = PerceptualLoss_VGG16()
         loss_perceptual.to(device)
@@ -104,7 +104,7 @@ def main():
         for name in metric_files:
             # ranknet = L2cnn(channels_in=rank_channel, channel_base=16, train_on_mag=rank_trained_on_mag)
             # ranknet = L2cnn(channels_in=1, channel_base=8, group_depth=1, train_on_mag=rank_trained_on_mag)
-            ranknet = L2cnn(channels_in=1, channel_base=16, group_depth=5, train_on_mag=rank_trained_on_mag)
+            ranknet = L2cnn(channels_in=1, channel_base=8, group_depth=5, train_on_mag=rank_trained_on_mag)
 
             classifier = Classifier(ranknet)
 
@@ -125,7 +125,7 @@ def main():
     act_xres = 512
     act_yres = 256
 
-    acc = 8
+    acc = 3
     WHICH_MASK = 'poisson'
     NUM_MASK = 64
     logging.info(f'Acceleration = {acc}, {WHICH_MASK} mask, {NUM_MASK}')
@@ -133,7 +133,6 @@ def main():
     masks = []
     for m in range(NUM_MASK):
         if WHICH_MASK == 'poisson':
-            # Sample elipsoid to not be overly optimistic
             mask = mri.poisson((act_xres, act_yres), accel=acc * 2, calib=(0, 0), crop_corner=True, return_density=False,
                                dtype='float32', seed=None)
 
@@ -280,8 +279,6 @@ def main():
                 else:
                     smaps, kspace = data
 
-                if i > -1:
-                    break
                 t_case = time.time()
                 optimizer.zero_grad()
 
@@ -309,6 +306,13 @@ def main():
                     # Get zerofilled image to estimate max
                     imU_sl = sense_adjoint(smaps_sl, kspaceU_sl * mask_truth.to(device))
 
+                    # denoiser
+                    if INNER_ITER==0:
+                        scale_im = torch.sum(torch.conj(imU_sl).permute((1,0,2)) * im_sl) / torch.sum(
+                            torch.conj(imU_sl).permute((1,0,2))  * imU_sl)
+                        imU_sl = scale_im * imU_sl
+
+                    ########################################## MoDL recon #############################################
                     # Scale based on max value
                     scale = 1.0/torch.max(torch.abs(imU_sl))
                     im_sl *= scale
@@ -319,10 +323,14 @@ def main():
 
                         # Get PyTorch functions
                         t = time.time()
-                        imEst = torch.zeros_like(im_sl)
+                        if INNER_ITER == 0:
+                            imEst = imU_sl.clone()
+                        else:
+                            imEst = torch.zeros_like(im_sl)
                         imEst2 = ReconModel(imEst, kspaceU_sl, smaps_sl, mask_torch)  # (768, 396, 2)
-
                         t = time.time()
+                    ########################################## MoDL recon #############################################
+
                         # crop to square
                         width = im_sl.shape[2]
                         height = im_sl.shape[1]
@@ -469,13 +477,21 @@ def main():
                     # Get zerofilled image to estimate max
                     imU_sl = sense_adjoint(smaps_sl, kspaceU_sl * mask_truth.to(device))
 
+                    # denoiser
+                    if INNER_ITER==0:
+                        scale_im = torch.sum(torch.conj(imU_sl).permute((1,0,2)) * im_sl) / torch.sum(
+                            torch.conj(imU_sl).permute((1,0,2))  * imU_sl)
+                        imU_sl = scale_im * imU_sl
+
                     # Scale based on max value
                     scale = 1.0/torch.max(torch.abs(imU_sl))
                     im_sl *= scale
                     kspaceU_sl *= scale
                     kspace_sl *= scale
-
-                    imEst = torch.zeros_like(im_sl)
+                    if INNER_ITER == 0:
+                        imEst = imU_sl.clone()
+                    else:
+                        imEst = torch.zeros_like(im_sl)
 
                     t = time.time()
                     imEst2 = ReconModel(imEst, kspaceU_sl, smaps_sl, mask_torch)
@@ -632,5 +648,5 @@ def main():
         }
         torch.save(state, os.path.join(log_dir, f'Recon{Ntrial}_{WHICH_LOSS}.pt'))
 
-if __name__ == '__main__':
-    main()
+# if __name__ == '__main__':
+#     main()

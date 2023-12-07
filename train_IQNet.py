@@ -16,7 +16,9 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 import torch.optim as optim
-from torchvision.models import mobilenet_v2
+import torchvision
+from torchinfo import summary
+from efficientnet_pytorch import EfficientNet
 from torch.utils.tensorboard import SummaryWriter
 import argparse
 from IQNet import L2cnn, Classifier
@@ -39,14 +41,14 @@ if resume_train:
 train_on_mag = False
 shuffle_observers = False
 MOBILE = False
-EFF = False
+EFF = True
 BO = False
 RESNET = False
 CLIP = False
 WeightedLoss = False
 
-trainScoreandMSE = True    # train score based classifier and mse(im1)-mse(im2) based classifier at the same time
-trainScoreandSSIM = True
+trainScoreandMSE = False    # train score based classifier and mse(im1)-mse(im2) based classifier at the same time
+trainScoreandSSIM = False
 
 maxMatSize = 396  # largest matrix size seems to be 396
 NEXAMPLES = 2920
@@ -153,7 +155,7 @@ Labels_cnnT = np.concatenate((Labels[:idV_L], Labels[idV_R:]))
 Labels_cnnV = Labels[idV_L:idV_R]
 
 # Data generator
-BATCH_SIZE = 24
+BATCH_SIZE = 12
 BATCH_SIZE_EVAL = 1
 logging.info(f'batchsize={BATCH_SIZE}')
 logging.info(f'batchsize_eval={BATCH_SIZE_EVAL}')
@@ -196,14 +198,26 @@ if resume_train:
         print('no recon model found')
 else:
     if MOBILE:
-        ranknet = mobilenet_v2(pretrained=False, num_classes=1) # Less than ResNet18
+        mobilenet_v3_pretrained = torchvision.models.mobilenet_v3_small(pretrained=True)
+        in_features = mobilenet_v3_pretrained.classifier[-1].in_features
+        mobilenet_v3_pretrained.classifier[-1] = nn.Linear( in_features, 1)
+        conv1x1 = nn.Conv2d(2, 3, kernel_size=1)
+        ranknet = nn.Sequential(conv1x1, mobilenet_v3_pretrained)
+        summary(ranknet.cuda(), input_size=(BATCH_SIZE, 2, 224, 224))
+
     elif EFF:
-        ranknet = EfficientNet.from_name('efficientnet-b0', override_params={'num_classes': 1})
+        from IQNet import EfficientNet2chan
+        ranknet = EfficientNet2chan()
+        for param in ranknet.efficientnet._blocks[-7:].parameters():
+            param.requires_grad = False
+        summary(ranknet.cuda(), input_size=(BATCH_SIZE, 2, 224, 224))
+
     elif RESNET:
         ranknet = ISOResNet2(BasicBlock, [2,2,2,2], for_denoise=False)  # Less than ResNet18
     else:
-        ranknet = L2cnn(channels_in=1, channel_base=8, group_depth=5, train_on_mag=train_on_mag)
-    print(ranknet)
+        ranknet = L2cnn(channels_in=1, channel_base=8, group_depth=5, train_on_mag=train_on_mag, subtract_truth=False)
+        summary(ranknet.cuda(), [(BATCH_SIZE, X_1.shape[-3], maxMatSize, maxMatSize)
+            , (BATCH_SIZE, X_1.shape[-3], maxMatSize, maxMatSize)])
 
     classifier = Classifier(ranknet)
     if trainScoreandMSE:
@@ -215,8 +229,6 @@ else:
         classifierSSIM = Classifier(ssim_module)
 
 
-# torchsummary.summary(ranknet.cuda(), [(X_1.shape[-3], maxMatSize, maxMatSize)
-#                               ,(X_1.shape[-3], maxMatSize, maxMatSize)])
 #
 # torchsummary.summary(classifier.cuda(), [(X_1.shape[-3], maxMatSize, maxMatSize)
 #                               ,(X_1.shape[-3], maxMatSize, maxMatSize), (X_1.shape[-3], maxMatSize, maxMatSize)])
@@ -247,8 +259,10 @@ if resume_train:
 
 lmbda = lambda epoch: 0.999
 scheduler = torch.optim.lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lmbda)
-schedulerMSE = torch.optim.lr_scheduler.MultiplicativeLR(optimizerMSE, lr_lambda=lmbda)
-schedulerSSIM = torch.optim.lr_scheduler.MultiplicativeLR(optimizerSSIM, lr_lambda=lmbda)
+if trainScoreandMSE:
+    schedulerMSE = torch.optim.lr_scheduler.MultiplicativeLR(optimizerMSE, lr_lambda=lmbda)
+if trainScoreandSSIM:
+    schedulerSSIM = torch.optim.lr_scheduler.MultiplicativeLR(optimizerSSIM, lr_lambda=lmbda)
 
 loss_func = nn.CrossEntropyLoss(weight=weight)
 
@@ -274,7 +288,7 @@ writer_val = SummaryWriter(os.path.join(log_dir,f'runs/rank/val_{Ntrial}'))
 score_mse_file = os.path.join(f'score_mse_file_{Ntrial}.h5')
 
 
-Nepoch = 1001
+Nepoch = 2
 lossT = np.zeros(Nepoch)
 lossV = np.zeros(Nepoch)
 
@@ -338,7 +352,8 @@ for epoch in range(Nepoch):
     classifier.train()
     with torch.autograd.set_detect_anomaly(False):
         for i, data in enumerate(loader_T, 0):
-
+            if i>0:
+                break
             # zero the parameter gradients, backward and update
             optimizer.zero_grad()
 
@@ -346,6 +361,26 @@ for epoch in range(Nepoch):
             im1, im2, imt, labels = data             # im (sl, ch , 396, 396)
             im1, im2, imt = im1.cuda(), im2.cuda(), imt.cuda()
             labels = labels.to(device, dtype=torch.long)
+
+            if MOBILE or EFF:
+                im1 -= imt
+                im2 -= imt
+                # (batch, 1, 396, 396) to (batch, 2, 396, 396)
+                im1 = torch.view_as_real(im1).squeeze().permute((0,-1,1,2))
+                im2 = torch.view_as_real(im2).squeeze().permute((0,-1,1,2))
+                imt = torch.view_as_real(imt).squeeze().permute((0,-1,1,2))
+
+                import torchvision.transforms as transforms
+                # these are the mean and std of concat(X_1-X_T, X_2-X_T)
+                normalize = transforms.Normalize(mean=[-0.000452, -0.00013541058], std=[0.049449377, 0.050570913])
+                preprocess = transforms.Compose([
+                    transforms.Resize((224, 224)),  # Adjust the size based on the specific EfficientNet variant
+                    normalize,
+                ])
+
+                im1 = torch.stack([preprocess(image) for image in im1])
+                im2 = torch.stack([preprocess(image) for image in im2])
+                imt = torch.stack([preprocess(image) for image in imt])
 
             if mixed_training:
                 with torch.cuda.amp.autocast():
@@ -383,7 +418,6 @@ for epoch in range(Nepoch):
             # train on MSE
             if trainScoreandMSE:
                 optimizerMSE.zero_grad()
-
                 deltaMSE, mse1, mse2  = classifierMSE(im1, im2, imt)
                 lossMSE = loss_func(deltaMSE, labels)
                 train_avgMSE.update(lossMSE.item(), n=BATCH_SIZE)  # here is total loss of all batches
@@ -403,7 +437,6 @@ for epoch in range(Nepoch):
             # train on SSIM
             if trainScoreandSSIM:
                 optimizerSSIM.zero_grad()
-
                 deltaSSIM, ssim1, ssim2  = classifierSSIM(im1, im2, imt)
                 lossSSIM = loss_func(deltaSSIM, labels)
                 train_avgSSIM.update(lossSSIM.item(), n=BATCH_SIZE)  # here is total loss of all batches
@@ -449,8 +482,10 @@ for epoch in range(Nepoch):
         writer_train.add_scalar('p-value_SSIM', pT, epoch)
 
     scheduler.step()
-    schedulerMSE.step()
-    schedulerSSIM.step()
+    if trainScoreandMSE:
+        schedulerMSE.step()
+    if trainScoreandSSIM:
+        schedulerSSIM.step()
 
     # validation
     classifier.eval()
@@ -467,6 +502,27 @@ for epoch in range(Nepoch):
 
         labels = labels.to(device, dtype=torch.long)
 
+        if MOBILE or EFF:
+            im1 -= imt
+            im2 -= imt
+            # (batch, 1, 396, 396) to (batch, 2, 396, 396)
+            im1 = torch.view_as_real(im1).squeeze().permute((-1, 0,1)).unsqueeze(0)
+            im2 = torch.view_as_real(im2).squeeze().permute(( -1, 0,1)).unsqueeze(0)
+            imt = torch.view_as_real(imt).squeeze().permute(( -1, 0,1)).unsqueeze(0)
+
+            import torchvision.transforms as transforms
+
+            # these are the mean and std of concat(X_1-X_T, X_2-X_T)
+            normalize = transforms.Normalize(mean=[-0.000452, -0.00013541058], std=[0.049449377, 0.050570913])
+            preprocess = transforms.Compose([
+                transforms.Resize((224, 224)),  # Adjust the size based on the specific EfficientNet variant
+                normalize,
+            ])
+
+            im1 = torch.stack([preprocess(image) for image in im1])
+            im2 = torch.stack([preprocess(image) for image in im2])
+            imt = torch.stack([preprocess(image) for image in imt])
+
         # forward
         delta, score1, score2 = classifier(im1, im2, imt)
 
@@ -480,7 +536,7 @@ for epoch in range(Nepoch):
         # print(f'Val: acc of minibatch {i} is {acc}')
         eval_acc.update(acc, n=1)
 
-        # mse-based classifier
+        # mse-based classifier. only train those when not MOBILE or EFF due to the expected input of classifier is different for MOBILE or EFF
         if trainScoreandMSE:
             deltaMSE, mse1, mse2 = classifierMSE(im1, im2, imt)
             lossMSE = loss_func(deltaMSE, labels)
