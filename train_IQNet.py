@@ -352,8 +352,7 @@ for epoch in range(Nepoch):
     classifier.train()
     with torch.autograd.set_detect_anomaly(False):
         for i, data in enumerate(loader_T, 0):
-            if i>0:
-                break
+
             # zero the parameter gradients, backward and update
             optimizer.zero_grad()
 

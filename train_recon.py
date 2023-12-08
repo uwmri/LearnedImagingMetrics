@@ -1,14 +1,15 @@
 import numpy as np
+import cupy as cp
 import torch
 #import torchvision
 import torch.optim as optim
 from torchinfo import summary
 from torch.utils.tensorboard import SummaryWriter
 import torch.linalg
+import torchvision.transforms as transforms
 
 import matplotlib
 matplotlib.use('TKAgg')
-import cupy
 import h5py as h5
 import pickle
 import matplotlib.pyplot as plt
@@ -22,8 +23,8 @@ import os
 import h5py
 from IQNet import *
 from utils.Recon_helper import *
-from utils.ISOResNet import *
-from utils import *
+# from utils.ISOResNet import *
+from utils.utils import *
 from utils.CreateImagePairs import get_smaps, get_truth
 from utils.utils_DL import *
 from random import randrange
@@ -34,7 +35,9 @@ from random import randrange
 def main():
 
     # Network parameters
-    INNER_ITER = 5
+    INNER_ITER = 0
+    L2CNN = False
+    EFF = True
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     spdevice = sp.Device(0)
@@ -46,8 +49,8 @@ def main():
     parser.add_argument('--data_folder', type=str,
                         default=r'D:\NYUbrain\singleslices',
                         help='Data path')
-    parser.add_argument('--metric_file', type=str,
-                        default=r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\rank_trained_L2cnn\CV-5\RankClassifier326.pt',
+    parser.add_argument('--cv_folder', type=str,
+                        default=r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\rank_efficientnet',
                         help='Name of learned metric file')
     parser.add_argument('--log_dir', type=str,
                         default=r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020',
@@ -62,17 +65,17 @@ def main():
     data_folder_train = os.path.join( args.data_folder, 'train')
     data_folder_val = os.path.join( args.data_folder, 'val')
 
-    metric_file = args.metric_file
     resume_train = args.resume_train
     saveAllSl = args.save_all_slices
     saveTrainIm = args.save_train_images
 
-    cv_folder = r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\rank_trained_L2cnn\CV-5'
-    metric_files = [ os.path.join(cv_folder, os.listdir(cv_folder)[0]),
-                     os.path.join(cv_folder, os.listdir(cv_folder)[1]),
-                     os.path.join(cv_folder, os.listdir(cv_folder)[2]),
-                     os.path.join(cv_folder, os.listdir(cv_folder)[3]),
-                     os.path.join(cv_folder, os.listdir(cv_folder)[4])]
+    cv_folder = args.cv_folder
+    metric_files = [os.path.join(cv_folder, os.listdir(cv_folder)[0]),]
+    # metric_files = [ os.path.join(cv_folder, os.listdir(cv_folder)[0]),
+    #                  os.path.join(cv_folder, os.listdir(cv_folder)[1]),
+    #                  os.path.join(cv_folder, os.listdir(cv_folder)[2]),
+    #                  os.path.join(cv_folder, os.listdir(cv_folder)[3]),
+    #                  os.path.join(cv_folder, os.listdir(cv_folder)[4])]
     # metric_files = [ 'H:/LearnedImageMetric/ImagePairs_Pack_04032020/RankClassifier9644.pt', ]
 
     # load RankNet
@@ -102,9 +105,11 @@ def main():
     if WHICH_LOSS == 'learned':
         scorenets = []
         for name in metric_files:
-            # ranknet = L2cnn(channels_in=rank_channel, channel_base=16, train_on_mag=rank_trained_on_mag)
-            # ranknet = L2cnn(channels_in=1, channel_base=8, group_depth=1, train_on_mag=rank_trained_on_mag)
-            ranknet = L2cnn(channels_in=1, channel_base=8, group_depth=5, train_on_mag=rank_trained_on_mag)
+            if L2CNN:
+                ranknet = L2cnn(channels_in=1, channel_base=8, group_depth=5, train_on_mag=rank_trained_on_mag)
+            elif EFF:
+                from IQNet import EfficientNet2chan
+                ranknet = EfficientNet2chan()
 
             classifier = Classifier(ranknet)
 
@@ -203,7 +208,7 @@ def main():
 
         ReconModel = MoDL(inner_iter=INNER_ITER, DENOISER=denoiser)
         logging.info(f'MoDL, inner iter = {INNER_ITER}')
-
+    ReconModel = ReconModel.half()
     ReconModel.to(device)
 
     LR = 1e-4
@@ -218,26 +223,26 @@ def main():
 
 
 
-    Nepoch = 1001
+    Nepoch = 1
     epochMSE = 0
     logging.info(f'MSE for first {epochMSE} epochs then switch to learned')
     lossT = np.zeros(Nepoch)
     lossV = np.zeros(Nepoch)
 
-    out_name_train = os.path.join(log_dir,f'Images_training{Ntrial}_{WHICH_LOSS}_train.h5')
+    out_name_train = os.path.join(log_dir,f'runs/recon/Images_training{Ntrial}_{WHICH_LOSS}_train.h5')
     try:
         os.remove(out_name_train)
     except OSError:
         pass
 
-    out_name = os.path.join(log_dir, f'Images_training{Ntrial}_{WHICH_LOSS}_eval_case.h5')
+    out_name = os.path.join(log_dir, f'runs/recon/Images_training{Ntrial}_{WHICH_LOSS}_eval_case.h5')
     try:
         os.remove(out_name)
     except OSError:
         pass
 
 
-    scaler = torch.cuda.amp.GradScaler()
+    # scaler = torch.cuda.amp.GradScaler()
 
     logging.info(f'Adam, lr = {LR}')
     logging.info('case averaged loss')
@@ -270,6 +275,7 @@ def main():
             i = -1
             for data in loader_T:
                 i = i + 1
+
                 # print(f'-------------------------------beginning of training, epoch {epoch}-------------------------------')
                 # print_mem()
                 tstart_batch = time.time()
@@ -278,6 +284,7 @@ def main():
                     logging.info(f'training case {name}')
                 else:
                     smaps, kspace = data
+
 
                 t_case = time.time()
                 optimizer.zero_grad()
@@ -307,10 +314,10 @@ def main():
                     imU_sl = sense_adjoint(smaps_sl, kspaceU_sl * mask_truth.to(device))
 
                     # denoiser
-                    if INNER_ITER==0:
-                        scale_im = torch.sum(torch.conj(imU_sl).permute((1,0,2)) * im_sl) / torch.sum(
-                            torch.conj(imU_sl).permute((1,0,2))  * imU_sl)
-                        imU_sl = scale_im * imU_sl
+                    # if INNER_ITER==0:
+                    #     scale_im = torch.sum(torch.conj(imU_sl).permute((1,0,2)) * im_sl) / torch.sum(
+                    #         torch.conj(imU_sl).permute((1,0,2))  * imU_sl)
+                    #     imU_sl = scale_im * imU_sl
 
                     ########################################## MoDL recon #############################################
                     # Scale based on max value
@@ -364,10 +371,29 @@ def main():
                             else:
                                 loss = 0.0
                                 for score in scorenets:
-                                    loss += learnedloss_fcn(imEst2, im_sl, score, rank_trained_on_mag=rank_trained_on_mag, augmentation=False)
+                                    if EFF:
+                                        image_corrupted1 = imEst2.squeeze().cpu().numpy()
+                                        image_sense = im_sl.squeeze().cpu().numpy()
+                                        scale = np.sum(np.conj(image_corrupted1).T * image_sense) / np.sum(
+                                            np.conj(image_corrupted1).T * image_corrupted1)
+                                        imEst2  = imEst2 * scale
+                                        imEst2  = imEst2 - im_sl
+                                        imEst2 = torch.view_as_real(imEst2.squeeze()).unsqueeze(0).permute((0, -1, 1, 2))
 
-                    scaler.scale(loss).backward()
+                                        # these are the mean and std of concat(X_1-X_T, X_2-X_T)
+                                        normalize = transforms.Normalize(mean=[imEst2[0,0,...].mean(), imEst2[0,1,...].mean()],
+                                                                         std=[imEst2[0,0,...].std(),imEst2[0,1,...].std()])
+                                        preprocess = transforms.Compose([
+                                            transforms.Resize((224, 224)),
+                                            # Adjust the size based on the specific EfficientNet variant
+                                            normalize,
+                                        ])
+                                        imEst2 = preprocess(imEst2)
 
+                                    loss += learnedloss_fcn(imEst2, im_sl, score, rank_trained_on_mag=rank_trained_on_mag, augmentation=False, eff=EFF)
+
+                    # scaler.scale(loss).backward()
+                    loss.backward()
                     t = time.time()
 
                     if saveAllSl:
@@ -431,9 +457,9 @@ def main():
                     train_avg_mse0.update(loss_mse_tensor0.detach().cpu().item())
 
                 # Slice loop
-                #optimizer.step()
-                scaler.step(optimizer)
-                scaler.update()
+                optimizer.step()
+                # scaler.step(optimizer)
+                # scaler.update()
 
                 print(f'Step {i} of {len(loader_T)}, took {time.time() - t_case}s, loss {loss_avg}, avg = {train_avg.avg()}')
 
@@ -528,8 +554,27 @@ def main():
                         else:
                             loss = 0.0
                             for score in scorenets:
+                                if EFF:
+                                    image_corrupted1 = imEst2.squeeze().cpu().numpy()
+                                    image_sense = im_sl.squeeze().cpu().numpy()
+                                    scale = np.sum(np.conj(image_corrupted1).T * image_sense) / np.sum(
+                                        np.conj(image_corrupted1).T * image_corrupted1)
+                                    imEst2 = imEst2 * scale
+                                    imEst2 = imEst2 - im_sl
+                                    imEst2 = torch.view_as_real(imEst2.squeeze()).unsqueeze(0).permute((0, -1, 1, 2))
+
+                                    # these are the mean and std of concat(X_1-X_T, X_2-X_T)
+                                    normalize = transforms.Normalize(
+                                        mean=[imEst2[0, 0, ...].mean(), imEst2[0, 1, ...].mean()],
+                                        std=[imEst2[0, 0, ...].std(), imEst2[0, 1, ...].std()])
+                                    preprocess = transforms.Compose([
+                                        transforms.Resize((224, 224)),
+                                        # Adjust the size based on the specific EfficientNet variant
+                                        normalize,
+                                    ])
+                                    imEst2 = preprocess(imEst2)
                                 loss += learnedloss_fcn(imEst2, im_sl, score, rank_trained_on_mag=rank_trained_on_mag,
-                                                        augmentation=False)
+                                                        augmentation=False, eff=EFF)
 
                     eval_avg.update(loss.detach().item(), n=BATCH_SIZE)
                     eval_avg_mse.update(loss_mse_tensor.detach().cpu().item())
@@ -648,5 +693,5 @@ def main():
         }
         torch.save(state, os.path.join(log_dir, f'Recon{Ntrial}_{WHICH_LOSS}.pt'))
 
-# if __name__ == '__main__':
-#     main()
+if __name__ == '__main__':
+    main()

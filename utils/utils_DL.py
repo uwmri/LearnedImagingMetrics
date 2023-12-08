@@ -78,7 +78,7 @@ def mseloss_fcn0(output, target):
     return loss
 
 
-def learnedloss_fcn(output, target, scoreModel, rank_trained_on_mag=False, augmentation=False):
+def learnedloss_fcn(output, target, scoreModel, rank_trained_on_mag=False, augmentation=False, eff=False):
 
     if output.ndim == 2:
         output = output.unsqueeze(0).unsqueeze(0)
@@ -122,7 +122,10 @@ def learnedloss_fcn(output, target, scoreModel, rank_trained_on_mag=False, augme
             delta += delta_sl
             count += 1.0
         else:
-            delta_sl = scoreModel(output_sl, target_sl)
+            if eff:
+                delta_sl = torch.abs(scoreModel(output_sl) - scoreModel(torch.zeros_like(output_sl)))
+            else:
+                delta_sl = scoreModel(output_sl, target_sl)
             delta += delta_sl
             count += 1.0
 

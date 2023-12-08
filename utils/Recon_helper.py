@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader
 import torchvision
 import torchsummary
 import torch.utils.checkpoint as checkpoint
-from utils.ISOResNet import *
+# from utils.ISOResNet import *
 from utils.CreateImagePairs import get_smaps, add_gaussian_noise
 from utils.unet_componets import *
 from utils.model_components import *
