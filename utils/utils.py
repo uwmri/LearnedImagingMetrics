@@ -6,7 +6,7 @@ import fnmatch
 import os
 import torch
 import sigpy as sp
-
+import cupy as cp
 from scipy import stats
 
 
@@ -258,4 +258,30 @@ def plt_scores(score1, score2):
     plt.ylabel('score of (imt, im1))')
 
     return figure
+
+
+def add_gaussian2D(image, gaussian_level=7e4, kedge_len=30):
+    # input: np array on cpu of shape(
+
+    xres= image.shape[-1]
+    ktruth = torch.fft.ifftshift(image, dim=(-2, -1))
+    ktruth = torch.fft.fftn(ktruth, dim=(-2, -1))
+    ktruth = torch.fft.fftshift(ktruth, dim=(-2, -1))
+    kedge = ktruth[:,:kedge_len, :kedge_len]
+    kedge = kedge.reshape((-1,))
+    sigma_est_real = torch.median(torch.abs(torch.real(kedge)))
+    sigma_est_imag = torch.median(torch.abs(torch.imag(kedge)))
+    sigma_real = gaussian_level * sigma_est_real
+    sigma_imag = gaussian_level * sigma_est_imag
+
+    gauss_real = torch.normal(0.0, sigma_real, (xres, xres))
+    gauss_imag = torch.normal(0.0, sigma_imag, ( xres, xres))
+    knoisy_real = torch.real(ktruth[0]) + gauss_real.cuda()
+    knoisy_imag = torch.imag(ktruth[0]) + gauss_imag.cuda()
+    knoisy = knoisy_real + 1j * knoisy_imag
+    truth_noisy = torch.fft.ifftshift(knoisy, dim=(-2, -1))
+    truth_noisy = torch.fft.ifftn(truth_noisy, dim=(-2, -1))
+    truth_noisy = torch.fft.fftshift(truth_noisy, dim=( -2, -1))
+
+    return truth_noisy.unsqueeze(0)
 

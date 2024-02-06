@@ -361,6 +361,7 @@ for epoch in range(Nepoch):
             im1, im2, imt = im1.cuda(), im2.cuda(), imt.cuda()
             labels = labels.to(device, dtype=torch.long)
 
+
             if MOBILE or EFF:
                 im1 -= imt
                 im2 -= imt

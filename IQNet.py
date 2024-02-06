@@ -60,13 +60,13 @@ class L2cnnBlock(nn.Module):
 
 class L2cnn(nn.Module):
     def __init__(self, channel_base=32, channels_in=1,  channel_scale=1, group_depth=5, bias=False, init_scale=1.0,
-                 train_on_mag=False):
+                 train_on_mag=False, subtract_truth=True):
 
         super(L2cnn, self).__init__()
         pool_rate = 2
         channels_out = channel_base
         self.train_on_mag=train_on_mag
-
+        self.subtract_truth = subtract_truth
         # Connect to output using a linear combination
         self.weight_mse = torch.nn.Parameter(torch.tensor([1.0]).view(1,1))
 
@@ -94,33 +94,33 @@ class L2cnn(nn.Module):
 
     def forward(self, input, truth):
 
-        # if self.subtract_truth:
-        if self.train_on_mag:
-            diff_mag = torch.abs(input - truth)
+        if self.subtract_truth:
+            if self.train_on_mag:
+                diff_mag = torch.abs(input - truth)
+            else:
+                diff_mag = input - truth
         else:
-            diff_mag = input - truth
-        # else:
-        #     diff_mag = input
+            diff_mag = input
 
-            # Convolutional pathway with MSE at multiple scales
-            cnn_score = []
-            cnn_score.append(self.weight_mse*self.channel_mse(diff_mag))
-            for conv_layer in self.layers:
-                diff_mag = conv_layer(diff_mag)
-                diff_mag = self.dropout(diff_mag)
-                cnn_score.append(self.channel_mse(diff_mag))
+        # Convolutional pathway with MSE at multiple scales
+        cnn_score = []
+        cnn_score.append(self.weight_mse*self.channel_mse(diff_mag))
+        for conv_layer in self.layers:
+            diff_mag = conv_layer(diff_mag)
+            diff_mag = self.dropout(diff_mag)
+            cnn_score.append(self.channel_mse(diff_mag))
 
-            # Create a vector of scores at each level
-            f = torch.concat(cnn_score, dim=1)
+        # Create a vector of scores at each level
+        f = torch.concat(cnn_score, dim=1)
 
-            # Combine multiple levels
-            f = f * torch.abs(self.f_end)
-            f = self.final_dropout(f)
+        # Combine multiple levels
+        f = f * torch.abs(self.f_end)
+        f = self.final_dropout(f)
 
-            # Sum the scores
-            score = torch.sum(f, dim=-1)
+        # Sum the scores
+        score = torch.sum(f, dim=-1)
 
-            return score
+        return score
 
 
 
@@ -148,9 +148,9 @@ class Classifier(nn.Module):
 
         # Calculate scores
         # if efficient or mobilenet, images_combined should be im1-imt already
-        # scores_combined = self.rank(images_combined)
+        scores_combined = self.rank(images_combined)
         # if L2cnn
-        scores_combined = self.rank(images_combined, truth_combined)
+        # scores_combined = self.rank(images_combined, truth_combined)
 
         scores_combined = scores_combined.view(scores_combined.shape[0],-1) #(batchsize*2,1)
         score1 = scores_combined[:image1.shape[0], ...]

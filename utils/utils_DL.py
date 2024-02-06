@@ -77,8 +77,11 @@ def mseloss_fcn0(output, target):
     loss = torch.mean(torch.abs(output - target) ** 2) ** 0.5
     return loss
 
+def NMSE(output, target):
+    loss = (output - target).abs().pow(2).sum().pow(0.5) / target.abs().pow(2).sum().pow(0.5)
+    return loss
 
-def learnedloss_fcn(output, target, scoreModel, rank_trained_on_mag=False, augmentation=False, eff=False):
+def learnedloss_fcn(output, target, scoreModel, rank_trained_on_mag=False, augmentation=False, eff=False, sub=False):
 
     if output.ndim == 2:
         output = output.unsqueeze(0).unsqueeze(0)
@@ -88,7 +91,7 @@ def learnedloss_fcn(output, target, scoreModel, rank_trained_on_mag=False, augme
         target = torch.unsqueeze(target, 0)
     Nslice = output.shape[0]
     delta = 0
-    count = 1.0
+    count = 0
     for sl in range(Nslice):
 
         output_sl = torch.unsqueeze(output[sl], 0)
@@ -122,12 +125,17 @@ def learnedloss_fcn(output, target, scoreModel, rank_trained_on_mag=False, augme
             delta += delta_sl
             count += 1.0
         else:
-            if eff:
-                delta_sl = torch.abs(scoreModel(output_sl) - scoreModel(torch.zeros_like(output_sl)))
+            if eff: # score(zeros) is 30.4337.
+                if sub:
+                    delta_sl = (scoreModel(output_sl - target_sl) - scoreModel(torch.zeros_like(output_sl))) ** 2
+                else:
+                    delta_sl = (scoreModel(output_sl) - scoreModel(target_sl)) ** 2
+
             else:
                 delta_sl = scoreModel(output_sl, target_sl)
             delta += delta_sl
             count += 1.0
+            print(delta_sl, count)
 
     delta /= count
 

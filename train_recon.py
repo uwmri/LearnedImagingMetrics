@@ -35,9 +35,10 @@ from random import randrange
 def main():
 
     # Network parameters
-    INNER_ITER = 0
-    L2CNN = False
-    EFF = True
+    INNER_ITER = 1
+    L2CNN = True
+    EFF = False
+    SUB = True
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     spdevice = sp.Device(0)
@@ -50,7 +51,7 @@ def main():
                         default=r'D:\NYUbrain\singleslices',
                         help='Data path')
     parser.add_argument('--cv_folder', type=str,
-                        default=r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\rank_efficientnet',
+                        default=r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\rank_trained_L2cnn\CV-5',
                         help='Name of learned metric file')
     parser.add_argument('--log_dir', type=str,
                         default=r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020',
@@ -70,13 +71,13 @@ def main():
     saveTrainIm = args.save_train_images
 
     cv_folder = args.cv_folder
-    metric_files = [os.path.join(cv_folder, os.listdir(cv_folder)[0]),]
-    # metric_files = [ os.path.join(cv_folder, os.listdir(cv_folder)[0]),
-    #                  os.path.join(cv_folder, os.listdir(cv_folder)[1]),
-    #                  os.path.join(cv_folder, os.listdir(cv_folder)[2]),
-    #                  os.path.join(cv_folder, os.listdir(cv_folder)[3]),
-    #                  os.path.join(cv_folder, os.listdir(cv_folder)[4])]
-    # metric_files = [ 'H:/LearnedImageMetric/ImagePairs_Pack_04032020/RankClassifier9644.pt', ]
+    # metric_files = [os.path.join(cv_folder, os.listdir(cv_folder)[0]),]
+    metric_files = [ os.path.join(cv_folder, os.listdir(cv_folder)[0]),
+                     os.path.join(cv_folder, os.listdir(cv_folder)[1]),
+                     os.path.join(cv_folder, os.listdir(cv_folder)[2]),
+                     os.path.join(cv_folder, os.listdir(cv_folder)[3]),
+                     os.path.join(cv_folder, os.listdir(cv_folder)[4])]
+    # metric_files = [ r'I:\code\LearnedImagingMetrics_pytorch\Rank_NYU\ImagePairs_Pack_04032020\rank_efficientnet\RankClassifier2216.pt', ]
 
     # load RankNet
     try:
@@ -102,11 +103,11 @@ def main():
     elif WHICH_LOSS == 'ssim':
         ssim_module = SSIM()
 
-    if WHICH_LOSS == 'learned':
+    elif WHICH_LOSS == 'learned':
         scorenets = []
         for name in metric_files:
             if L2CNN:
-                ranknet = L2cnn(channels_in=1, channel_base=8, group_depth=5, train_on_mag=rank_trained_on_mag)
+                ranknet = L2cnn(channels_in=1, channel_base=8, group_depth=5, train_on_mag=rank_trained_on_mag, subtract_truth=SUB)
             elif EFF:
                 from IQNet import EfficientNet2chan
                 ranknet = EfficientNet2chan()
@@ -130,9 +131,9 @@ def main():
     act_xres = 512
     act_yres = 256
 
-    acc = 3
+    acc = 2
     WHICH_MASK = 'poisson'
-    NUM_MASK = 64
+    NUM_MASK = 1
     logging.info(f'Acceleration = {acc}, {WHICH_MASK} mask, {NUM_MASK}')
 
     masks = []
@@ -208,7 +209,7 @@ def main():
 
         ReconModel = MoDL(inner_iter=INNER_ITER, DENOISER=denoiser)
         logging.info(f'MoDL, inner iter = {INNER_ITER}')
-    ReconModel = ReconModel.half()
+    # ReconModel = ReconModel.half()
     ReconModel.to(device)
 
     LR = 1e-4
@@ -223,7 +224,7 @@ def main():
 
 
 
-    Nepoch = 1
+    Nepoch = 400
     epochMSE = 0
     logging.info(f'MSE for first {epochMSE} epochs then switch to learned')
     lossT = np.zeros(Nepoch)
@@ -276,6 +277,10 @@ def main():
             for data in loader_T:
                 i = i + 1
 
+                if i==0:
+                    break
+
+                print(f'loader took {time.time() - tt}')
                 # print(f'-------------------------------beginning of training, epoch {epoch}-------------------------------')
                 # print_mem()
                 tstart_batch = time.time()
@@ -284,7 +289,7 @@ def main():
                     logging.info(f'training case {name}')
                 else:
                     smaps, kspace = data
-
+                # print(f'smaps shape {smaps.shape}')     # (Batchsize, coil, h, w)
 
                 t_case = time.time()
                 optimizer.zero_grad()
@@ -326,71 +331,88 @@ def main():
                     kspaceU_sl *= scale
                     kspace_sl *= scale
 
-                    with torch.cuda.amp.autocast():
+                    # with torch.cuda.amp.autocast():
 
-                        # Get PyTorch functions
-                        t = time.time()
-                        if INNER_ITER == 0:
-                            imEst = imU_sl.clone()
+                    # Get PyTorch functions
+                    t = time.time()
+                    if INNER_ITER == 0:
+                        imEst = imU_sl.clone()
+                    else:
+                        imEst = torch.zeros_like(im_sl)
+                    imEst2 = ReconModel(imEst, kspaceU_sl, smaps_sl, mask_torch)  # (768, 396, 2)
+                    t = time.time()
+                ########################################## MoDL recon #############################################
+
+                    # crop to square
+                    width = im_sl.shape[2]
+                    height = im_sl.shape[1]
+                    if width < 320:
+                        im_sl = im_sl[:, 160:480, :]
+                        imEst2 = imEst2[:, 160:480, :]
+                    else:
+                        idxL = int((height - width) / 2)
+                        idxR = int(idxL + width)
+                        im_sl = im_sl[:, idxL:idxR, :]
+                        imEst2 = imEst2[:, idxL:idxR, :]
+
+                    # flipud
+                    im_sl = torch.flip(im_sl, dims=(0, 1))
+                    imEst2 = torch.flip(imEst2, dims=(0, 1))
+
+                    loss_mse_tensor = mseloss_fcn(imEst2, im_sl).detach()
+                    loss_mse_tensor0 = mseloss_fcn0(imEst2, im_sl).detach()
+
+                    if WHICH_LOSS == 'mse':
+                        loss = mseloss_fcn(imEst2, im_sl)
+                    elif WHICH_LOSS == 'ssim':
+                        loss = torch.mean(1 - ssim_module(imEst2.unsqueeze(dim=0), im_sl.unsqueeze(dim=0)))
+                    elif WHICH_LOSS == 'perceptual':
+                        loss = loss_perceptual(imEst2, im_sl)
+                    elif WHICH_LOSS == 'patchGAN':
+                        loss = loss_GAN(imEst2, im_sl, patchGAN)
+                    else:
+                        if epoch < epochMSE:
+                            loss = mseloss_fcn(imEst2, im_sl) * 5e2
                         else:
-                            imEst = torch.zeros_like(im_sl)
-                        imEst2 = ReconModel(imEst, kspaceU_sl, smaps_sl, mask_torch)  # (768, 396, 2)
-                        t = time.time()
-                    ########################################## MoDL recon #############################################
+                            if EFF:
+                                image_corrupted1 = imEst2.detach().squeeze().cpu().numpy()
+                                image_sense = im_sl.squeeze().cpu().numpy()
+                                scale = np.sum(np.conj(image_corrupted1).T * image_sense) / np.sum(
+                                    np.conj(image_corrupted1).T * image_corrupted1)
+                                imEst2 = imEst2 * scale
+                                if SUB:
+                                    imEst2 = imEst2 - im_sl
+                                imEst2 = torch.view_as_real(imEst2.squeeze()).unsqueeze(0).permute((0, -1, 1, 2))
+                                im_sl = torch.view_as_real(im_sl.squeeze()).unsqueeze(0).permute((0, -1, 1, 2))
 
-                        # crop to square
-                        width = im_sl.shape[2]
-                        height = im_sl.shape[1]
-                        if width < 320:
-                            im_sl = im_sl[:, 160:480, :]
-                            imEst2 = imEst2[:, 160:480, :]
-                        else:
-                            idxL = int((height - width) / 2)
-                            idxR = int(idxL + width)
-                            im_sl = im_sl[:, idxL:idxR, :]
-                            imEst2 = imEst2[:, idxL:idxR, :]
 
-                        # flipud
-                        im_sl = torch.flip(im_sl, dims=(0, 1))
-                        imEst2 = torch.flip(imEst2, dims=(0, 1))
+                                normalize = transforms.Normalize(
+                                    mean=[imEst2[0, 0, ...].mean(), imEst2[0, 1, ...].mean()],
+                                    std=[imEst2[0, 0, ...].std(), imEst2[0, 1, ...].std()])
+                                preprocess = transforms.Compose([
+                                    transforms.Resize((224, 224)),
+                                    # Adjust the size based on the specific EfficientNet variant
+                                    # normalize,
+                                ])
+                                imEst2 = preprocess(imEst2)
 
-                        loss_mse_tensor = mseloss_fcn(imEst2, im_sl).detach()
-                        loss_mse_tensor0 = mseloss_fcn0(imEst2, im_sl).detach()
+                                normalizeT = transforms.Normalize(
+                                    mean=[im_sl[0, 0, ...].mean(), im_sl[0, 1, ...].mean()],
+                                    std=[im_sl[0, 0, ...].std(), im_sl[0, 1, ...].std()])
+                                preprocessT = transforms.Compose([
+                                    transforms.Resize((224, 224)),
+                                    # Adjust the size based on the specific EfficientNet variant
+                                    # normalizeT,
+                                ])
+                                im_sl = preprocessT(im_sl)
 
-                        if WHICH_LOSS == 'mse':
-                            loss = mseloss_fcn(imEst2, im_sl)
-                        elif WHICH_LOSS == 'ssim':
-                            loss = torch.mean(1 - ssim_module(imEst2.unsqueeze(dim=0), im_sl.unsqueeze(dim=0)))
-                        elif WHICH_LOSS == 'perceptual':
-                            loss = loss_perceptual(imEst2, im_sl)
-                        elif WHICH_LOSS == 'patchGAN':
-                            loss = loss_GAN(imEst2, im_sl, patchGAN)
-                        else:
-                            if epoch < epochMSE:
-                                loss = mseloss_fcn(imEst2, im_sl) * 5e2
-                            else:
-                                loss = 0.0
-                                for score in scorenets:
-                                    if EFF:
-                                        image_corrupted1 = imEst2.squeeze().cpu().numpy()
-                                        image_sense = im_sl.squeeze().cpu().numpy()
-                                        scale = np.sum(np.conj(image_corrupted1).T * image_sense) / np.sum(
-                                            np.conj(image_corrupted1).T * image_corrupted1)
-                                        imEst2  = imEst2 * scale
-                                        imEst2  = imEst2 - im_sl
-                                        imEst2 = torch.view_as_real(imEst2.squeeze()).unsqueeze(0).permute((0, -1, 1, 2))
+                            loss = 0.0
+                            for score in scorenets:
+                                loss += learnedloss_fcn(imEst2, im_sl, score, rank_trained_on_mag=rank_trained_on_mag, augmentation=False, eff=EFF, sub=SUB)
 
-                                        # these are the mean and std of concat(X_1-X_T, X_2-X_T)
-                                        normalize = transforms.Normalize(mean=[imEst2[0,0,...].mean(), imEst2[0,1,...].mean()],
-                                                                         std=[imEst2[0,0,...].std(),imEst2[0,1,...].std()])
-                                        preprocess = transforms.Compose([
-                                            transforms.Resize((224, 224)),
-                                            # Adjust the size based on the specific EfficientNet variant
-                                            normalize,
-                                        ])
-                                        imEst2 = preprocess(imEst2)
-
-                                    loss += learnedloss_fcn(imEst2, im_sl, score, rank_trained_on_mag=rank_trained_on_mag, augmentation=False, eff=EFF)
+                            if EFF:
+                                imEst2 = torch.view_as_complex(imEst2.permute((0, 2, 3, 1)))
+                                im_sl = torch.view_as_complex(im_sl.permute((0, 2, 3, 1)))
 
                     # scaler.scale(loss).backward()
                     loss.backward()
@@ -461,7 +483,7 @@ def main():
                 # scaler.step(optimizer)
                 # scaler.update()
 
-                print(f'Step {i} of {len(loader_T)}, took {time.time() - t_case}s, loss {loss_avg}, avg = {train_avg.avg()}')
+                print(f'Step {i} of {len(loader_T)}, took {time.time() - tstart_batch}s, loss {loss_avg}, avg = {train_avg.avg()}')
 
                 if i > Ntrain:
                     break
@@ -552,29 +574,45 @@ def main():
                         if epoch < epochMSE:
                             loss = mseloss_fcn(imEst2, im_sl) *5e2
                         else:
+                            if EFF:
+                                image_corrupted1 = imEst2.squeeze().cpu().numpy()
+                                image_sense = im_sl.squeeze().cpu().numpy()
+                                scale = np.sum(np.conj(image_corrupted1).T * image_sense) / np.sum(
+                                    np.conj(image_corrupted1).T * image_corrupted1)
+                                imEst2 = imEst2 * scale
+                                if SUB:
+                                    imEst2 = imEst2 - im_sl
+                                imEst2 = torch.view_as_real(imEst2.squeeze()).unsqueeze(0).permute((0, -1, 1, 2))
+                                im_sl = torch.view_as_real(im_sl.squeeze()).unsqueeze(0).permute((0, -1, 1, 2))
+
+                                # these are the mean and std of concat(X_1-X_T, X_2-X_T)
+                                normalize = transforms.Normalize(
+                                    mean=[imEst2[0, 0, ...].mean(), imEst2[0, 1, ...].mean()],
+                                    std=[imEst2[0, 0, ...].std(), imEst2[0, 1, ...].std()])
+                                preprocess = transforms.Compose([
+                                    transforms.Resize((224, 224)),
+                                    # Adjust the size based on the specific EfficientNet variant
+                                    # normalize,
+                                ])
+                                imEst2 = preprocess(imEst2)
+
+                                normalizeT = transforms.Normalize(
+                                    mean=[im_sl[0, 0, ...].mean(), im_sl[0, 1, ...].mean()],
+                                    std=[im_sl[0, 0, ...].std(), im_sl[0, 1, ...].std()])
+                                preprocessT = transforms.Compose([
+                                    transforms.Resize((224, 224)),
+                                    # Adjust the size based on the specific EfficientNet variant
+                                    # normalizeT,
+                                ])
+                                im_sl = preprocessT(im_sl)
                             loss = 0.0
                             for score in scorenets:
-                                if EFF:
-                                    image_corrupted1 = imEst2.squeeze().cpu().numpy()
-                                    image_sense = im_sl.squeeze().cpu().numpy()
-                                    scale = np.sum(np.conj(image_corrupted1).T * image_sense) / np.sum(
-                                        np.conj(image_corrupted1).T * image_corrupted1)
-                                    imEst2 = imEst2 * scale
-                                    imEst2 = imEst2 - im_sl
-                                    imEst2 = torch.view_as_real(imEst2.squeeze()).unsqueeze(0).permute((0, -1, 1, 2))
 
-                                    # these are the mean and std of concat(X_1-X_T, X_2-X_T)
-                                    normalize = transforms.Normalize(
-                                        mean=[imEst2[0, 0, ...].mean(), imEst2[0, 1, ...].mean()],
-                                        std=[imEst2[0, 0, ...].std(), imEst2[0, 1, ...].std()])
-                                    preprocess = transforms.Compose([
-                                        transforms.Resize((224, 224)),
-                                        # Adjust the size based on the specific EfficientNet variant
-                                        normalize,
-                                    ])
-                                    imEst2 = preprocess(imEst2)
                                 loss += learnedloss_fcn(imEst2, im_sl, score, rank_trained_on_mag=rank_trained_on_mag,
-                                                        augmentation=False, eff=EFF)
+                                                        augmentation=False, eff=EFF, sub=SUB)
+                            if EFF:
+                                imEst2 = torch.view_as_complex(imEst2.permute((0, 2, 3, 1)))
+                                im_sl = torch.view_as_complex(im_sl.permute((0, 2, 3, 1)))
 
                     eval_avg.update(loss.detach().item(), n=BATCH_SIZE)
                     eval_avg_mse.update(loss_mse_tensor.detach().cpu().item())
@@ -584,6 +622,8 @@ def main():
                         loss_learnedV.append(loss.detach().item())
                         loss_mseV.append(loss_mse_tensor.detach().item())
                         loss_mseV0.append(loss_mse_tensor0.detach().item())
+
+
 
                     if saveAllSl:
                         imEstpltV = imEst2.detach().cpu()
@@ -599,8 +639,8 @@ def main():
                         noisyplt = noisyplt[:, idxL:idxR,:]
                         del perturbed
                         imEstplt = imEst2.detach().cpu()
-                        imEstfig = plt_recon(torch.squeeze(torch.abs(imEstplt)))
-                        writer_val.add_figure('Recon_val', imEstfig, epoch)
+                        # imEstfig = plt_recon(torch.squeeze(torch.abs(imEstplt)))
+                        # writer_val.add_figure('Recon_val', imEstfig, epoch)
 
                         # SENSE
                         if epoch == 0:
@@ -663,25 +703,25 @@ def main():
         lossT[epoch] = train_avg.avg()
         lossV[epoch] = eval_avg.avg()
 
-        # Score diff vs MSE between images and truths
-        if WHICH_LOSS == 'learned':
-            loss_learnedT = np.array(loss_learnedT)
-            loss_mseT = np.array(loss_mseT)
-            lossplotT = plt_scoreVsMse(loss_learnedT, loss_mseT)
-            writer_train.add_figure('Loss_learned_vs_mse', lossplotT, epoch)
-
-            loss_learnedV = np.array(loss_learnedV)
-            loss_mseV = np.array(loss_mseV)
-            lossplotV = plt_scoreVsMse(loss_learnedV, loss_mseV)
-            writer_val.add_figure('Loss_learned_vs_mse', lossplotV, epoch)
-
-            loss_mseT0 = np.array(loss_mseT0)
-            lossplotT0 = plt_scoreVsMse(loss_learnedT, loss_mseT0)
-            writer_train.add_figure('Loss_learned_vs_mse0', lossplotT0, epoch)
-
-            loss_mseV0 = np.array(loss_mseV0)
-            lossplotV0= plt_scoreVsMse(loss_learnedV, loss_mseV0)
-            writer_val.add_figure('Loss_learned_vs_mse0', lossplotV0, epoch)
+        # # Score diff vs MSE between images and truths
+        # if WHICH_LOSS == 'learned':
+        #     loss_learnedT = np.array(loss_learnedT)
+        #     loss_mseT = np.array(loss_mseT)
+        #     lossplotT = plt_scoreVsMse(loss_learnedT, loss_mseT)
+        #     writer_train.add_figure('Loss_learned_vs_mse', lossplotT, epoch)
+        #
+        #     loss_learnedV = np.array(loss_learnedV)
+        #     loss_mseV = np.array(loss_mseV)
+        #     lossplotV = plt_scoreVsMse(loss_learnedV, loss_mseV)
+        #     writer_val.add_figure('Loss_learned_vs_mse', lossplotV, epoch)
+        #
+        #     loss_mseT0 = np.array(loss_mseT0)
+        #     lossplotT0 = plt_scoreVsMse(loss_learnedT, loss_mseT0)
+        #     writer_train.add_figure('Loss_learned_vs_mse0', lossplotT0, epoch)
+        #
+        #     loss_mseV0 = np.array(loss_mseV0)
+        #     lossplotV0= plt_scoreVsMse(loss_learnedV, loss_mseV0)
+        #     writer_val.add_figure('Loss_learned_vs_mse0', lossplotV0, epoch)
 
         # save models
         state = {
@@ -693,5 +733,5 @@ def main():
         }
         torch.save(state, os.path.join(log_dir, f'Recon{Ntrial}_{WHICH_LOSS}.pt'))
 
-if __name__ == '__main__':
-    main()
+# if __name__ == '__main__':
+#     main()

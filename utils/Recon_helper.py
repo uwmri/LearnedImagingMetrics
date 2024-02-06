@@ -269,3 +269,38 @@ class EEVarNet(nn.Module):
         imSOS = imSOS[idxL:idxR,:,:]
 
         return imSOS
+
+
+class Denoise_loss(nn.Module):
+    def __init__(self, scorenet, in_channels=1, out_channels=1, f_maps=64, depth=3):
+        super(Denoise_loss, self).__init__()
+
+        self.scorenet = scorenet
+        self.denoiser = UNet(in_channels=in_channels, out_channels=out_channels, f_maps=f_maps, depth=depth,
+                             layer_order=['convolution', 'relu'],
+                             complex_kernel=False, complex_input=True,
+                             residual=True, scaled_residual=True)
+
+    def forward(self, image, truth, eff=False, sub=True):
+        # image and truth needs to be (batch, 1, h, w)
+        imEst = self.denoiser(image)
+        Nslice = image.shape[0]
+        delta = 0
+        count = 0
+        for sl in range(Nslice):
+            output_sl = torch.unsqueeze(imEst[sl], 0)
+            target_sl = torch.unsqueeze(truth[sl], 0)
+
+            if eff:
+                if sub:
+                    delta_sl = (self.scorenet(output_sl - target_sl) - self.scorenet(torch.zeros_like(output_sl))) ** 2
+                else:
+                    delta_sl = (self.scorenet(output_sl) - self.scorenet(target_sl)) ** 2
+            else:
+                delta_sl = self.scorenet(output_sl, target_sl)
+            delta += delta_sl
+            count += 1.0
+
+        delta /= count
+        return delta
+
