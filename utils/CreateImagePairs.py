@@ -1,11 +1,13 @@
 import logging
 from skimage.metrics import structural_similarity
-
+import matplotlib
+matplotlib.use('TkAgg')
+import matplotlib.pyplot as plt
 import sigpy.mri as mri
 import pywt
 import time
 #from fastmri.data import transforms as T
-from utils.utils import *
+from utils import *
 
 
 def crop_flipud(image):
@@ -21,10 +23,13 @@ def crop_flipud(image):
     return image_sq
 
 
-def blurring(ksp, acc_ulim):
+def blurring(ksp, acc_ulim, fixed_acc=False):
     #kspace of shape[coil, h, w]
     kspace = ksp.copy()
-    sigma = np.random.random_sample() * acc_ulim
+    if fixed_acc:
+        sigma = acc_ulim
+    else:
+        sigma = np.random.random_sample() * acc_ulim
 
     num_coils = kspace.shape[0]
     xv, yv = np.meshgrid(np.linspace(-1, 1, kspace.shape[1]), np.linspace(-1, 1, kspace.shape[2]), sparse=False,
@@ -59,7 +64,8 @@ def wave_thresh(input, thresh):
     return output
 
 
-def trans_motion(kspace, dir_motion=2, maxshift=10, prob=1, startPE=180,fix_shift=False, fix_start=False, low=0, high=0.6):
+def trans_motion(kspace, dir_motion=2, maxshift=10, prob=1, startPE=180,fix_shift=False, fix_start=False, low=0,
+                 high=0.6, fixed_percentage=False):
     # input: kspace (coil, h, w).
     # dir_motion: direction of phase encode. 0 for width, 1 for height-dir
     # maxshift: np.random.uniform(0,maxshift) is the size of displacement in pixel
@@ -132,7 +138,10 @@ def trans_motion(kspace, dir_motion=2, maxshift=10, prob=1, startPE=180,fix_shif
                 if fix_shift:
 
                     corruptableRegion = edgeR - central_rangeR
-                    percentage = np.random.uniform(low, high)
+                    if fixed_percentage:
+                        percentage=high
+                    else:
+                        percentage = np.random.uniform(low, high)
                     start = int(edgeR - corruptableRegion * percentage)
                     #start =np.max(np.nonzero(input[0,0,:]))-1
                 else:
@@ -264,7 +273,7 @@ def add_gaussian_noise(input, prob, kedge_len=30, level=1, mode=0,mean=0):
     return noisy.astype('complex64'), sigma_real, sigma_imag
 
 
-def add_incoherent_noise(ksp, prob=None, central=0.4, mode=1, num_corrupted=0, dump=0.5):
+def add_incoherent_noise(ksp, prob=None, central=0.4, mode=1, num_corrupted=0, dump=0.5, fixed_dump=False):
     # feed in ksp(coil, h, w)
     # baseline is uniform random of 1 and 0
     # percent: percentage of ones and (1-1/prob) zeros
@@ -292,7 +301,10 @@ def add_incoherent_noise(ksp, prob=None, central=0.4, mode=1, num_corrupted=0, d
         logger.info('Incoherent noise added')
         if mode == 1:
             if num_corrupted == 0:
-                percent = np.random.uniform(dump,1)
+                if fixed_dump:
+                    percent = dump
+                else:
+                    percent = np.random.uniform(dump,1)
             else:
                 # for the second corrupted image, do the same the percent as the first one. input dump=percent1.
                 percent = dump
@@ -316,7 +328,11 @@ def add_incoherent_noise(ksp, prob=None, central=0.4, mode=1, num_corrupted=0, d
                 # poisson
                 # percent = np.random.uniform(0.15,0.3)
                 dump0 = dump
-                percent = np.random.uniform(dump0,1)     #default is (0.7, 1), more moderate when discarding points
+
+                if fixed_dump:
+                    percent = dump0
+                else:
+                    percent = np.random.uniform(dump0,1)     #default is (0.7, 1), more moderate when discarding points
             else:
                 # for the second corrupted image, do the same the percent as the first one. input dump=percent1.
                 percent = dump
@@ -528,10 +544,10 @@ def get_corrupted(kspace, sl, num_coils, num_corrupted, device, acc=0, acc_ulim=
 
 
 def generate_pairs():
-    train_folder = Path("D:/NYUbrain/brain_multicoil_train/multicoil_train")
+    train_folder = r"D:/NYUbrain/brain_multicoil_train/multicoil_train"
 
-    val_folder = Path("D:/NYUbrain/brain_multicoil_val/multicoil_val")
-    test_folder = Path("D:/NYUbrain/brain_multicoil_test/multicoil_test")
+    val_folder = r"D:/NYUbrain/brain_multicoil_val/multicoil_val"
+    test_folder = r"D:/NYUbrain/brain_multicoil_test/multicoil_test"
 
 
     files = find("*.h5", train_folder)  # list of file paths

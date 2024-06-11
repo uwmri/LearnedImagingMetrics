@@ -14,6 +14,8 @@ from torch.utils.data import DataLoader
 import torchvision
 import torchsummary
 import torch.utils.checkpoint as checkpoint
+import torchvision.transforms as transforms
+
 # from utils.ISOResNet import *
 from utils.CreateImagePairs import get_smaps, add_gaussian_noise
 from utils.unet_componets import *
@@ -280,27 +282,23 @@ class Denoise_loss(nn.Module):
                              layer_order=['convolution', 'relu'],
                              complex_kernel=False, complex_input=True,
                              residual=True, scaled_residual=True)
+        self.preprocess = transforms.Compose([transforms.Resize((224, 224))])
 
-    def forward(self, image, truth, eff=False, sub=True):
-        # image and truth needs to be (batch, 1, h, w)
+
+    def forward(self, image, truth, eff=True, sub=True):
+        # image and truth needs to be (batch=1, 1, h, w)
         imEst = self.denoiser(image)
-        Nslice = image.shape[0]
-        delta = 0
-        count = 0
-        for sl in range(Nslice):
-            output_sl = torch.unsqueeze(imEst[sl], 0)
-            target_sl = torch.unsqueeze(truth[sl], 0)
 
-            if eff:
-                if sub:
-                    delta_sl = (self.scorenet(output_sl - target_sl) - self.scorenet(torch.zeros_like(output_sl))) ** 2
-                else:
-                    delta_sl = (self.scorenet(output_sl) - self.scorenet(target_sl)) ** 2
+        if eff:
+            imEst = torch.view_as_real(imEst[0]).permute((0, -1, 1, 2))
+            truth = torch.view_as_real(truth[0]).permute((0, -1, 1, 2))
+            imEst = self.preprocess(imEst)
+            truth = self.preprocess(truth)
+            if sub:
+                delta_sl = (self.scorenet(imEst - truth) - self.scorenet(torch.zeros_like(imEst))) ** 2
             else:
-                delta_sl = self.scorenet(output_sl, target_sl)
-            delta += delta_sl
-            count += 1.0
-
-        delta /= count
-        return delta
+                delta_sl = (self.scorenet(imEst) - self.scorenet(truth)) ** 2
+        else:
+            delta_sl = self.scorenet(imEst, truth)
+        return delta_sl
 

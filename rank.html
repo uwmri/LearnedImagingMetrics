@@ -1,0 +1,152 @@
+<SCRIPT LANGUAGE="JavaScript">
+
+
+// do not edit anything below this line
+var count = 0
+var Ndownload = 1
+var ranks1 = new Array()
+var ranks2 = new Array()
+var ranks3 = new Array()
+
+var example = 0
+var recon1 = 0
+var recon2 = 0
+var NEXAMPLES = 2920
+var NRECONS = 2
+
+
+function getRndInteger(min, max) {
+    return Math.floor(Math.random() * (max - min + 1) ) + min;
+}
+
+function displayImage1(){
+
+	ranks1[count] = recon1;
+	ranks2[count] = recon2;
+	ranks3[count] = example;
+
+	update_images();
+}
+
+function displayImage2(){
+
+	ranks1[count] = recon2;
+	ranks2[count] = recon1;
+	ranks3[count] = example;
+
+	update_images();
+}
+
+function update_image_skip(){
+	update_images();
+	count--;
+}
+
+function SameImage(){
+
+	ranks1[count] = 2;
+	ranks2[count] = 2;
+	ranks3[count] = example;
+
+	update_images();
+}
+
+function update_images(){
+
+	document.getElementById("toptext").textContent="Please Click on the best Image (Rank total = " + count + ")";
+
+	example = getRndInteger(1,NEXAMPLES)
+	recon1 = getRndInteger(0,NRECONS-1)
+	recon2 = getRndInteger(0,NRECONS-1)
+
+
+	while (recon1 == recon2) {
+		recon2 = getRndInteger(0,NRECONS-1)
+	}
+
+    document.canvas1.src = "ImagePairs_png/NYU_" + pad(example,7) + "_IMAGE_" + pad(recon1,4) + ".png";
+	document.canvas2.src = "ImagePairs_png/NYU_" + pad(example,7) + "_IMAGE_" + pad(recon2,4) + ".png";
+	//document.canvas3.src = "IMAGES/EXAMPLE_" + pad(example,6) + "_TRUTH.png";
+
+	count++;
+}
+
+function pad(n, width, z) {
+  z = z || '0';
+  n = n + '';
+  return n.length >= width ? n : new Array(width - n.length + 1).join(z) + n;
+}
+
+function getInitials() {
+    var initials = document.getElementById("Initials").value;
+    return initials
+}
+
+function TimeStamp() {
+    var now = new Date()
+    var min = String(now.getMinutes()).padStart(2,'0');
+    var hour = String(now.getHours()).padStart(2,'0');
+    var dd = String(now.getDate()).padStart(2, '0');
+    var mm = String(now.getMonth() + 1).padStart(2, '0'); //January is 0!
+    var yyyy = now.getFullYear();
+
+    now = hour + min + '_' + mm + dd + yyyy
+    return now
+}
+
+function exportData() {
+    var data = '';
+	for(var i in ranks1){
+		console.log(ranks1[i]);
+		data += ranks1[i];
+		data += ',';
+		data += ranks2[i];
+		data += ',';
+		data += ranks3[i];
+		data += '\r\n';
+   }
+
+	var pom = document.createElement('a');
+	var csvContent=data; //here we load our csv data
+	var blob = new Blob([csvContent],{type: 'text/csv;charset=utf-8;'});
+	var url = URL.createObjectURL(blob);
+	pom.href = url;
+	pom.setAttribute('download', 'Results_' + getInitials() + '_' + TimeStamp() + '.csv');
+	pom.click();
+    Ndownload += 1
+    // if (typeof(Storage) !== "undefined") {
+    //     if (localStorage.Ndownload) {
+    //         localStorage.Ndownload = Number(localStorage.Ndownload) + 1;
+    //     } else {
+    //         localStorage.Ndownload += 1;
+    //     }
+    // }
+}
+
+window.onload = function() {
+	update_images();
+};
+
+//  End -->
+</script>
+
+</HEAD>
+
+
+<BODY bgcolor="#0F0F0F">
+
+<text id="toptext" style="font-size:40;color:white;font-family:monospace;">Please Click on the best Image</text><br>
+<input id="Initials" placeholder="Enter your initials">
+<br><button onclick="getInitials" style="font-size:24px;">Save Initial </button><br>
+
+
+<img src="IMAGE.jpg" name="canvas1" onclick="displayImage1();" width="600" height="600"/>
+<img src="IMAGE.jpg" name="canvas2" onclick="displayImage2();" width="600" height="600"/>
+<!–– <img src="IMAGE.jpg" name="canvas3" width="600" height="600"/> -->
+<br><button onClick="update_image_skip();" style="font-size:24px;">Skip Image Pair</button><br>
+
+<br><button onClick="SameImage();" style="font-size:24px;">They are similar.</button><br>
+
+<br><button onClick="exportData();" style="font-size:24px;" type="button">SaveResults</button>
+
+</BODY>

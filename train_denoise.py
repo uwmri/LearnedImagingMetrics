@@ -52,9 +52,9 @@ def main():
     parser.add_argument('--resume_train', action='store_true', default=False)
     parser.add_argument('--save_all_slices', action='store_true', default=False)
     parser.add_argument('--save_train_images', action='store_true', default=False)
-    parser.add_argument('--L2CNN', action='store_true', default=True)
-    parser.add_argument('--EFF', action='store_true', default=False)
-    parser.add_argument('--SUB', action='store_true', default=True)
+    parser.add_argument('--L2CNN', action='store_true', default=False)
+    parser.add_argument('--EFF', action='store_true', default=True)
+    parser.add_argument('--SUB', action='store_true', default=False)
     args = parser.parse_args()
 
     rank_channel = 1
@@ -113,7 +113,6 @@ def main():
             classifier.eval()
             score = classifier.rank
             score.to(device)
-
             scorenets.append(score)
 
 
@@ -143,16 +142,25 @@ def main():
                                      data_type=smap_type, case_name=SaveCaseName)
     loader_V = DataLoader(dataset=validationset, batch_size=1, shuffle=False, pin_memory=True)
 
-    Denoiser = UNet(in_channels=1, out_channels=1, f_maps=64, depth=2,
-                                     layer_order=['convolution', 'relu'],
-                                     complex_kernel=False, complex_input=True,
-                                     residual=True, scaled_residual=True)
-    Denoiser.cuda()
+    # Denoiser = UNet(in_channels=1, out_channels=1, f_maps=64, depth=2,
+    #                                  layer_order=['convolution', 'relu'],
+    #                                  complex_kernel=False, complex_input=True,
+    #                                  residual=True, scaled_residual=True)
+    # Denoiser.cuda()
+    # LR = 1e-4
+    # optimizer = optim.Adam(Denoiser.parameters(), lr=LR)
+    # lmbda = lambda epoch: 0.99
+    # scheduler = torch.optim.lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lmbda)
+
+
+    LearnedLoss = Denoise_loss(scorenets[0])
+    for param in LearnedLoss.scorenet.parameters():
+        param.requires_grad = False
+    LearnedLoss.cuda()
     LR = 1e-4
-    optimizer = optim.Adam(Denoiser.parameters(), lr=LR)
+    optimizer = optim.Adam(LearnedLoss.denoiser.parameters(), lr=LR)
     lmbda = lambda epoch: 0.99
     scheduler = torch.optim.lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lmbda)
-
 
     writer_train = SummaryWriter(os.path.join(args.log_dir, f'runs/denoise/train_{Ntrial}'))
     writer_val = SummaryWriter(os.path.join(args.log_dir, f'runs/denoise/val_{Ntrial}'))
@@ -175,7 +183,7 @@ def main():
         eval_avg = RunningAverage()
         eval_avg_mse = RunningAverage()
 
-        Denoiser.train()
+        LearnedLoss.denoiser.train()
 
         i=-1
         for data in loader_T:
@@ -213,46 +221,29 @@ def main():
                 im_sl *= scale
 
                 im_noisy = add_gaussian2D(im_sl, gaussian_level=7e4, kedge_len=30)      # im_sl torch.Size([1, 396, 396])
+                im_noisy = im_noisy.unsqueeze(0)
+                im_sl = im_sl.unsqueeze(0)
+                loss = LearnedLoss(im_noisy, im_sl, eff=args.EFF, sub=args.SUB)
 
-
-                imEst = Denoiser(im_noisy.unsqueeze(0))     # to torch.Size([1, 1, 396, 396])
+                imEst = LearnedLoss.denoiser(im_noisy)     # to torch.Size([1, 1, 396, 396])
                 loss_mse = NMSE(imEst, im_sl.detach())      # imEst torch.Size([1, 1, 396, 396])
-
-                if args.EFF:
-                    # image_corrupted1 = imEst.detach().squeeze().cpu().numpy()
-                    # image_sense = im.squeeze().cpu().numpy()
-                    # for i in range(BATCH_SIZE):
-                    #     scale = np.sum(np.conj(image_corrupted1[i]).T * image_sense[i]) / np.sum(
-                    #         np.conj(image_corrupted1[i]).T * image_corrupted1[i])
-                    #     imEst[i] = imEst[i] * scale
-                    imEst = torch.view_as_real(imEst.squeeze()).unsqueeze(0).permute((0, -1, 1, 2))
-                    im_sl = torch.view_as_real(im_sl.squeeze()).unsqueeze(0).permute((0, -1, 1, 2))
-                    preprocess = transforms.Compose([transforms.Resize((224, 224))])
-                    imEst = preprocess(imEst)
-                    im_sl = preprocess(im_sl)
-
-                loss = 0.0
-                for score in scorenets:
-                    loss += learnedloss_fcn(imEst, im_sl, score, rank_trained_on_mag=rank_trained_on_mag,
-                                            augmentation=False, eff=args.EFF, sub=args.SUB)
-                if args.L2CNN:
-                    if args.SUB:
-                        loss = loss / 5
-                if args.EFF:
-                    imEst = torch.view_as_complex(imEst.permute((0, 2, 3, 1))).unsqueeze(0)
-                    im_sl = torch.view_as_complex(im_sl.permute((0, 2, 3, 1))).unsqueeze(0)
 
                 loss.backward()
 
                 train_avg_mse.update(loss_mse.detach().cpu().item(), n=1)
                 train_avg.update(loss.detach().item(), n=1)
+
             optimizer.step()
+            plot_grad_flow(LearnedLoss.denoiser.named_parameters())
+            if i == 3:
+                break
+
             if i > Ntrain:
                 break
         scheduler.step()
 
         with torch.no_grad():
-            Denoiser.eval()
+            LearnedLoss.denoiser.eval()
             im_nn_stack = []
             im_truth_stack = []
             for i, data in enumerate(loader_V, 0):
@@ -264,7 +255,7 @@ def main():
                     smaps, kspace = data
                 smaps = smaps.cuda()
                 kspace = kspace.cuda()
-                if i==1:
+                if i==0:
                     break
                 Nslices = smaps.shape[0]
                 im = sense_adjoint(smaps, kspace * mask_truth.to(device))
@@ -281,27 +272,12 @@ def main():
                     scale = 1.0 / torch.max(torch.abs(im[sl]))
                     im[sl] *= scale
                 im_noisy = add_gaussian2D(im[0], gaussian_level=7e4, kedge_len=30)
-                imEst = Denoiser(im_noisy.unsqueeze(0))
+                im_noisy = im_noisy.unsqueeze(0)
+
+                loss = LearnedLoss(im_noisy, im, eff=args.EFF, sub=args.SUB)
+                imEst = LearnedLoss.denoiser(im_noisy)     # to torch.Size([1, 1, 396, 396])
+
                 loss_mse = NMSE(imEst, im).detach()
-
-                if args.EFF:
-                    imEst = torch.view_as_real(imEst[0]).permute((0, -1, 1, 2))
-                    im = torch.view_as_real(im[0]).permute((0, -1, 1, 2))
-                    preprocess = transforms.Compose([transforms.Resize((224, 224))])
-                    imEst = preprocess(imEst)
-                    im = preprocess(im)
-
-                loss = 0.0
-                for score in scorenets:
-                    loss += learnedloss_fcn(imEst, im, score, rank_trained_on_mag=rank_trained_on_mag,
-                                            augmentation=False, eff=args.EFF, sub=args.SUB)
-                if args.L2CNN:
-                    if args.SUB:
-                        loss = loss / 5
-
-                if args.EFF:
-                    imEst = torch.view_as_complex(imEst.permute((0, 2, 3, 1)))
-                    im = torch.view_as_complex(im.permute((0, 2, 3, 1)))
 
                 eval_avg.update(loss.detach().item(), n=1)
                 eval_avg_mse.update(loss_mse.detach().cpu().item(), n=1)
@@ -327,13 +303,13 @@ def main():
         lossT[epoch] = train_avg.avg()
         lossV[epoch] = eval_avg.avg()
         state = {
-            'state_dict': Denoiser.state_dict(),
+            'state_dict': LearnedLoss.state_dict(),
             'optimizer': optimizer.state_dict(),
             'epoch': epoch,
             'loss_train': lossT,
             'loss_cal': lossV
         }
-        torch.save(state, os.path.join(args.log_dir, f'Denoise{Ntrial}_l2{args.L2CNN}_eff{args.EFF}.pt'))
+        torch.save(state, os.path.join(args.log_dir, f'DenoiseLoss{Ntrial}_l2{args.L2CNN}_eff{args.EFF}.pt'))
 
 
 
