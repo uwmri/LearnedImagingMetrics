@@ -3,31 +3,17 @@ This file grabs N slices, do the recon with MoDL trained with IQNet, MSE and SSI
 and compares the reconstructed image IQNet score, MSE and SSIM.
 This is the script that generated the boxplots in the paper.
 """
-import torch
-import torchvision
-import torch.optim as optim
-from torchinfo import summary
-from torch.utils.tensorboard import SummaryWriter
-import torch.linalg
-
-import cupy
-import h5py as h5
-import pickle
+import glob
 import matplotlib.pyplot as plt
-import csv
 import logging
 import time
+import torch
+import numpy as np
 import sigpy as sp
 import sigpy.mri as mri
-from pathlib import Path
-import os
-import h5py
 import pandas as pd
 from IQNet import *
 from utils.Recon_helper import *
-from utils.ISOResNet import *
-from utils import *
-from utils.CreateImagePairs import get_smaps, get_truth
 from utils.utils_DL import *
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -42,7 +28,7 @@ def get_score(idx, imEstL, im_sl, scorenets, scorelist, rank_trained_on_mag=Fals
 
 import argparse
 parser = argparse.ArgumentParser()
-parser.add_argument('--num_slices', type=int, default=5)
+parser.add_argument('--num_slices', type=int, default=50)
 parser.add_argument('--reconID_learned', type=str, default='1980')
 parser.add_argument('--reconID_mse', type=str, default='8470')
 parser.add_argument('--reconID_ssim', type=str, default='3987')
@@ -53,7 +39,7 @@ parser.add_argument('--rank_dir', type=str,
 parser.add_argument('--project_dir', type=str,
                     default=r'I:\code\LearnedImagingMetrics_pytorch')
 parser.add_argument('--data_dir', type=str,
-                    default=r'I:\NYUbrain\singleslices\val')
+                    default=r'I:\Data\NYUbrain_recon_stat_test')
 args = parser.parse_args()
 
 
@@ -61,33 +47,33 @@ args = parser.parse_args()
 recon_file = os.path.join(args.recon_dir,f'Recon{args.reconID_learned}_learned.pt')
 state = torch.load(recon_file)
 ReconModel = MoDL(inner_iter=5, DENOISER='unet')
-ReconModel.load_state_dict(state['state_dict'], strict=True)
+ReconModel.load_state_dict(state['state_dict'], strict=False)
 ReconModel.cuda();
 ReconModel.eval()
 
 recon_fileMSE = os.path.join(args.recon_dir, f'Recon{args.reconID_mse}_mse.pt')
 stateMSE = torch.load(recon_fileMSE)
 ReconModelMSE = MoDL(inner_iter=5, DENOISER='unet')
-ReconModelMSE.load_state_dict(stateMSE['state_dict'], strict=True)
+ReconModelMSE.load_state_dict(stateMSE['state_dict'], strict=False)
 ReconModelMSE.cuda();
 ReconModelMSE.eval()
 
 recon_fileSSIM = os.path.join(args.recon_dir, f'Recon{args.reconID_ssim}_ssim.pt')
 stateSSIM = torch.load(recon_fileSSIM)
 ReconModelSSIM = MoDL(inner_iter=5, DENOISER='unet')
-ReconModelSSIM.load_state_dict(stateSSIM['state_dict'], strict=True)
+ReconModelSSIM.load_state_dict(stateSSIM['state_dict'], strict=False)
 ReconModelSSIM.cuda();
 ReconModelSSIM.eval()
 
-metric_files =  [f for f in os.listdir(args.rank_dir) if os.path.isfile(os.path.join(args.rank_dir, f))]
+metric_files = glob.glob(os.path.join(args.rank_dir, "*.pt"))
 scorenets = []
 for name in metric_files:
     ranknet = L2cnn(channels_in=1, channel_base=8, group_depth=5, train_on_mag=False)
 
     classifier = Classifier(ranknet)
 
-    state = torch.load(os.path.join(args.rank_dir, name))
-    classifier.load_state_dict(state['state_dict'], strict=True)
+    stateRank = torch.load(name)
+    classifier.load_state_dict(stateRank['state_dict'], strict=False)
     classifier.eval()
     score = classifier.rank
     score.to(device)
@@ -98,20 +84,20 @@ xres = 768
 yres = 396
 act_xres = 512
 act_yres = 256
-acc = 8
+acc = 4
 masks = []
 for m in range(args.num_slices):
-    # mask = mri.poisson((act_xres, act_yres), accel=acc *2 , calib=(0, 0), crop_corner=True, return_density=False,
-    #                    dtype='float32')
-    mask = np.ones((act_xres, act_yres), dtype='float32')
+    mask = mri.poisson((act_xres, act_yres), accel=acc *2 , calib=(0, 0), crop_corner=True, return_density=False,
+                       dtype='float32')
+    # mask = np.ones((act_xres, act_yres), dtype='float32')
     pady = int(.5 * (yres - act_yres))
     padx = int(.5 * (xres - act_xres))
     # print(mask.shape)
     print(f'padx = {(padx, xres - padx - act_xres)}, {(pady, yres - pady - act_yres)}')
     pad = ((padx, xres - padx - act_xres), (pady, yres - pady - act_yres))
     mask = np.pad(mask, pad, 'constant', constant_values=0)
-    mask = mri.poisson((xres, yres), accel=acc, calib=(0, 0), crop_corner=True, return_density=False,
-                       dtype='float32')
+    # mask = mri.poisson((xres, yres), accel=acc, calib=(0, 0), crop_corner=True, return_density=False,
+    #                    dtype='float32')
 
     # random PE lines
     # calib = 24
@@ -133,13 +119,13 @@ mask_truth = (1 / (1 + np.exp((np.abs(kr) - 0.9) / 0.1))).astype(np.float32)
 mask_truth = np.pad(mask_truth, pad, 'constant', constant_values=0)
 # mask_truth = torch.ones((xres, yres))
 mask_truth = torch.tensor(mask_truth)
-masks = torch.tensor(masks)
+masks = torch.tensor(np.array(masks))
 
 effective_acc = torch.count_nonzero(masks[0]) / torch.count_nonzero(mask_truth)
 print(f'effective acc {effective_acc}')
 
 contrasts = ['T1', 'T1post', 'T2', 'FLAIR']
-# contrasts = ['T1']
+# contrasts = ['T2']
 
 for contrast in contrasts:
 
@@ -170,11 +156,12 @@ for contrast in contrasts:
 
     validationset = DataGeneratorReconSlices(data_folder_val, rank_trained_on_mag=False,
                                              data_type='smap16', case_name=True)
-    loader_V = DataLoader(dataset=validationset, batch_size=20, shuffle=True, pin_memory=True)
+    loader_V = DataLoader(dataset=validationset, batch_size=1, shuffle=True, pin_memory=True)
 
     with torch.no_grad():
         tt = time.time()
         for i, data in enumerate(loader_V, 0):
+
             smaps, kspace, fname = data
             smaps_sl = torch.clone(smaps[0]).to(device)
             kspace_sl = torch.clone(kspace[0]).to(device)
@@ -187,6 +174,7 @@ for contrast in contrasts:
 
             # Get zerofilled image to estimate max
             imU_sl = sense_adjoint(smaps_sl, kspaceU_sl * mask_truth.to(device))
+            # imU_sl = sense_adjoint(smaps_sl, kspaceU_sl )
 
             # Scale based on max value
             scale = 1.0 / torch.max(torch.abs(imU_sl))
@@ -215,7 +203,7 @@ for contrast in contrasts:
             imEstMSE = torch.flip(imEstMSE, dims=(0, 1))
             imEstSSIM = torch.flip(imEstSSIM, dims=(0, 1))
 
-            # with h5py.File(os.path.join(r'I:\NYUbrain\poisson_acc1', f'ReconMSE_{contrast}.h5'), 'a') as hf:
+            # with h5py.File(os.path.join(rf'I:\NYUbrain\poisson_acc{acc}', f'ReconMSE_{contrast}.h5'), 'a') as hf:
             #     hf.create_dataset(f"{fname}_mag", data=np.abs(np.squeeze(imEstMSE.cpu().numpy())))
             #     hf.create_dataset(f"{fname}_phase", data=np.angle(np.squeeze(imEstMSE.cpu().numpy())))
             # with h5py.File(os.path.join(r'I:\NYUbrain\poisson_acc1', f'ReconSSIM_{contrast}.h5'), 'a') as hf:
@@ -232,24 +220,26 @@ for contrast in contrasts:
             mseL = (mseloss_fcn(imEstL, im_sl)).squeeze().cpu().numpy()
             mseMSE = (mseloss_fcn(imEstMSE, im_sl)).squeeze().cpu().numpy()
             mseSSIM = (mseloss_fcn(imEstSSIM, im_sl)).squeeze().cpu().numpy()
+            print(f'mseL {mseL}, mseMSE {mseMSE}, mseSSIM {mseSSIM}')
             globals()['mselistL' + contrast][i] = mseL
             globals()['mselistMSE' + contrast][i] = mseMSE
             globals()['mselistSSIM' + contrast][i] = mseSSIM
 
-            # PSNR
-            max_truth = torch.abs(im_sl).max().cpu().numpy()
-            psnrL = 10* np.log10(max_truth**2/(mseL/(width * height)))
-            psnrMSE = 10* np.log10(max_truth**2/(mseMSE/(width * height)))
-            psnrSSIM = 10* np.log10(max_truth**2/(mseSSIM/(width * height)))
-            globals()['psnrlistL' + contrast][i] = psnrL
-            globals()['psnrlistMSE' + contrast][i] = psnrMSE
-            globals()['psnrlistSSIM' + contrast][i] = psnrSSIM
+            # # PSNR
+            # max_truth = torch.abs(im_sl).max().cpu().numpy()
+            # psnrL = 10* np.log10(max_truth**2/(mseL/(width * height)))
+            # psnrMSE = 10* np.log10(max_truth**2/(mseMSE/(width * height)))
+            # psnrSSIM = 10* np.log10(max_truth**2/(mseSSIM/(width * height)))
+            # globals()['psnrlistL' + contrast][i] = psnrL
+            # globals()['psnrlistMSE' + contrast][i] = psnrMSE
+            # globals()['psnrlistSSIM' + contrast][i] = psnrSSIM
 
             # SSIM
             ssim_module = SSIM()
             ssimL = ssim_module(imEstL[(None,)], im_sl[(None,)]).squeeze().cpu().numpy()
             ssimMSE = ssim_module(imEstMSE[(None,)], im_sl[(None,)]).squeeze().cpu().numpy()
             ssimSSIM = ssim_module(imEstSSIM[(None,)], im_sl[(None,)]).squeeze().cpu().numpy()
+            print(f'ssimL {ssimL}, ssimMSE {ssimMSE}, ssimSSIM {ssimSSIM}')
             globals()['ssimlistL' + contrast][i] = ssimL
             globals()['ssimlistMSE' + contrast][i] = ssimMSE
             globals()['ssimlistSSIM' + contrast][i] = ssimSSIM

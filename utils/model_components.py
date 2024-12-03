@@ -144,6 +144,7 @@ class ComplexConv2d(nn.Module):
             return apply_complex(self.conv_r, self.conv_i, input)
         else:
             return self.conv_r(input.real) + 1j*self.conv_r(input.imag)
+            # return self.conv_r(input.real)
 
 
 class ComplexConv(nn.Module):
@@ -377,6 +378,7 @@ class ComplexDropout2D(torch.nn.Dropout2d):
 
         # Put the real and imaginary at the last dimension
         tensor = torch.stack([input.real, input.imag], dim=-1)
+        # tensor = torch.stack([input.real], dim=-1)
 
         # Apply dropout on the tensor Nc x Ny x (Nx*2)
         output = super().forward(tensor.reshape(in_shape[:-1] + (in_shape[-1]*2,) ))
@@ -394,6 +396,7 @@ class ComplexAvgPool(nn.Module):
 
     def forward(self, input):
         return self.pool(input.real) + 1j * self.pool(input.imag)
+        # return self.pool(input.real)
 
 
 

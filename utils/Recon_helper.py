@@ -1,7 +1,6 @@
 import pickle
 from typing import Dict
 
-import matplotlib
 
 import h5py
 import numpy as np
@@ -156,9 +155,10 @@ class MoDL(nn.Module):
 
                 # Ex - d
                 diff = (Ex - kspace)*mask
+                # diff = Ex - kspace
 
                 # image = image - scale*E.H*(Ex-d)
-                image = image - self.scale_layers[i] * sense_adjoint(maps, diff)   # (768, 396)
+                image = image - self.scale_layers[i] * sense_adjoint(maps, diff)  # (768, 396)
 
             PAD=False
 

@@ -354,7 +354,7 @@ class UNet(nn.Module):
                  out_channels,
                  f_maps=64,
                  layer_order=None,
-                 depth=4,
+                 depth=2,
                  layer_growth=2.0,
                  residual=True,
                  scaled_residual=True,
@@ -367,7 +367,7 @@ class UNet(nn.Module):
 
         # Create feature maps as list if specified by integer
         if layer_order is None:
-            layer_order = ['convolution', 'mod relu']
+            layer_order = ['convolution', 'relu']
         if isinstance(f_maps, int):
             f_maps = create_feature_maps(f_maps, number_of_fmaps=depth, growth_rate=layer_growth)
 

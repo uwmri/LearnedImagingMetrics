@@ -32,9 +32,10 @@ class L2cnnBlock(nn.Module):
             self.conv2 = ComplexConv2d(channels_out, channels_out, kernel_size=3, padding=1, stride=1, bias=bias)
             self.shortcut = ComplexConv2d(channels_in, channels_out, kernel_size=1, padding=0, stride=1, bias=bias)
             self.pool = ComplexAvgPool(pool_rate)
+            # self.pool = nn.AvgPool2d(pool_rate)
 
-        self.bn1 = VarNorm2d(channels_out)
-        self.bn2 = VarNorm2d(channels_out)
+        # self.bn1 = VarNorm2d(channels_out)
+        # self.bn2 = VarNorm2d(channels_out)
 
         self.norm = norm
 
@@ -42,8 +43,8 @@ class L2cnnBlock(nn.Module):
 
         shortcut = self.shortcut(x)
         x = self.conv1(x)
-        if self.norm:
-            x = self.bn1(x)
+        # if self.norm:
+        #     x = self.bn1(x)
 
         # x = self.act_func(x)
         x = self.act_func(x.real) + 1j* self.act_func(x.imag)
@@ -77,7 +78,7 @@ class L2cnn(nn.Module):
         for block in range(group_depth):
             self.layers.append(L2cnnBlock(channels_in, channels_out, pool_rate,
                                           bias=bias,
-                                          activation=False,
+                                          norm=False,activation=False,
                                           train_on_mag=self.train_on_mag))
 
             count = count + channels_out
